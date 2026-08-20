@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run citra",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "citra.main",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "CITRA_CONFIG_PATH": "${workspaceFolder}/config-template.toml"
+      },
+      "justMyCode": true
+    }
+  ]
+}

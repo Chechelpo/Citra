@@ -5,12 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "citra"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12, <3.13"
 dependencies = [
     "jsonschema>=4.0",
     "prompt-toolkit>=3.0",
-    "pypdf>=6,<7"
+    "pypdf>=6,<7",
+    "pyrefly>=1.2.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
