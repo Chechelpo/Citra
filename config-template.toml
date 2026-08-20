@@ -1,4 +1,4 @@
-# .citra/config.toml
+# ./config-template.toml
 
 [model]
     host = "https://nanogpt.com/v1"
@@ -13,3 +13,10 @@
 
 [message-context]
     uncompressed_messages = 20
+
+[workspace]
+    # Temporary agent run workspace. Do not comment next line.
+    # temporary_workspace = "/temp"
+    # 
+    # Permanent agent workspace. Do not comment next line.
+    # permanent_workspace = "/perm"

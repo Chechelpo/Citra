@@ -24,10 +24,23 @@ class MessageContextConfig:
 
 
 @dataclass(frozen=True)
+class WorkspaceContextConfig:
+    temporary_workspace: str | None
+    permanent_workspace: str | None
+
+
+@dataclass(frozen=True)
 class CitraConfig:
+    """
+    Loads the config.toml file wherever it is
+    (default: .citra/config.toml). Expects config-template.toml format,
+    declared at workspace root.
+    """
+
     model: ModelConfig
     web_search: WebSearchConfig
     message_context: MessageContextConfig
+    workspace_context: WorkspaceContextConfig
 
     @classmethod
     def load(
@@ -48,6 +61,7 @@ class CitraConfig:
             model_raw = raw["model"]
             web_search_raw = raw["web-search"]
             message_context_raw = raw["message-context"]
+            workspace_context_raw = raw["workspace"]
 
             model = ModelConfig(
                 host=model_raw["host"],
@@ -64,6 +78,15 @@ class CitraConfig:
                 uncompressed_messages=message_context_raw[
                     "uncompressed_messages"
                 ],
+            )
+
+            workspace_context = WorkspaceContextConfig(
+                temporary_workspace=workspace_context_raw.get(
+                    "temporary_workspace"
+                ),
+                permanent_workspace=workspace_context_raw.get(
+                    "permanent_workspace"
+                ),
             )
 
         except KeyError as error:
@@ -86,4 +109,5 @@ class CitraConfig:
             model=model,
             web_search=web_search,
             message_context=message_context,
+            workspace_context=workspace_context,
         )

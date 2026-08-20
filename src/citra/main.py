@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from citra.context import CitraConfig
+
 """
 Citra - minimal agentic coding assistant.
 """
@@ -1018,9 +1020,11 @@ def print_header(
 
 def main() -> None:
     session = AgentSession()
+    config = CitraConfig.load()
 
     workspace = WorkspaceContext.create(
-        os.getcwd()
+        workspace=os.getcwd(),
+        config=config.workspace_context
     )
 
     try:
