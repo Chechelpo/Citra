@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from re import Pattern
 from typing import Generator
 
 import hashlib
@@ -15,8 +17,8 @@ from typing import Iterator, Sequence
 from urllib.parse import unquote, urlparse
 
 
-_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
-_GITHUB_PART_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_COMMIT_RE: Pattern[str] = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_GITHUB_PART_RE: Pattern[str] = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class GitUtilityError(RuntimeError):

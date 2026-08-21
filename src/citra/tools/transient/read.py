@@ -218,14 +218,17 @@ class Read(Tool):
         omitted_count = 0
 
         for request in requests:
-            requested_path: str = request[
+            requested_path: str = str(request[
                 "path"
-            ]
+            ])
 
-            offset: int = request.get(
+        
+            offset: int | None = request.get(
                 "offset",
                 0,
             )
+            if offset is None:
+                return f"Error reading file {requested_path}: offset is None"
 
             limit: int | None = request.get(
                 "limit"
