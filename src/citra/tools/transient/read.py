@@ -222,10 +222,13 @@ class Read(Tool):
                 "path"
             ])
 
-            offset: int = request.get(
+        
+            offset: int | None = request.get(
                 "offset",
                 0,
             )
+            if offset is None:
+                return f"Error reading file {requested_path}: offset is None"
 
             limit: int | None = request.get(
                 "limit"
