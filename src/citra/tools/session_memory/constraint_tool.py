@@ -129,11 +129,11 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
     @override
     def format_extract(
         self,
-        constraint: ConstraintExtract,
+        extract: ConstraintExtract,
     ) -> str:
         return (
-            f"- [{constraint.id}] "
-            f"{constraint.content}"
+            f"- [{extract.id}] "
+            f"{extract.content}"
         )
 
     @override

@@ -321,3 +321,51 @@ class WorkspaceContext:
         except ValueError:
             return False
         return True
+
+
+    def write_text_atomic(
+        self,
+        path: str | Path,
+        text: str,
+        *,
+        encoding: str = "utf-8",
+    ) -> Path:
+        destination = self.require_writable_path(
+            path
+        )
+
+        parent = self.require_writable_path(
+            destination.parent
+        )
+
+        descriptor, temporary_raw = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=parent,
+        )
+
+        temporary = Path(
+            temporary_raw
+        )
+
+        try:
+            with os.fdopen(
+                descriptor,
+                "w",
+                encoding=encoding,
+            ) as file:
+                file.write(
+                    text
+                )
+
+            temporary.replace(
+                destination
+            )
+
+        except Exception:
+            temporary.unlink(
+                missing_ok=True,
+            )
+            raise
+
+        return destination

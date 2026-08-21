@@ -188,7 +188,7 @@ class TestCommand(Command):
     def _check_workspace(self) -> str:
         import os
 
-        workspace = self.context.workspace
+        workspace = self.context.workspace.workspace
 
         if not os.path.isdir(workspace):
             raise RuntimeError(
@@ -200,7 +200,7 @@ class TestCommand(Command):
                 f"Workspace is not readable: {workspace}"
             )
 
-        return workspace
+        return str(workspace)
 
     # ------------------------------------------------------------------
     # Command entry point

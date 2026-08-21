@@ -7,9 +7,12 @@ from citra.context import CitraConfig
 Citra - minimal agentic coding assistant.
 """
 
-from citra.context.workspace import WorkspaceContext
+from citra.context.turn_workspace import WorkspaceContext
+from citra.context.config_loader import WorkspaceContextConfig
+from citra.context.libraries.libraries import Libraries
 
 import json
+from pathlib import Path
 import random
 import re
 import socket
@@ -782,8 +785,28 @@ def render_memory_change(
 
 def run_agent_turn(
     session: AgentSession,
-    workspace: WorkspaceContext,
+    source_workspace: str | Path,
+    workspace_config: WorkspaceContextConfig
 ) -> None:
+    """Run one agent turn inside a fresh disposable workspace."""
+    workspace = WorkspaceContext.create(
+        config=workspace_config,
+        workspace=source_workspace,
+    )
+
+    try:
+        _run_agent_turn_in_workspace(
+            session,
+            workspace
+        )
+    finally:
+        workspace.cleanup()
+
+
+def _run_agent_turn_in_workspace(
+    session: AgentSession,
+    workspace: WorkspaceContext
+    ) -> None:
     """
     Continue calling the model until it produces no further tool calls.
 
@@ -796,14 +819,15 @@ def run_agent_turn(
     Synthetic tool results are appended so the OpenAI message sequence
     remains valid.
     """
-
+    library = Libraries(workspace)
     while True:
         # Safe boundary: no assistant tool-call response is currently
         # awaiting its tool messages.
         session.flush_steering()
 
         context = ExecutionContext(
-            workspace
+            workspace,
+            libraries=library
         )
 
         tools = TOOL_REGISTRY.instantiate(
@@ -937,7 +961,32 @@ def is_command(
 def handle_command(
     user_input: str,
     session: AgentSession,
+    source_workspace: str | Path,
+    workspace_config: WorkspaceContextConfig
+) -> bool:
+    """Execute a slash command with an isolated temporary context."""
+    workspace = WorkspaceContext.create(
+        config=workspace_config,
+        workspace=source_workspace,
+    )
+    library = Libraries(workspace)
+
+    try:
+        return _handle_command_in_workspace(
+            user_input,
+            session,
+            workspace,
+            library
+        )
+    finally:
+        workspace.cleanup()
+
+
+def _handle_command_in_workspace(
+    user_input: str,
+    session: AgentSession,
     workspace: WorkspaceContext,
+    library:Libraries
 ) -> bool:
     """
     Execute a slash command.
@@ -969,7 +1018,7 @@ def handle_command(
     if command_id == "exit":
         command_id = "q"
 
-    context = ExecutionContext(workspace)
+    context = ExecutionContext(workspace, libraries=library)
 
     command = COMMAND_REGISTRY.instantiate(
         command_id,
@@ -1007,92 +1056,98 @@ def handle_command(
 
 
 def print_header(
-    context: ExecutionContext,
+    config: CitraConfig,
+    source_workspace: Path,
 ) -> None:
     print(
         f"{BOLD}citra{RESET} | "
         f"{DIM}"
-        f"{context.model_config.id} | "
-        f"{context.workspace.workspace}"
+        f"{config.model.id} | "
+        f"{source_workspace}"
         f"{RESET}\n"
     )
 
 
 def main() -> None:
     session = AgentSession()
-    config = CitraConfig.load()
-
-    workspace = WorkspaceContext.create(
-        workspace=os.getcwd(),
-        config=config.workspace_context
+    config_path = os.environ.get(
+        "CITRA_CONFIG_PATH"
     )
 
-    try:
-        context = ExecutionContext(
-            workspace
+    if config_path is None:
+        raise RuntimeError(
+            "CITRA_CONFIG_PATH is not defined. "
+            "Citra should be started through start.sh."
         )
 
-        print_header(
-            context
-        )
+    config = CitraConfig.load(
+        config_path
+    )
+    source_workspace = Path(
+        config.workspace_context.permanent_workspace
+        or os.getcwd()
+    ).expanduser().resolve()
+    print_header(
+        config,
+        source_workspace,
+    )
 
-        while True:
-            try:
-                print(
-                    separator()
-                )
+    while True:
+        try:
+            print(
+                separator()
+            )
 
-                user_input = terminal_input.prompt(
-                    f"{BOLD}{BLUE}❯{RESET} "
-                ).strip()
+            user_input = terminal_input.prompt(
+                f"{BOLD}{BLUE}❯{RESET} "
+            ).strip()
 
-                print(
-                    separator()
-                )
+            print(
+                separator()
+            )
 
-                if not user_input:
-                    continue
+            if not user_input:
+                continue
 
-                if is_command(
-                    user_input
-                ):
-                    should_continue = handle_command(
-                        user_input,
-                        session,
-                        workspace,
-                    )
-
-                    if not should_continue:
-                        break
-
-                    continue
-
-                session.add_user_message(
-                    user_input
-                )
-
-                run_agent_turn(
-                    session=session,
-                    workspace=workspace,
-                )
-
-                print()
-
-            except (
-                KeyboardInterrupt,
-                EOFError,
+            if is_command(
+                user_input
             ):
-                break
-
-            except Exception as error:
-                print(
-                    f"{RED}"
-                    f"⏺ Error: {error}"
-                    f"{RESET}"
+                should_continue = handle_command(
+                    user_input,
+                    session,
+                    source_workspace,
+                    config.workspace_context,
                 )
 
-    finally:
-        workspace.cleanup()
+                if not should_continue:
+                    break
+
+                continue
+
+            session.add_user_message(
+                user_input
+            )
+
+            run_agent_turn(
+                session=session,
+                source_workspace=source_workspace,
+                workspace_config=config.workspace_context,
+            )
+
+            print()
+
+        except (
+            KeyboardInterrupt,
+            EOFError,
+        ):
+            break
+
+        except Exception as error:
+            print(
+                f"{RED}"
+                f"⏺ Error: {error}"
+                f"{RESET}"
+            )
 
 
 if __name__ == "__main__":

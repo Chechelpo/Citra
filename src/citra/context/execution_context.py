@@ -1,10 +1,11 @@
+from .libraries import Libraries
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import platform
 import shutil
 
-from citra.context.workspace import WorkspaceContext
+from citra.context.turn_workspace import WorkspaceContext
 from citra.utils.sandbox import WorkspaceSandbox
 
 from .config_loader import CitraConfig
@@ -13,7 +14,7 @@ from .config_loader import CitraConfig
 @dataclass(frozen=True)
 class ExecutionContext:
     workspace: WorkspaceContext
-
+    libraries: Libraries
     __os: str = field(
         init=False,
     )

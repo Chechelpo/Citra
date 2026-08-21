@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import hashlib
-import os
 from pathlib import Path
 import tempfile
+
+from citra.context import WorkspaceContext
+
 
 class ReadableConverter(ABC):
     """
@@ -34,16 +36,26 @@ class ReadableConverter(ABC):
     def convert(
         self,
         path: Path,
+        *,
+        workspace: WorkspaceContext,
     ) -> Path:
-        path = path.resolve()
+        path = workspace.require_allowed_path(
+            path
+        )
 
         if not path.is_file():
             raise FileNotFoundError(
-                f"File not found: {path}"
+                f"File not found: "
+                f"{workspace.display_path(path)}"
             )
 
         output = self._output_path(
-            path
+            path,
+            workspace=workspace,
+        )
+
+        output = workspace.require_writable_path(
+            output
         )
 
         if output.is_file():
@@ -54,8 +66,12 @@ class ReadableConverter(ABC):
             exist_ok=True,
         )
 
-        temporary = output.with_suffix(
-            ".tmp"
+        temporary = self._temporary_path(
+            output
+        )
+
+        temporary = workspace.require_writable_path(
+            temporary
         )
 
         try:
@@ -87,6 +103,8 @@ class ReadableConverter(ABC):
     def _output_path(
         self,
         path: Path,
+        *,
+        workspace: WorkspaceContext,
     ) -> Path:
         stat = path.stat()
 
@@ -105,30 +123,26 @@ class ReadableConverter(ABC):
         ).hexdigest()
 
         return (
-            self._cache_directory()
+            workspace.cache
+            / "readable"
             / f"{digest}.txt"
         )
 
     @staticmethod
-    def _cache_directory() -> Path:
-        configured = os.environ.get(
-            "CITRA_CACHE"
+    def _temporary_path(
+        output: Path,
+    ) -> Path:
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f".{output.stem}-",
+            suffix=".tmp",
+            dir=output.parent,
         )
 
-        if configured:
-            root = Path(
-                configured
+        try:
+            return Path(
+                raw_path
             )
-        else:
-            root = (
-                Path(
-                    tempfile.gettempdir()
-                )
-                / "citra"
-                / "cache"
+        finally:
+            os.close(
+                descriptor
             )
-
-        return (
-            root
-            / "readable"
-        )

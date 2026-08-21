@@ -9,11 +9,14 @@ requires-python = ">=3.12, <3.13"
 dependencies = [
     "furo>=2025.12.19",
     "jsonschema>=4.0",
+    "openpyxl>=3.1.5",
     "prompt-toolkit>=3.0",
     "pypdf>=6,<7",
     "pyrefly>=1.2.0",
+    "pytest>=9.1.1",
     "sphinx>=9.1.0",
     "sphinx-autobuild>=2025.8.25",
+    "types-openpyxl>=3.1.5.20260807",
 ]
 
 [tool.setuptools.packages.find]

@@ -15,7 +15,7 @@ from ...utils.converters import convert
 
 class Read(Tool):
     """
-    Reads one or more files from the active workspace context.
+    Reads one or more files.
 
     Paths may be literal files or glob patterns.
 
@@ -325,21 +325,19 @@ class Read(Tool):
         self,
         path: Path,
     ) -> Path:
-        """
-        Convert a source file into an LLM-readable representation.
+        workspace = self.context.workspace
 
-        Every successful read passes through this hook.
+        source = workspace.require_allowed_path(path)
 
-        The default implementation returns the original file unchanged.
-        Future handlers can convert formats such as PDF, DOCX, notebooks,
-        archives, images with extracted metadata/text, or other structured
-        formats into temporary readable files under the agent filesystem.
+        readable = convert(
+            source,
+            workspace=workspace,
+        )
 
-        The returned path must refer to a readable file.
-        """
-
-        return convert(path)
-
+        return workspace.require_allowed_path(
+            readable
+        )
+    
     def _expand_path(
         self,
         value: str,

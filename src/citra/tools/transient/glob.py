@@ -17,9 +17,6 @@ class Glob(Tool):
     """
     Finds filesystem entries matching a glob pattern.
 
-    Results are restricted to the active workspace and temporary
-    agent filesystem.
-
     Results are sorted by modification time, newest first.
     """
 
@@ -29,8 +26,7 @@ class Glob(Tool):
             description=(
                 "Find files and directories using a glob pattern. "
                 "Supports recursive patterns such as '**/*.py'. "
-                "Searches within the active workspace or temporary "
-                "agent filesystem. Results are sorted by modification "
+                "Results are sorted by modification "
                 "time with the most recently modified files first."
             ),
             parameters=JsonSchema.object(

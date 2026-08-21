@@ -1,0 +1,15 @@
+# .citra/config.toml
+
+[model]
+    host = "https://nanogpt.com/v1"
+    api_key = "sk-nano-0ac1aab5-5512-403f-995e-384a0d30a421"
+    id = "zai-org/glm-5.2:thinking"
+    max_tokens = 256000
+
+# web-search tool config. Uses searxng
+[web-search]
+    # searxng host url
+    host_url = "http://localhost:8888"
+
+[message-context]
+    uncompressed_messages = 10

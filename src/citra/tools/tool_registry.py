@@ -102,6 +102,9 @@ class ToolRegistry:
         existing = session_tools.get(tool_id)
 
         if existing is not None:
+            existing.rebind_context(
+                context
+            )
             return existing
 
         tool = tool_type(

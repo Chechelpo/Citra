@@ -78,8 +78,10 @@ class Git(Tool):
                         schema=JsonSchema.string(
                             description=(
                                 "Repository directory. Relative paths resolve "
-                                "from the workspace. @tmp/... addresses the "
-                                "temporary agent filesystem. Defaults to '.'."
+                                "from the isolated agent workspace. @source "
+                                "addresses the original read-only repository, "
+                                "and @tmp addresses disposable storage. "
+                                "Defaults to @source."
                             ),
                         ),
                         required=False,
@@ -235,7 +237,7 @@ class Git(Tool):
         repository = self.context.workspace.resolve_path(
             arguments.get(
                 "path",
-                ".",
+                "@source",
             )
         )
 

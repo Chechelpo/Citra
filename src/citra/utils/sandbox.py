@@ -8,7 +8,7 @@ import signal
 import subprocess
 from typing import Mapping, Sequence
 
-from ..context.workspace import WorkspaceContext
+from ..context.turn_workspace import WorkspaceContext
 
 
 @dataclass(frozen=True)
@@ -77,15 +77,23 @@ class WorkspaceSandbox:
             "/",
             "/",
 
-            # Persistent writable project.
+            # Entire turn-scoped agent environment is writable. The active
+            # workspace is a child of this root.
             "--bind",
-            str(workspace.workspace),
-            str(workspace.workspace),
+            str(workspace.root),
+            str(workspace.root),
 
-            # Entire disposable agent environment is writable.
-            "--bind",
-            str(workspace.root),
-            str(workspace.root),
+            # The original project is readable but never generally writable.
+            "--ro-bind",
+            str(workspace.source_workspace),
+            str(workspace.source_workspace),
+
+            # Give shell commands a real @source path from the default cwd.
+            # A filesystem mount is reliable for quoting and compound shell
+            # commands; rewriting command strings is not.
+            "--ro-bind",
+            str(workspace.source_workspace),
+            str(workspace.workspace / "@source"),
 
             # Isolate process-visible host state.
             "--unshare-pid",

@@ -34,6 +34,14 @@ class Tool(ABC):
     def context(self) -> ExecutionContext:
         return self.__context
 
+    @final
+    def rebind_context(
+        self,
+        context: ExecutionContext,
+    ) -> None:
+        """Bind a reused session tool to the current agent-turn context."""
+        self.__context = context
+
     @property
     def id(self) -> str:
         return self.__definition.function.name

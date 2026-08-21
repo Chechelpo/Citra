@@ -24,7 +24,8 @@ class Write(Tool):
                 "Write complete text content to a file. "
                 "Creates the file if it does not exist and completely "
                 "overwrites it if it does exist. Writes are restricted "
-                "to the active workspace and temporary agent filesystem. "
+                "to the isolated agent workspace and temporary agent "
+                "filesystem. @source is read-only. "
                 "Use edit instead when only a specific existing fragment "
                 "should be changed."
             ),

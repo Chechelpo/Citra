@@ -65,7 +65,9 @@ class Bash(Tool):
                 "commands from running. Commands have no network access. "
                 "The active workspace and temporary agent filesystem are "
                 "writable; the rest of the host filesystem is read-only. "
-                "Use $CITRA_TMP or @tmp for disposable exploration."
+                "Filesystem aliases such as @tmp are supported in cwd. "
+                "Inside Bash commands, use environment variables such as "
+                "$CITRA_WORKSPACE, $CITRA_TMP, and $CITRA_CACHE."
             ),
             parameters=JsonSchema.object(
                 properties=(
