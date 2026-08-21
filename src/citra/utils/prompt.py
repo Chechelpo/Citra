@@ -65,11 +65,18 @@ def build_system_prompt(
         else "no"
     )
 
-    initial_tree = render_tree(
+    initial_source_tree = render_tree(
         context.workspace,
         path="@source",
         max_depth=3,
         limit=200,
+    )
+
+    current_workspace_tree = render_tree(
+        context.workspace,
+        path=context.workspace.workspace,
+        max_depth=3,
+        limit=200
     )
 
     return f"""\
@@ -124,11 +131,19 @@ Relative paths refer to the isolated agent workspace.
 ## Source structure
 
 ```text
-{initial_tree}
+{initial_source_tree}
 ```
 
 This tree describes `@source`, not the initially empty agent workspace. Use it
 to orient yourself before making unnecessary discovery calls.
+
+## Workspace structure
+
+```text
+{current_workspace_tree}
+```
+
+This tree describes the current `@workspace`, not source. Its this filesystem you have in order to make and test changes before commiting
 
 ## Filesystem
 

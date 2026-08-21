@@ -218,9 +218,9 @@ class Read(Tool):
         omitted_count = 0
 
         for request in requests:
-            requested_path: str = request[
+            requested_path: str = str(request[
                 "path"
-            ]
+            ])
 
             offset: int = request.get(
                 "offset",

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Conversation/session state for one running Citra session.
 
@@ -14,7 +16,8 @@ Other threads, particularly the terminal/UI thread, may submit steering
 instructions through ``steering``.
 """
 
-from __future__ import annotations
+from typing_extensions import Dict
+from pathlib import Path
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,6 +32,8 @@ __all__ = [
 ]
 
 
+
+
 ChatMessage = dict[str, Any]
 
 
@@ -39,7 +44,7 @@ class MessageGroup:
 
     A group is never split when selecting recent conversation context.
     """
-
+    
     messages: list[ChatMessage] = field(
         default_factory=list
     )
@@ -90,7 +95,7 @@ class AgentSession:
 
     def get_last_n_messages(
         self,
-        n: int,
+        n: int
     ) -> list[ChatMessage]:
         """
         Return messages from the last ``n`` protocol-safe message groups.
@@ -295,3 +300,43 @@ class AgentSession:
         """
         self.message_groups.clear()
         self.steering.clear()
+
+class ReadFile():
+    agent_turn: int
+    path: Path
+    start: int
+    end: int
+    dirty : bool
+
+class FileContext:
+    """
+    Class in charge of:
+        
+        A) Tracking what files have been read and what part of them (file + offsets).
+        B) Deduping calls to read the same contents, replacing old tool calls results with a debug str.
+        C) Marking old reads that were then modified by recent tools as dirty.
+
+    """
+
+    read_files : dict[Path, list[ReadFile]]
+
+    def __init__(self):
+        self.read_files = Dict()
+
+    def register_write(self, path:Path, start_line: int = 0, end_line: int | None = None) -> None:
+        """
+        Invalidates a read file order if it was previously registered
+        """
+        pass
+    
+    def register_new_read(self, path:Path, start_offset:int, end_offset:int) -> None:
+        """
+        Registers a new read, invalidating previous ones.
+        """
+        pass
+
+    def newTurn(self, turn:int) -> None:
+        """
+        Invalidates read file orders of old files ()
+        """
+        pass
