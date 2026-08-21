@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Protocol
 from urllib.parse import urlparse
-from ...utils import GitRepositoryUtility,ResolvedGitRevision
+from ...utils.git_utility import GitRepositoryUtility,ResolvedGitRevision
 
 _SEPARATOR = "// " + "~" * 72
 _GITHUB_SCP_RE = re.compile(

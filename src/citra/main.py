@@ -819,7 +819,7 @@ def _run_agent_turn_in_workspace(
     Synthetic tool results are appended so the OpenAI message sequence
     remains valid.
     """
-    library = Libraries(workspace)
+    library = Libraries(workspace.config)
     while True:
         # Safe boundary: no assistant tool-call response is currently
         # awaiting its tool messages.
@@ -969,7 +969,7 @@ def handle_command(
         config=workspace_config,
         workspace=source_workspace,
     )
-    library = Libraries(workspace)
+    library = Libraries(workspace.config)
 
     try:
         return _handle_command_in_workspace(

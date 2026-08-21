@@ -34,7 +34,7 @@ SCRIPT_DIR="$(
     pwd
 )"
 
-CONFIG_PATH="$SCRIPT_DIR/.config/config.toml"
+CONFIG_PATH="$SCRIPT_DIR/.citra/config.toml"
 PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
 if [[ ! -x "$PYTHON" ]]; then
