@@ -1,4 +1,4 @@
-.citra/
+.citra/*
 
 **/__pycache__/
 *.py[cod]
@@ -16,3 +16,5 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+.citra/config.toml
+.citra/config.toml
