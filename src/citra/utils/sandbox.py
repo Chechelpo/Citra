@@ -99,6 +99,7 @@ AUTO_BIND_ENV_PATHS: tuple[str, ...] = (
     "SSL_CERT_DIR",
     "REQUESTS_CA_BUNDLE",
     "CURL_CA_BUNDLE",
+    "PLAYWRIGHT_BROWSERS_PATH",
     "NODE_EXTRA_CA_CERTS",
     "VIRTUAL_ENV",
     "JAVA_HOME",
@@ -167,6 +168,13 @@ class _FdMount:
     descriptor: int
     target: Path
 
+@dataclass(frozen=True)
+class SandboxEnvironmentInfo:
+    """
+    Describes information that might be relevant to the agent/tool
+    """
+
+    extra_readonly_binds: tuple[Path, ...]
 
 class WorkspaceSandbox:
     def __init__(
@@ -364,7 +372,22 @@ class WorkspaceSandbox:
                 output=output,
                 timed_out=True,
             )
+    def environment_info(
+        self,
+    ) -> SandboxEnvironmentInfo:
+        extra_readonly_binds = tuple(
+            self._expand_host_path(
+                path
+            )
+            for path in self._string_setting(
+                "extra_readonly_binds",
+                EXTRA_READONLY_BINDS,
+            )
+        )
 
+        return SandboxEnvironmentInfo(
+            extra_readonly_binds=extra_readonly_binds,
+        )
     def popen(
         self,
         command: Sequence[str],

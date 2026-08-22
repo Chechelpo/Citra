@@ -15,6 +15,7 @@ from .materialize import Materialize
 from .lsp import Lsp
 from .repo_library import RepoLibrary
 from .subprocess import Subprocess
+from .skill_tool import SkillTool
 
 __all__ = [
     "Bash",
@@ -34,4 +35,5 @@ __all__ = [
     "Tree",
     "RepoLibrary",
     "Subprocess",
+    "SkillTool"
 ]

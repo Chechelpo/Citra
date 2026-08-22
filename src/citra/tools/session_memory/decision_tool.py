@@ -128,11 +128,11 @@ class DecisionTool(MemoryTool[DecisionExtract]):
     @override
     def format_extract(
         self,
-        decision: DecisionExtract,
+        extract: DecisionExtract,
     ) -> str:
         return (
-            f"- [{decision.id}] "
-            f"{decision.content}"
+            f"- [{extract.id}] "
+            f"{extract.content}"
         )
 
     @override

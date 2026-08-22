@@ -10,6 +10,7 @@ from citra.utils.sandbox import WorkspaceSandbox
 from citra.utils.sandboxed_filesystem import SandboxedFilesystem
 from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
+from citra.tools.skills.skill_registry import SkillRegistry
 
 from .config_loader import CitraConfig
 
@@ -17,9 +18,13 @@ from .config_loader import CitraConfig
 @dataclass(frozen=True)
 class ExecutionContext:
     workspace: WorkspaceContext
+    skills: SkillRegistry
+
     libraries: Libraries = field(
         default_factory=Libraries
     )
+
+
     lsp_manager: object | None = None
     user_interactions: object | None = None
     provided_config: CitraConfig | None = field(

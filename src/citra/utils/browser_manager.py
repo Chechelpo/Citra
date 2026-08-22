@@ -7,6 +7,9 @@ from pathlib import Path
 import selectors
 import subprocess
 import sys
+import json
+import os
+from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 
@@ -20,10 +23,14 @@ class BrowserManager:
         workspace: Path,
         *,
         request_timeout: float,
+        browsers_path: str | Path | None = None,
     ) -> None:
         self._sandbox = sandbox
         self._workspace = workspace
         self._request_timeout = request_timeout
+        self._browsers_path = self._resolve_browsers_path(
+            browsers_path
+        )
         self._process: subprocess.Popen[bytes] | None = None
         self._lock = Lock()
         self._stderr = bytearray()
@@ -69,25 +76,66 @@ class BrowserManager:
     def _ensure_process(self) -> subprocess.Popen[bytes]:
         if self._process is not None and self._process.poll() is None:
             return self._process
+
         self._process = self._sandbox.popen(
             [sys.executable, "-m", "citra.utils.browser_worker"],
             cwd=self._workspace,
             network=True,
-            environment={"PYTHONUNBUFFERED": "1"},
+            environment={
+                "PYTHONUNBUFFERED": "1",
+                "PLAYWRIGHT_BROWSERS_PATH": str(
+                    self._browsers_path
+                ),
+            },
         )
+
         self._stderr.clear()
+
         if self._process.stderr is not None:
             stderr = self._process.stderr
 
             def drain() -> None:
                 while True:
                     chunk = stderr.read(4096)
+
                     if not chunk:
                         return
+
                     self._stderr.extend(chunk)
                     overflow = len(self._stderr) - 100_000
+
                     if overflow > 0:
                         del self._stderr[:overflow]
 
-            Thread(target=drain, daemon=True).start()
+            Thread(
+                target=drain,
+                daemon=True,
+            ).start()
+
         return self._process
+    
+    @staticmethod
+    def _resolve_browsers_path(
+        configured: str | Path | None,
+    ) -> Path:
+        if configured is None:
+            configured = os.environ.get(
+                "PLAYWRIGHT_BROWSERS_PATH"
+            )
+
+        if configured is None:
+            path = Path.home() / ".cache" / "ms-playwright"
+        else:
+            path = Path(configured).expanduser()
+
+        path = path.absolute()
+
+        if not path.is_dir():
+            raise FileNotFoundError(
+                "Playwright browser installation does not exist: "
+                f"{path}. Install Chromium with:\n"
+                f"PLAYWRIGHT_BROWSERS_PATH={path} "
+                f"{sys.executable} -m playwright install chromium"
+            )
+
+        return path

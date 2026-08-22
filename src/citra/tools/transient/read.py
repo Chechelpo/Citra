@@ -51,7 +51,7 @@ class Read(Tool):
         function=FunctionDefinition(
             name="read",
             description=(
-                "Read one or more files inside the filesystem sandbox and "
+                "Read one or more files inside the filesystem sandbox (included allowed ro-binds) and "
                 "return line-numbered text. Literal paths and recursive glob "
                 "patterns are supported. Relative paths resolve from the "
                 "persistent agent workspace; @source addresses the original "

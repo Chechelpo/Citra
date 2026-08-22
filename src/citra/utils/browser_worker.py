@@ -123,6 +123,114 @@ class BrowserWorker:
         if action == "forward":
             self._page.go_forward(wait_until="domcontentloaded")
             return {"url": self._page.url, "title": self._page.title()}
+
+        if action == "hover":
+            self._locator(request).hover(
+                timeout=int(request.get("timeout_ms", 15_000))
+            )
+            return {"url": self._page.url}
+
+        if action == "dblclick":
+            self._locator(request).dblclick(
+                timeout=int(request.get("timeout_ms", 15_000))
+            )
+            return {"url": self._page.url}
+
+        if action == "check":
+            self._locator(request).check(
+                timeout=int(request.get("timeout_ms", 15_000))
+            )
+            return {"url": self._page.url}
+
+        if action == "uncheck":
+            self._locator(request).uncheck(
+                timeout=int(request.get("timeout_ms", 15_000))
+            )
+            return {"url": self._page.url}
+
+        if action == "select":
+            values = request.get("values")
+
+            if values is None:
+                values = [str(request["value"])]
+
+            selected = self._locator(request).select_option(
+                [str(value) for value in values],
+                timeout=int(request.get("timeout_ms", 15_000)),
+            )
+
+            return {
+                "url": self._page.url,
+                "selected": selected,
+            }
+
+        if action == "scroll_into_view":
+            self._locator(request).scroll_into_view_if_needed(
+                timeout=int(request.get("timeout_ms", 15_000))
+            )
+            return {"url": self._page.url}
+
+        if action == "download":
+            path = Path(str(request["path"]))
+            path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            timeout_ms = int(
+                request.get("timeout_ms", 30_000)
+            )
+
+            with self._page.expect_download(
+                timeout=timeout_ms
+            ) as download_info:
+                self._locator(request).click(
+                    timeout=timeout_ms
+                )
+
+            download = download_info.value
+            download.save_as(
+                str(path)
+            )
+
+            return {
+                "path": str(path),
+                "url": self._page.url,
+                "suggested_filename": download.suggested_filename,
+            }
+
+        if action == "evaluate":
+            expression = str(
+                request["expression"]
+            )
+
+            return {
+                "value": self._page.evaluate(
+                    expression
+                ),
+                "url": self._page.url,
+            }
+
+        if action == "upload":
+            path = Path(
+                str(request["path"])
+            )
+
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Upload file does not exist: {path}"
+                )
+
+            self._locator(request).set_input_files(
+                str(path),
+                timeout=int(request.get("timeout_ms", 30_000)),
+            )
+
+            return {
+                "path": str(path),
+                "url": self._page.url,
+            }
+
         raise ValueError(f"Unsupported browser action: {action}")
 
     def close(self) -> None:

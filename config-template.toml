@@ -50,6 +50,17 @@
     always_allow_network = false
     permission_timeout = 30
     request_timeout = 30.0
+    browsers_path = "~/.cache/ms-playwright"
+    
+    # Empty by default. Supported values currently:
+    # "evaluate" - execute arbitrary JavaScript in the page context.
+    # "upload"   - expose a lifecycle-scoped local file to a web page.
+    enabled_unsafe_actions = []
+
+    # If false, each unsafe invocation requires explicit user approval.
+    # Enabling this allows all actions listed in enabled_unsafe_actions
+    # without per-invocation prompting.
+    always_allow_unsafe_actions = false
 
 [sandbox]
     # Additional host paths exposed read-only inside sandboxed commands.
@@ -57,6 +68,7 @@
     # directories such as /home. Supports ~ and environment variables.
     extra_readonly_binds = [
         "~/.local/share/uv",
+        "~/.cache/ms-playwright"
     ]
 
 [notifications]

@@ -39,13 +39,25 @@ class Edit(Tool):
                         ),
                     ),
                     JsonProperty(
+                        name="line",
+                        schema=JsonSchema.integer(
+                            description=(
+                                "1-based line number before which 'new' should be inserted "
+                                "without deleting existing text. Use len(file)+1 to append. "
+                                "Cannot be used together with 'old'."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
                         name="old",
                         schema=JsonSchema.string(
                             description=(
-                                "Exact existing text that should be replaced. "
-                                "Whitespace and line breaks must match."
+                                "Exact existing text to replace. Whitespace and line breaks "
+                                "must match. Omit when using 'line' to insert text."
                             ),
                         ),
+                        required=False,
                     ),
                     JsonProperty(
                         name="new",

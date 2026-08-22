@@ -16,6 +16,7 @@ from .tools.lsp import LspConfig, LspManager
 from .utils.chat_completions_api import call_api
 from .utils.sandbox import WorkspaceSandbox
 from .utils.terminal import RESET, YELLOW
+from .tools.skills.skill_registry import SkillRegistry
 
 
 class CitraApplication:
@@ -34,6 +35,10 @@ class CitraApplication:
         self.workspace = WorkspaceContext.create(
             config=config.workspace_context,
             workspace=self.source_workspace,
+        )
+        self.skills = SkillRegistry(
+            agent_session=self.session,
+            skills_root=None
         )
         try:
             self.libraries = Libraries()
@@ -54,6 +59,7 @@ class CitraApplication:
             self.context = ExecutionContext(
                 self.workspace,
                 libraries=self.libraries,
+                skills=self.skills,
                 lsp_manager=self.lsp_manager,
                 user_interactions=self.interactions,
                 provided_config=config,

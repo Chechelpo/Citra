@@ -58,17 +58,21 @@ class AgentRunner:
                 ),
                 "tools": tools,
             }
+
             reasoning_effort = self.context.config.model.reasoning_effort
             if reasoning_effort is not None:
                 api_arguments["reasoning_effort"] = reasoning_effort
+
             if self.api_call is call_api:
                 api_arguments["retry_interrupt"] = self.session.steering.has_pending
+
             try:
                 response = self.api_call(**api_arguments)
             except ModelRequestInterrupted:
                 # No assistant message was accepted, so this is a safe place
                 # to flush steering and rebuild the request immediately.
                 continue
+
             assistant = get_assistant_message(response)
             text = assistant.get("content")
             if isinstance(text, str) and text:
@@ -77,6 +81,7 @@ class AgentRunner:
                 list[ChatCompletionMessageFunctionToolCallParam],
                 assistant.get("tool_calls") or [],
             )
+            
             self.session.add_assistant_message(assistant)
             if not tool_calls:
                 # Steering may have arrived while a final-looking response was

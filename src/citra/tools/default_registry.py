@@ -24,6 +24,7 @@ TOOL_REGISTRY.register("curl", Curl)
 TOOL_REGISTRY.register("web_search", WebSearch)
 TOOL_REGISTRY.register("prompt_user", PromptUser)
 TOOL_REGISTRY.register("lsp", Lsp)
+TOOL_REGISTRY.register("skill", SkillTool)
 
 # Session / memory tools
 TOOL_REGISTRY.register("todo", TodoTool)

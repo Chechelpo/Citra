@@ -12,6 +12,7 @@ from citra.context import CitraConfig, ExecutionContext, WorkspaceContext
 from citra.context.libraries import Libraries
 from citra.tools.default_registry import TOOL_REGISTRY
 from citra.tools.session_memory import TodoTool
+from citra.tools.skills.skill_registry import SkillRegistry
 
 
 class LifecycleTests(unittest.TestCase):
@@ -117,6 +118,7 @@ permanent_workspace = "{self.source}"
                 workspace,
                 libraries=Libraries(),
                 provided_config=self.config,
+                skills=SkillRegistry(agent_session=session, skills_root=None)
             )
             first = TOOL_REGISTRY.instantiate(context, session)
             todo = first["todo"]

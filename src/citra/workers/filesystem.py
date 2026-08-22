@@ -349,23 +349,85 @@ def _write(arguments: dict[str, Any], fs: ScopedFilesystem) -> str:
 
 def _edit(arguments: dict[str, Any], fs: ScopedFilesystem) -> str:
     path = fs.require_writable_path(arguments["path"])
+
     if not path.is_file():
-        raise FileNotFoundError(f"File not found: {fs.display_path(path)}")
-    old = arguments["old"]
-    if not old:
-        return "error: old string cannot be empty"
+        raise FileNotFoundError(
+            f"File not found: {fs.display_path(path)}"
+        )
+
+    old = arguments.get("old")
+    line = arguments.get("line")
+    new = arguments["new"]
+
+    if old is not None and line is not None:
+        raise ValueError(
+            "Use either 'old' for replacement or 'line' for insertion, not both."
+        )
+
     with path.open("r", encoding="utf-8") as stream:
         text = stream.read()
+
+    if line is not None:
+        if not isinstance(line, int) or line < 1:
+            raise ValueError(
+                "'line' must be a positive 1-based line number."
+            )
+
+        lines = text.splitlines(keepends=True)
+
+        if line > len(lines) + 1:
+            raise ValueError(
+                f"Insert line must be between 1 and "
+                f"{len(lines) + 1}, got {line}."
+            )
+
+        lines.insert(
+            line - 1,
+            new,
+        )
+
+        fs.write_text_atomic(
+            path,
+            "".join(lines),
+        )
+
+        return "ok"
+
+    if old is None:
+        raise ValueError(
+            "'old' is required for replacement, or use 'line' for insertion."
+        )
+
+    if not old:
+        return "error: old string cannot be empty"
+
     count = text.count(old)
+
     if count == 0:
         return "error: old_string not found"
-    replace_all = bool(arguments.get("all", False))
-    if count > 1 and not replace_all:
-        return f"error: old_string appears {count} times, must be unique (use all=true)"
-    replacement = text.replace(old, arguments["new"], -1 if replace_all else 1)
-    fs.write_text_atomic(path, replacement)
-    return "ok"
 
+    replace_all = bool(
+        arguments.get("all", False)
+    )
+
+    if count > 1 and not replace_all:
+        return (
+            f"error: old_string appears {count} times, "
+            "must be unique (use all=true)"
+        )
+
+    replacement = text.replace(
+        old,
+        new,
+        -1 if replace_all else 1,
+    )
+
+    fs.write_text_atomic(
+        path,
+        replacement,
+    )
+
+    return "ok"
 
 def _glob(arguments: dict[str, Any], fs: ScopedFilesystem) -> str:
     base = fs.resolve_path(arguments.get("path", "."))
