@@ -26,7 +26,7 @@ Design goals:
 from __future__ import annotations
 
 from asyncio import TimerHandle
-from typing import Any
+from typing import Any, Callable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import get_app
@@ -128,11 +128,69 @@ class TerminalInput:
         finally:
             watchdog.stop()
 
+    def prompt_until(
+        self,
+        predicate: Callable[[], bool],
+        message: str = "",
+        *,
+        poll_interval: float = 0.1,
+    ) -> str | None:
+        """Read a line, or return ``None`` once ``predicate`` is true.
+
+        This lets the foreground terminal remain available for steering while
+        a background agent works, without polling stdin or running two prompt
+        sessions concurrently.
+        """
+        if poll_interval <= 0:
+            raise ValueError("'poll_interval' must be greater than zero.")
+        watcher = _PredicateWatchdog(
+            predicate=predicate,
+            interval=poll_interval,
+        )
+        try:
+            return self._session.prompt(
+                ANSI(message),
+                pre_run=watcher.start,
+                handle_sigint=True,
+            )
+        except _PredicateSatisfied:
+            return None
+        finally:
+            watcher.stop()
+
 
 class _IdleTimeout(Exception):
     """
     Internal sentinel used to terminate a timed prompt after inactivity.
     """
+
+
+class _PredicateSatisfied(Exception):
+    """Internal sentinel used to wake a prompt for background state."""
+
+
+class _PredicateWatchdog:
+    def __init__(self, *, predicate: Callable[[], bool], interval: float) -> None:
+        self._predicate = predicate
+        self._interval = interval
+        self._handle: TimerHandle | None = None
+
+    def start(self) -> None:
+        self._check()
+
+    def stop(self) -> None:
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle = None
+
+    def _check(self) -> None:
+        if self._predicate():
+            get_app().exit(exception=_PredicateSatisfied())
+            return
+        self._handle = get_app().loop.call_later(
+            self._interval,
+            self._check,
+        )
 
 
 class _IdleWatchdog:

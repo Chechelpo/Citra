@@ -11,7 +11,7 @@ from typing import Sequence
 
 
 class WorkspaceConflictError(RuntimeError):
-    """The source no longer matches the turn's materialized baseline."""
+    """The source no longer matches the lifecycle materialization baseline."""
 
 
 class GitCommandError(RuntimeError):
@@ -136,7 +136,7 @@ def _format_bytes(size: int) -> str:
 
 class WorkspaceChanges:
     """
-    Owns the private baseline and staging index for one agent turn.
+    Owns the private baseline and staging index for one Citra lifecycle.
 
     The private Git repository is stored outside the model-visible working
     directory. It never writes the source repository's index or history.
@@ -230,6 +230,10 @@ class WorkspaceChanges:
     @property
     def workspace(self) -> Path:
         return self.__workspace
+
+    @property
+    def source_is_git_repository(self) -> bool:
+        return self.__source_is_git_repository
 
     def materialize(
         self,
@@ -907,7 +911,7 @@ class WorkspaceChanges:
             if expected is None:
                 if os.path.lexists(source):
                     conflicts.append(
-                        f"{path} (target appeared after the turn started)"
+                        f"{path} (target appeared after the lifecycle started)"
                     )
                 continue
 

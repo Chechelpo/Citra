@@ -9,7 +9,9 @@ requires-python = ">=3.12, <3.13"
 dependencies = [
     "furo>=2025.12.19",
     "jsonschema>=4.0",
+    "openai>=3.3.1",
     "openpyxl>=3.1.5",
+    "playwright>=1.50",
     "prompt-toolkit>=3.0",
     "pypdf>=6,<7",
     "pyrefly>=1.2.0",

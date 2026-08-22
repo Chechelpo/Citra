@@ -6,7 +6,6 @@ from ...utils.directory_tree import (
     DEFAULT_MAX_DEPTH,
     MAX_LIMIT,
     MAX_MAX_DEPTH,
-    render_tree,
 )
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -138,34 +137,7 @@ class Tree(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        return render_tree(
-            self.context.workspace,
-            path=arguments.get(
-                "path",
-                ".",
-            ),
-            max_depth=arguments.get(
-                "max_depth",
-                DEFAULT_MAX_DEPTH,
-            ),
-            directories_only=arguments.get(
-                "directories_only",
-                False,
-            ),
-            skip=arguments.get(
-                "skip",
-                (),
-            ),
-            hidden=arguments.get(
-                "hidden",
-                False,
-            ),
-            limit=arguments.get(
-                "limit",
-                DEFAULT_LIMIT,
-            ),
-            use_default_skips=arguments.get(
-                "use_default_skips",
-                True,
-            ),
+        return self.context.filesystem.execute(
+            "tree",
+            arguments,
         )

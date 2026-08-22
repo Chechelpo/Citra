@@ -15,6 +15,7 @@ summary for each. It exercises:
 4. Bash availability — confirms ``bash`` is on PATH.
 5. Workspace access — confirms the configured workspace exists and is
    readable.
+6. Language servers — confirms both built-in LSP adapters have executables.
 
 Each check is independent: a failure in one does not prevent the
 others from running.
@@ -31,6 +32,7 @@ from typing import Any
 
 from ..utils.api import chat_completions_url
 from ..utils.terminal import BOLD, DIM, GREEN, RED, RESET
+from ..tools.lsp import LspManager
 from .command import Command, CommandResult
 
 
@@ -186,21 +188,42 @@ class TestCommand(Command):
         return path
 
     def _check_workspace(self) -> str:
-        import os
+        self.context.filesystem.execute(
+            "tree",
+            {"path": "@workspace", "max_depth": 0, "limit": 1},
+        )
+        return str(self.context.workspace.workspace)
 
-        workspace = self.context.workspace.workspace
+    def _check_language_servers(self) -> str:
+        manager = self.context.lsp_manager
 
-        if not os.path.isdir(workspace):
+        if not isinstance(manager, LspManager):
+            raise RuntimeError("LSP manager is unavailable.")
+
+        status = manager.status()
+
+        if not status.get("enabled"):
+            return "disabled by config"
+
+        servers = status.get("servers", [])
+        missing = [
+            str(server.get("id"))
+            for server in servers
+            if not server.get("available")
+        ]
+
+        if missing:
             raise RuntimeError(
-                f"Workspace directory does not exist: {workspace}"
+                "missing: "
+                + ", ".join(missing)
+                + "; run the lsp status tool for install hints"
             )
 
-        if not os.access(workspace, os.R_OK):
-            raise RuntimeError(
-                f"Workspace is not readable: {workspace}"
-            )
-
-        return str(workspace)
+        available = [
+            str(server.get("id"))
+            for server in servers
+        ]
+        return ", ".join(available) or "no adapters configured"
 
     # ------------------------------------------------------------------
     # Command entry point
@@ -214,6 +237,7 @@ class TestCommand(Command):
         runner.run("Web Search (SearXNG)", self._check_web_search)
         runner.run("Bash", self._check_bash)
         runner.run("Workspace", self._check_workspace)
+        runner.run("Language Servers", self._check_language_servers)
 
         header = f"{BOLD}Running diagnostics…{RESET}\n\n"
 

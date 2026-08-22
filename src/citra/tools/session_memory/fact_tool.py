@@ -31,7 +31,7 @@ class FactExtract:
 
 class FactTool(MemoryTool[FactExtract]):
     """
-    Manage facts retained in memory for the current agent run.
+    Manage facts retained for the current conversation lifecycle.
 
     Actions:
     - add: record one fact or a batch of facts with optional citations
@@ -83,9 +83,12 @@ class FactTool(MemoryTool[FactExtract]):
                 name="reference",
                 schema=JsonSchema.string(
                     description=(
-                        "Anchor, section, heading, "
-                        "fragment, or other reference "
-                        "within a URL."
+                        "Optional locator within the source. "
+                        "For files, use this for a symbol, heading, "
+                        "field, section, or other location when exact "
+                        "line numbers are unavailable. "
+                        "For URLs, use this for a section, heading, "
+                        "anchor, or fragment."
                     ),
                 ),
                 required=False,
@@ -120,7 +123,7 @@ class FactTool(MemoryTool[FactExtract]):
         function=FunctionDefinition(
             name="fact",
             description=(
-                "Manage facts retained for the current agent run. "
+                "Manage facts retained for the current conversation. "
                 "Operations may target one fact or a batch. "
                 "Use 'add' to remember verified facts, optionally with "
                 "supporting file or URL citations. Use 'remove' when "
@@ -229,13 +232,13 @@ class FactTool(MemoryTool[FactExtract]):
     @override
     def format_extract(
         self,
-        fact: FactExtract,
+        extract: FactExtract,
     ) -> str:
         lines = [
-            f"- [{fact.id}] {fact.content}",
+            f"- [{extract.id}] {extract.content}",
         ]
 
-        for citation in fact.citations:
+        for citation in extract.citations:
             if citation.type == "file":
                 location = citation.source
 
@@ -556,24 +559,43 @@ class FactTool(MemoryTool[FactExtract]):
         for index, citation in enumerate(
             citations
         ):
-            citation_type = citation[
-                "type"
-            ]
+            citation_type = citation["type"]
+
+            source = citation.get("source")
+
+            if (
+                not isinstance(source, str)
+                or not source.strip()
+            ):
+                raise ValueError(
+                    f"citations[{index}]: "
+                    "'source' cannot be empty."
+                )
+
+            reference = citation.get(
+                "reference"
+            )
+
+            if (
+                reference is not None
+                and (
+                    not isinstance(reference, str)
+                    or not reference.strip()
+                )
+            ):
+                raise ValueError(
+                    f"citations[{index}]: "
+                    "'reference' cannot be empty."
+                )
+
+            line = citation.get(
+                "line"
+            )
+            end_line = citation.get(
+                "end_line"
+            )
 
             if citation_type == "file":
-                if "reference" in citation:
-                    raise ValueError(
-                        f"citations[{index}]: "
-                        "'reference' is only valid for URL citations."
-                    )
-
-                line = citation.get(
-                    "line"
-                )
-                end_line = citation.get(
-                    "end_line"
-                )
-
                 if (
                     line is not None
                     and line < 1
@@ -604,11 +626,18 @@ class FactTool(MemoryTool[FactExtract]):
 
             elif citation_type == "url":
                 if (
-                    "line" in citation
-                    or "end_line" in citation
+                    line is not None
+                    or end_line is not None
                 ):
                     raise ValueError(
                         f"citations[{index}]: "
                         "'line' and 'end_line' are only "
                         "valid for file citations."
                     )
+
+            else:
+                raise ValueError(
+                    f"citations[{index}]: "
+                    f"unsupported citation type "
+                    f"{citation_type!r}."
+                )

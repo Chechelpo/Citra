@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -87,65 +86,7 @@ class Edit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        workspace = self.context.workspace
-
-        path = workspace.require_writable_path(
-            arguments["path"]
+        return self.context.filesystem.execute(
+            "edit",
+            arguments,
         )
-
-        if not path.is_file():
-            raise FileNotFoundError(
-                "File not found: "
-                f"{workspace.display_path(path)}"
-            )
-
-        old: str = arguments["old"]
-        new: str = arguments["new"]
-        replace_all: bool = arguments.get(
-            "all",
-            False,
-        )
-
-        if not old:
-            return "error: old string cannot be empty"
-
-        try:
-            with path.open(
-                "r",
-                encoding="utf-8",
-            ) as file:
-                text = file.read()
-        except UnicodeDecodeError as error:
-            raise ValueError(
-                "File is not valid UTF-8 text: "
-                f"{workspace.display_path(path)}"
-            ) from error
-
-        count = text.count(
-            old
-        )
-
-        if count == 0:
-            return "error: old_string not found"
-
-        if (
-            not replace_all
-            and count > 1
-        ):
-            return (
-                f"error: old_string appears {count} times, "
-                "must be unique (use all=true)"
-            )
-
-        replacement = text.replace(
-            old,
-            new,
-            -1 if replace_all else 1,
-        )
-
-        workspace.write_text_atomic(
-            path,
-            replacement,
-        )
-
-        return "ok"

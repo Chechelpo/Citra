@@ -8,6 +8,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from .prompt_user import PromptUser
 
 
 class Bash(Tool):
@@ -50,6 +51,27 @@ class Bash(Tool):
                 ),
                 required=False,
             ),
+            JsonProperty(
+                name="network",
+                schema=JsonSchema.boolean(
+                    description=(
+                        "Request network access for this command. Defaults "
+                        "to false. Unless globally allowed, the exact command "
+                        "and reason are shown to the user for approval."
+                    ),
+                ),
+                required=False,
+            ),
+            JsonProperty(
+                name="reason",
+                schema=JsonSchema.string(
+                    description=(
+                        "Required when network is true. Explain why this "
+                        "command needs network access."
+                    ),
+                ),
+                required=False,
+            ),
         ),
         additional_properties=False,
     )
@@ -62,8 +84,11 @@ class Bash(Tool):
                 "For a single command use cmd, with optional cwd and timeout. "
                 "For multiple independent commands use requests. Batch commands "
                 "are best-effort: a failed command does not prevent later "
-                "commands from running. Commands have no network access. "
-                "The active workspace and temporary agent filesystem are "
+                "commands from running. Network access is disabled by "
+                "default; a command may request it with network=true and a "
+                "required reason. Unless globally allowed, Citra shows the "
+                "exact command and asks the user for permission. "
+                "The active workspace and lifecycle agent filesystem are "
                 "writable; the rest of the host filesystem is read-only. "
                 "Filesystem aliases such as @tmp are supported in cwd. "
                 "Inside Bash commands, use environment variables such as "
@@ -103,14 +128,34 @@ class Bash(Tool):
                         required=False,
                     ),
                     JsonProperty(
+                        name="network",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Request network access for the single command. "
+                                "Defaults to false."
+                            )
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="reason",
+                        schema=JsonSchema.string(
+                            description=(
+                                "Required when network is true. Explain why "
+                                "the command requires network access."
+                            )
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
                         name="requests",
                         schema=JsonSchema.array(
                             REQUEST_SCHEMA,
                             description=(
                                 "Independent Bash commands to execute as a "
-                                "batch. Each request may specify its own cwd "
-                                "and timeout. At most 20 commands may be run "
-                                "per batch."
+                                "batch. Each request may specify its own cwd, "
+                                "timeout, network flag, and reason. At most "
+                                "20 commands may be run per batch."
                             ),
                         ),
                         required=False,
@@ -167,6 +212,8 @@ class Bash(Tool):
                     "timeout",
                     self.DEFAULT_TIMEOUT_SECONDS,
                 ),
+                network=bool(arguments.get("network", False)),
+                reason=arguments.get("reason"),
             )
 
         if not requests:
@@ -177,10 +224,12 @@ class Bash(Tool):
         if (
             arguments.get("cwd") is not None
             or arguments.get("timeout") is not None
+            or arguments.get("network") is not None
+            or arguments.get("reason") is not None
         ):
             raise ValueError(
-                "'cwd' and 'timeout' are only valid with single-command "
-                "'cmd'. Batch requests specify their own cwd and timeout."
+                "'cwd', 'timeout', 'network', and 'reason' are only valid "
+                "with single-command 'cmd'. Batch requests specify their own."
             )
 
         if len(requests) > self.MAX_BATCH_SIZE:
@@ -207,6 +256,8 @@ class Bash(Tool):
                         "timeout",
                         self.DEFAULT_TIMEOUT_SECONDS,
                     ),
+                    network=bool(request.get("network", False)),
+                    reason=request.get("reason"),
                 )
             except Exception as error:
                 output = (
@@ -229,6 +280,8 @@ class Bash(Tool):
         cmd: str,
         cwd: str | None,
         timeout: int,
+        network: bool,
+        reason: str | None,
     ) -> str:
         if not cmd.strip():
             raise ValueError(
@@ -238,6 +291,16 @@ class Bash(Tool):
         if timeout <= 0:
             raise ValueError(
                 "'timeout' must be greater than zero."
+            )
+
+        cleaned_reason = "" if reason is None else reason.strip()
+        if network and not cleaned_reason:
+            raise ValueError(
+                "'reason' is required when Bash requests network access."
+            )
+        if not network and reason is not None:
+            raise ValueError(
+                "'reason' is only valid when 'network' is true."
             )
 
         working_directory = (
@@ -254,6 +317,28 @@ class Bash(Tool):
                 f"{self.context.workspace.display_path(working_directory)}"
             )
 
+        if network and not self.context.config.bash.always_allow_network:
+            shown_cwd = self.context.workspace.display_path(working_directory)
+            shown_command = self._safe_terminal_text(cmd)
+            shown_reason = self._safe_terminal_text(cleaned_reason)
+            permission = PromptUser(self.context)._execute(
+                {
+                    "question": (
+                        "Allow this Bash command to access the network?\n\n"
+                        f"Command:\n{shown_command}\n\n"
+                        f"Working directory: {shown_cwd}\n"
+                        f"Reason: {shown_reason}"
+                    ),
+                    "options": ["Allow once", "Deny"],
+                    "timeout": self.context.config.bash.permission_timeout,
+                }
+            )
+            if permission != "Allow once":
+                return (
+                    "permission-denied: Bash network access was not granted; "
+                    "the command was not executed."
+                )
+
         result = self.context.sandbox.run(
             [
                 "bash",
@@ -264,7 +349,7 @@ class Bash(Tool):
             ],
             cwd=working_directory,
             timeout=timeout,
-            network=False,
+            network=network,
         )
 
         output = result.output.strip()
@@ -294,3 +379,8 @@ class Bash(Tool):
             return marker
 
         return output or "(empty)"
+
+    @staticmethod
+    def _safe_terminal_text(value: str) -> str:
+        """Render model text without allowing terminal control sequences."""
+        return value.encode("unicode_escape").decode("ascii")

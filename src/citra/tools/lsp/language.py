@@ -1,8 +1,7 @@
 """Language identification for the LSP subsystem.
 
-Only Python is wired up with a server adapter in this phase.  The
-:class:`Language` enum keeps additional language entries so future
-adapters can be added without changing call sites.
+Python and the TypeScript language server family are wired up. JavaScript
+and TypeScript intentionally share one persistent server adapter.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ class Language(str, Enum):
 
 _EXTENSIONS: dict[Language, tuple[str, ...]] = {
     Language.PYTHON: (".py", ".pyi"),
-    Language.TYPESCRIPT: (".ts", ".tsx"),
+    Language.TYPESCRIPT: (".ts", ".tsx", ".mts", ".cts"),
     Language.JAVASCRIPT: (".js", ".jsx", ".mjs", ".cjs"),
     Language.JAVA: (".java",),
     Language.HTML: (".html", ".htm"),
@@ -65,7 +64,13 @@ _EXT_TO_LANGUAGE = _extension_to_language()
 
 
 # Languages for which a concrete server adapter is implemented.
-_IMPLEMENTED_LANGUAGES: frozenset[Language] = frozenset({Language.PYTHON})
+_IMPLEMENTED_LANGUAGES: frozenset[Language] = frozenset(
+    {
+        Language.PYTHON,
+        Language.JAVASCRIPT,
+        Language.TYPESCRIPT,
+    }
+)
 
 
 def detect_language(path: str | Path) -> Language | None:
@@ -97,6 +102,16 @@ def language_for_path(path: str | Path) -> Language | None:
     return detect_language(path)
 
 
+def language_id_for_path(path: str | Path, language: Language) -> str:
+    """Return the precise LSP language id, including React dialects."""
+    suffix = Path(path).suffix.casefold()
+    if suffix == ".tsx":
+        return "typescriptreact"
+    if suffix == ".jsx":
+        return "javascriptreact"
+    return language.language_id
+
+
 def is_supported_source_file(path: str | Path) -> bool:
     """Return ``True`` when *path* maps to a language with a server adapter."""
     language = detect_language(path)
@@ -125,4 +140,6 @@ def server_for_language(language: Language) -> str:
 
 _LANGUAGE_SERVERS: dict[Language, str] = {
     Language.PYTHON: "pyright",
+    Language.JAVASCRIPT: "typescript-language-server",
+    Language.TYPESCRIPT: "typescript-language-server",
 }

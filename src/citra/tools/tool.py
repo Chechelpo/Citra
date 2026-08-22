@@ -39,7 +39,7 @@ class Tool(ABC):
         self,
         context: ExecutionContext,
     ) -> None:
-        """Bind a reused session tool to the current agent-turn context."""
+        """Bind a reused conversation tool to the active execution context."""
         self.__context = context
 
     @property

@@ -635,14 +635,13 @@ class RepositoryLibrary:
 
     def __init__(
         self,
-        root: Path = Path(".citra/library/repos"),
-        git_utility: GitRepositoryUtility | None = None,
+        root: Path
     ):
         """
         Initializes the repository documentation library.
 
             1. root:
-                Directory under which all documented repositories are stored.
+                Directory under which all documented repositories are stored. Will start storing at root/repos
 
             2. git_utility:
                 Optional integration hook capable of resolving Git revisions
@@ -653,7 +652,7 @@ class RepositoryLibrary:
         """
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
-        self.git_utility = GitRepositoryUtility()
+        self.git_utility = GitRepositoryUtility(root=root)
         self.repositories: list[DocumentedRepository] = []
         self.scan_diagnostics: list[str] = []
         self._preferred_commits: dict[str, str] = {}

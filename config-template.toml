@@ -5,18 +5,78 @@
     api_key = "key"
     id = "zai-org/glm-5.2:thinking"
     max_tokens = 8192
+    #Be sure to check if your model supports this setting. Comment it out if not
+    reasoning_effort = "max"
+
+    # Provider/network retry policy. The initial request counts as attempt 1.
+    [model.retry]
+        max_attempts = 12
+        request_timeout = 120.0
+        initial_backoff = 1.0
+        max_backoff = 30.0
 
 # web-search tool config. Uses searxng
 [web-search]
     # searxng host url
     host_url = "http://localhost:8888"
 
+[curl]
+    # When false, each curl request requires explicit terminal approval.
+    # Enabling this grants the curl tool network access without prompting.
+    always_allow_network = false
+    permission_timeout = 30
+    default_timeout = 30
+    max_timeout = 300
+    max_output_length = 100000
+
+[bash]
+    # When false, every Bash command requesting network access requires
+    # explicit terminal approval. Local-only Bash never prompts.
+    always_allow_network = false
+    permission_timeout = 30
+
+[subprocess]
+    # Applies only to subprocesses started with network=true.
+    always_allow_network = false
+    permission_timeout = 30
+    max_output_length = 100000
+
+[browser]
+    # Browser navigation runs in a network-capable sandbox, but unapproved
+    # origins are blocked by request interception.
+    # After installing Citra dependencies, install Chromium once in the active
+    # lifecycle filesystem with a network-approved subprocess command:
+    # playwright install chromium
+    always_allow_network = false
+    permission_timeout = 30
+    request_timeout = 30.0
+
+[sandbox]
+    # Additional host paths exposed read-only inside sandboxed commands.
+    # Useful for language runtimes or SDKs stored beneath otherwise masked
+    # directories such as /home. Supports ~ and environment variables.
+    extra_readonly_binds = [
+        "~/.local/share/uv",
+    ]
+
+[notifications]
+    # Emit the terminal BEL character whenever the model waits for an answer
+    # or permission. Terminal settings determine whether this plays a sound or
+    # displays a visual bell.
+    prompt_bell = true
+
 [message-context]
     uncompressed_messages = 20
 
 [workspace]
-    # Temporary agent run workspace. Do not comment next line.
+    # Parent directory for the process-lifetime agent workspace.
     # temporary_workspace = "/temp"
     # 
     # Permanent agent workspace. Do not comment next line.
     # permanent_workspace = "/perm"
+
+[lsp]
+    enabled = true
+    startup_timeout = 30.0
+    request_timeout = 15.0
+    diagnostics_timeout = 10.0

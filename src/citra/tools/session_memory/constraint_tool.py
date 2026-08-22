@@ -21,7 +21,7 @@ class ConstraintExtract:
 
 class ConstraintTool(MemoryTool[ConstraintExtract]):
     """
-    Manage constraints retained in memory for the current agent run.
+    Manage constraints retained for the current conversation lifecycle.
 
     Actions:
     - add: record one or more constraints that must be respected
@@ -32,7 +32,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         function=FunctionDefinition(
             name="constraint",
             description=(
-                "Manage constraints for the current agent run. "
+                "Manage constraints for the current conversation. "
                 "Operations may target one constraint or a batch. "
                 "Use 'add' to record rules, requirements, invariants, "
                 "limitations, or compatibility constraints that must be "

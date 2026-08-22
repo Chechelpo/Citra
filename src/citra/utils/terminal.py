@@ -10,6 +10,8 @@ commands can render consistent output.
 from __future__ import annotations
 
 import os
+import sys
+from typing import TextIO
 
 
 RESET = "\033[0m"
@@ -21,6 +23,13 @@ CYAN = "\033[36m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
+
+
+def terminal_bell(stream: TextIO | None = None) -> None:
+    """Emit one portable terminal attention signal immediately."""
+    destination = sys.stdout if stream is None else stream
+    destination.write("\a")
+    destination.flush()
 
 
 def separator() -> str:

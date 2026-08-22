@@ -8,6 +8,7 @@ is mocked so these tests never touch a real terminal.
 """
 
 import os
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -23,15 +24,14 @@ os.environ.setdefault("CITRA_CONFIG_PATH", os.path.abspath(
 os.environ["PYTHONPATH"] = os.path.abspath(_SRC)
 
 
-from citra.context import ExecutionContext  # noqa: E402
-from citra.tools.prompt_user import (  # noqa: E402
+from citra.tools.transient.prompt_user import (  # noqa: E402
     PromptUser,
     USER_UNAVAILABLE_MESSAGE,
 )
 
 
 def _make_prompt_user(answer) -> PromptUser:
-    context = ExecutionContext()
+    context = SimpleNamespace(user_interactions=None)
     tool = PromptUser(context)
     if isinstance(answer, BaseException):
         tool._execute  # ensure bound
@@ -44,11 +44,11 @@ def _run(arguments, answer):
     utility mocked to return *answer* (or raise it if it is an
     exception).
     """
-    context = ExecutionContext()
+    context = SimpleNamespace(user_interactions=None)
     tool = PromptUser(context)
 
     with mock.patch(
-        "citra.tools.prompt_user.terminal_input"
+        "citra.tools.transient.prompt_user.terminal_input"
     ) as fake_ti:
         if isinstance(answer, BaseException):
             fake_ti.prompt_with_idle_timeout.side_effect = answer

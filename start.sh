@@ -34,7 +34,8 @@ SCRIPT_DIR="$(
     pwd
 )"
 
-CONFIG_PATH="$SCRIPT_DIR/.citra/config.toml"
+CITRA_ROOT="$SCRIPT_DIR/.citra"
+CONFIG_PATH="$CITRA_ROOT/config.toml"
 PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
 if [[ ! -x "$PYTHON" ]]; then
@@ -48,7 +49,9 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 fi
 
 # Permanent Citra configuration.
+export CITRA_INSTALL_ROOT="$SCRIPT_DIR"
 export CITRA_CONFIG_PATH="$CONFIG_PATH"
+export CITRA_ROOT="$CITRA_ROOT"
 
 # Import Citra from this installation only. Do not inherit the caller's
 # PYTHONPATH, which could make unrelated Python packages shadow Citra.
@@ -62,5 +65,5 @@ export PYTHONNOUSERSITE=1
 #
 # The caller's current directory is intentionally preserved and becomes
 # Citra's active workspace. WorkspaceContext creates and manages the
-# disposable agent filesystem separately.
+# lifecycle-scoped agent filesystem separately.
 exec "$PYTHON" -m citra.main "$@"

@@ -29,7 +29,7 @@ class MemoryTool(SessionTool, ABC, Generic[TExtract]):
     def should_offer_documentation(self) -> bool:
         """
         Return whether this memory type may contain information worth
-        persisting into repository documentation at the end of the run.
+        persisting into repository documentation at the end of the work.
         """
         ...
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...agent.interactions import UserInteractionBroker
 from ...context import ExecutionContext
 from ..tool import Tool
 from ...utils.json_schema import (
@@ -40,6 +41,7 @@ from ...utils.terminal import (
     DIM,
     RESET,
     YELLOW,
+    terminal_bell,
 )
 from ...utils.terminal_input import terminal_input
 
@@ -178,34 +180,51 @@ class PromptUser(Tool):
 
             options = cleaned
 
-        # Render the prompt.
-        print()
-        print(f"{CYAN}⏺{RESET} {BOLD}{question}{RESET}")
+        broker = self.context.user_interactions
 
-        if options:
-            for index, option in enumerate(options, start=1):
-                print(
-                    f"  {DIM}{index}.{RESET} {option}"
-                )
-
-            print(
-                f"\n{DIM}Type a number to select an option, "
-                f"or type your own answer.{RESET}"
+        if isinstance(broker, UserInteractionBroker):
+            answer = broker.ask(
+                question,
+                tuple(options or ()),
+                timeout=timeout,
             )
         else:
-            print(f"{DIM}(open-ended question){RESET}")
+            # Non-REPL callers retain the direct behavior; the interactive
+            # application uses a broker so only the foreground thread ever
+            # owns prompt_toolkit.
+            config = getattr(self.context, "config", None)
+            notifications = getattr(config, "notifications", None)
+            if notifications is None or getattr(
+                notifications,
+                "prompt_bell",
+                True,
+            ):
+                terminal_bell()
+            print()
+            print(f"{CYAN}⏺{RESET} {BOLD}{question}{RESET}")
 
-        answer = terminal_input.prompt_with_idle_timeout(
-            timeout=timeout,
-            message=f"{BOLD}{BLUE}❯{RESET} ",
-        )
+            if options:
+                for index, option in enumerate(options, start=1):
+                    print(f"  {DIM}{index}.{RESET} {option}")
+                print(
+                    f"\n{DIM}Type a number to select an option, "
+                    f"or type your own answer.{RESET}"
+                )
+            else:
+                print(f"{DIM}(open-ended question){RESET}")
+
+            answer = terminal_input.prompt_with_idle_timeout(
+                timeout=timeout,
+                message=f"{BOLD}{BLUE}❯{RESET} ",
+            )
 
         if answer is None:
-            print(
-                f"{YELLOW}⏺ (no response within "
-                f"{timeout}s — proceeding as user-unavailable)"
-                f"{RESET}"
-            )
+            if not isinstance(broker, UserInteractionBroker):
+                print(
+                    f"{YELLOW}⏺ (no response within "
+                    f"{timeout}s — proceeding as user-unavailable)"
+                    f"{RESET}"
+                )
             return USER_UNAVAILABLE_MESSAGE
 
         answer = answer.strip()

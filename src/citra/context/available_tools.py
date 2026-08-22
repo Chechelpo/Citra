@@ -94,6 +94,13 @@ _COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         ),
     ),
     CommandGroup(
+        name="Language servers",
+        commands=(
+            "pyright-langserver",
+            "typescript-language-server",
+        ),
+    ),
+    CommandGroup(
         name="Java / JVM",
         commands=(
             "java",
@@ -240,7 +247,7 @@ def get_available_tools(
     sections: list[str] = [
         (
             "Bash runs without network access. Filesystem writes are "
-            "restricted to the active workspace and temporary agent "
+            "restricted to the active workspace and lifecycle agent "
             "filesystem. Use the dedicated git tool for Git operations."
         )
     ]

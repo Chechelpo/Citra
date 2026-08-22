@@ -76,17 +76,21 @@ class LspCapabilities:
         caps = caps or {}
 
         def _has(key: str) -> bool:
-            return bool(caps.get(key))
+            value = caps.get(key)
+            # Provider options may legitimately be an empty object. Presence
+            # still means the capability is supported unless the server
+            # explicitly reports false/null.
+            return value is not None and value is not False
 
         # ``textDocumentSync`` may be a bool, a number, or an object.
         # It governs synchronisation rather than a semantic capability, so
         # it is not modelled as a boolean field here.
 
         diag = caps.get("diagnosticProvider")
-        diagnostics_pull = bool(diag)
+        diagnostics_pull = diag is not None and diag is not False
 
         rename_provider = caps.get("renameProvider")
-        rename = bool(rename_provider)
+        rename = rename_provider is not None and rename_provider is not False
         # ``renameProvider`` may be a bool or an object with ``prepareProvider``.
         prepare_rename = False
         if isinstance(rename_provider, dict):

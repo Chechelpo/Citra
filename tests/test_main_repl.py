@@ -10,6 +10,8 @@ real terminal is involved.  We verify that slash commands (``/q``,
 """
 
 import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -60,15 +62,47 @@ def run_repl(inputs):
             ]
         }
 
-    with mock.patch("citra.main.terminal_input") as fake_ti, \
-            mock.patch("builtins.print", side_effect=fake_print), \
-            mock.patch("citra.main.call_api", side_effect=fake_call_api):
-        fake_ti.prompt.side_effect = fake_prompt
+    with tempfile.TemporaryDirectory() as raw_temporary:
+        temporary = Path(raw_temporary)
+        source = temporary / "source"
+        source.mkdir()
+        config = temporary / "config.toml"
+        config.write_text(
+            f'''\
+[model]
+host = "https://example.invalid/v1"
+api_key = "test"
+id = "test-model"
+max_tokens = 128
 
-        try:
-            citra_main.main()
-        except EOFError:
-            pass
+[web-search]
+host_url = "http://example.invalid"
+
+[message-context]
+uncompressed_messages = 20
+
+[workspace]
+temporary_workspace = "{temporary / 'agent'}"
+permanent_workspace = "{source}"
+''',
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CITRA_CONFIG_PATH": str(config),
+                "CITRA_ROOT": str(temporary / ".citra"),
+            },
+        ), mock.patch("citra.main.terminal_input") as fake_ti, \
+                mock.patch("builtins.print", side_effect=fake_print), \
+                mock.patch("citra.main.call_api", side_effect=fake_call_api):
+            fake_ti.prompt.side_effect = fake_prompt
+
+            try:
+                citra_main.main()
+            except EOFError:
+                pass
 
     return outputs, call_api_calls
 

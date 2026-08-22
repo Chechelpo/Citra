@@ -2,8 +2,8 @@
 
 > Execution context and configuration loading.
 
-This package provides the runtime context that every tool and command
-operates within.
+This package provides process-lifetime configuration, workspace, staging, and
+execution services used by every tool and command.
 
 ---
 
@@ -11,16 +11,19 @@ operates within.
 
 ### `execution_context.py`
 
-`ExecutionContext` — a **frozen dataclass** created once per model API
-call.  It captures:
+`ExecutionContext` is a **frozen dataclass** created once by
+`CitraApplication` for the life of the process. It captures:
 
 | Property       | Source                                        |
 |----------------|-----------------------------------------------|
 | `os`           | `platform.system()` (normalized: `darwin`→`macos`) |
-| `workspace`    | `os.getcwd()` at construction time            |
-| `config`       | `CitraConfig.load(path)` from `CITRA_CONFIG_PATH` |
+| `workspace`    | lifecycle-scoped `WorkspaceContext`            |
+| `config`       | supplied `CitraConfig`, or `CITRA_CONFIG_PATH` fallback |
 | `model_config` | shortcut → `config.model`                     |
 | `web_search_config` | shortcut → `config.web_search`          |
+| `sandbox`      | Bubblewrap execution broker                    |
+| `filesystem`   | fixed-operation sandbox filesystem client      |
+| `lsp_manager`  | persistent language-server manager             |
 
 **Key method:** `has_command(cmd)` — checks whether an executable is on
 `PATH` (used by the `bash` tool).
@@ -31,29 +34,31 @@ prohibit normal assignment.
 
 ### `config_loader.py`
 
-Three frozen dataclasses:
+Configuration uses frozen dataclasses, including:
 
-- **`ModelConfig`** — `host`, `api_key`, `id`, `max_tokens`.
+- **`ModelConfig`** — model identity, limits, reasoning, and retry policy.
+- **`RetryConfig`** — attempts, request timeout, and backoff bounds.
 - **`WebSearchConfig`** — `host_url`.
+- **`WorkspaceContextConfig`** — source and temporary-root selection.
+- **`LspContextConfig`** — enable flag and protocol timeouts.
 - **`CitraConfig`** — top-level config, loaded from a TOML file via
-  `CitraConfig.load(path)`.  The file must contain `[model]` and
-  `[web-search]` tables.  Missing keys raise `ValueError`.
+  `CitraConfig.load()`. Missing required keys raise `ValueError`.
 
 TOML parsing uses the stdlib `tomllib` module.
 
 ### `__init__.py`
 
-Re-exports `ExecutionContext`, `CitraConfig`, `ModelConfig`,
-`WebSearchConfig`.
+Re-exports the public configuration, execution, workspace, and staging types.
 
 ---
 
 ## Important notes for agents
 
-- **Never construct `ExecutionContext` with positional args** — it reads
-  from environment / cwd automatically.  Just call `ExecutionContext()`.
+- `CitraApplication` normally constructs `ExecutionContext` with the one
+  lifecycle workspace and shared services. Tests may inject those services.
 - The config file path comes from the **`CITRA_CONFIG_PATH`** env var,
-  which is set by `start.sh`.  If it's missing, construction raises
-  `RuntimeError`.
-- `ExecutionContext` is **frozen** — you cannot mutate it after
-  construction.  Create a new one if you need a different context.
+  which is set by `start.sh`, unless a parsed config is explicitly supplied.
+- `ExecutionContext` is frozen. Long-lived mutable services are referenced by
+  it rather than replaced.
+- General filesystem tools must use `context.filesystem`; privileged
+  materialization/staging are narrow domain brokers, not arbitrary I/O APIs.

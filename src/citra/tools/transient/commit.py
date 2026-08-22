@@ -31,7 +31,7 @@ class Commit(Tool):
                 "never creates a Git commit and never changes the source "
                 "repository's index or history. Actions: status, diff, stage, "
                 "stage_patch, unstage, and apply. Apply performs a conflict "
-                "check against the content originally materialized this turn."
+                "check against the content originally materialized this process."
             ),
             parameters=JsonSchema.object(
                 properties=(

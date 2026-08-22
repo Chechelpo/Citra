@@ -1,6 +1,3 @@
-import glob as globlib
-import os
-from pathlib import Path
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -72,45 +69,7 @@ class Glob(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        base_path = self.context.workspace.resolve_path(
-            arguments.get(
-                "path",
-                ".",
-            )
+        return self.context.filesystem.execute(
+            "glob",
+            arguments,
         )
-
-        pattern = str(
-            base_path / arguments["pat"]
-        )
-
-        entries = globlib.glob(
-            pattern,
-            recursive=True,
-        )
-
-        entries = sorted(
-            entries,
-            key=self._modified_time,
-            reverse=True,
-        )
-
-        if not entries:
-            return "none"
-
-        return "\n".join(
-            self.context.workspace.display_path(
-                Path(entry)
-            )
-            for entry in entries
-        )
-
-    @staticmethod
-    def _modified_time(
-        path: str,
-    ) -> float:
-        try:
-            return os.path.getmtime(
-                path
-            )
-        except OSError:
-            return 0

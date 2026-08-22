@@ -72,7 +72,7 @@ class SourceRange:
     def contains(self, position: SourcePosition) -> bool:
         if position < self.start:
             return False
-        if position > self.end:
+        if position >= self.end:
             return False
         return True
 

@@ -24,7 +24,7 @@ class Write(Tool):
                 "Write complete text content to a file. "
                 "Creates the file if it does not exist and completely "
                 "overwrites it if it does exist. Writes are restricted "
-                "to the isolated agent workspace and temporary agent "
+                "to the isolated agent workspace and lifecycle agent "
                 "filesystem. @source is read-only. "
                 "Use edit instead when only a specific existing fragment "
                 "should be changed."
@@ -68,21 +68,7 @@ class Write(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        path = self.context.workspace.require_writable_path(
-            arguments["path"]
+        return self.context.filesystem.execute(
+            "write",
+            arguments,
         )
-
-        path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        with path.open(
-            "w",
-            encoding="utf-8",
-        ) as file:
-            file.write(
-                arguments["content"]
-            )
-
-        return "ok"

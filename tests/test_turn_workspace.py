@@ -732,19 +732,20 @@ diff --git a/tracked.txt b/tracked.txt
 
         command = popen.call_args.args[0]
         environment = popen.call_args.kwargs["env"]
+        inherited_descriptors = popen.call_args.kwargs["pass_fds"]
 
         self.assertEqual(result.output, "ok\n")
         self.assertIn("--unshare-net", command)
-        self.assertIn(
-            [
-                "--ro-bind",
-                str(self.source),
-                str(self.context.workspace / "@source"),
-            ],
-            [
-                command[index:index + 3]
-                for index in range(len(command) - 2)
-            ],
+        source_alias = str(self.context.workspace / "@source")
+        source_alias_mounts = [
+            command[index:index + 3]
+            for index in range(len(command) - 2)
+            if command[index] == "--ro-bind-fd"
+            and command[index + 2] == source_alias
+        ]
+        self.assertEqual(
+            len(source_alias_mounts),
+            1,
         )
         self.assertEqual(
             environment["HOME"],
@@ -757,6 +758,159 @@ diff --git a/tracked.txt b/tracked.txt
         self.assertEqual(
             environment["CITRA_SOURCE"],
             str(self.source),
+        )
+        self.assertTrue(inherited_descriptors)
+        for descriptor in inherited_descriptors:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
+    def test_sandbox_skips_missing_mask_destinations(self) -> None:
+        sandbox = WorkspaceSandbox(
+            self.context
+        )
+        existing_directory = self.base / "masked-directory"
+        existing_directory.mkdir()
+        existing_file = self.base / "masked-file"
+        existing_file.write_text(
+            "secret\n",
+            encoding="utf-8",
+        )
+        missing_directory = self.base / "missing-directory"
+        missing_file = self.base / "missing-file"
+
+        with mock.patch(
+            "citra.utils.sandbox.MASKED_HOST_DIRS",
+            (
+                str(existing_directory),
+                str(missing_directory),
+            ),
+        ), mock.patch(
+            "citra.utils.sandbox.MASKED_HOST_FILES",
+            (
+                str(existing_file),
+                str(missing_file),
+            ),
+        ):
+            command = sandbox._build_bwrap_command(
+                bwrap="/usr/bin/bwrap",
+                command=["true"],
+                cwd_path=self.context.workspace,
+                network=False,
+                env=self.context.environment(),
+                turn_dirs=sandbox._prepare_lifecycle_directories(),
+            )
+
+        self.assertIn(
+            ["--tmpfs", str(existing_directory)],
+            [
+                command[index:index + 2]
+                for index in range(len(command) - 1)
+            ],
+        )
+        self.assertNotIn(str(missing_directory), command)
+        self.assertIn(
+            ["--ro-bind", "/dev/null", str(existing_file)],
+            [
+                command[index:index + 3]
+                for index in range(len(command) - 2)
+            ],
+        )
+        self.assertNotIn(str(missing_file), command)
+
+    def test_sandbox_recreates_parents_for_runtime_under_mask(self) -> None:
+        sandbox = WorkspaceSandbox(
+            self.context
+        )
+        masked_home = self.base / "host-home"
+        project = masked_home / "felipey" / "Code" / "Citra"
+        source_runtime = project / "src"
+        virtual_environment = project / ".venv"
+        executable_directory = virtual_environment / "bin"
+        source_runtime.mkdir(parents=True)
+        executable_directory.mkdir(parents=True)
+        executable = executable_directory / "python"
+        executable.write_text(
+            "",
+            encoding="utf-8",
+        )
+
+        with mock.patch(
+            "citra.utils.sandbox.MASKED_HOST_DIRS",
+            (str(masked_home),),
+        ), mock.patch.object(
+            WorkspaceSandbox,
+            "_citra_runtime_readonly_binds",
+            return_value=(
+                source_runtime,
+                virtual_environment,
+            ),
+        ), mock.patch.object(
+            WorkspaceSandbox,
+            "_command_runtime_readonly_binds",
+            return_value=(
+                executable_directory,
+                virtual_environment,
+            ),
+        ), mock.patch(
+            "citra.utils.sandbox.shutil.which",
+            return_value="/usr/bin/bwrap",
+        ), mock.patch(
+            "citra.utils.sandbox.subprocess.Popen",
+            return_value=_FakeProcess(),
+        ) as popen:
+            sandbox.run(
+                [str(executable)],
+                timeout=5,
+                network=False,
+            )
+
+        command = popen.call_args.args[0]
+
+        directory_operations = [
+            command[index:index + 2]
+            for index in range(len(command) - 1)
+        ]
+        bind_operations = [
+            command[index:index + 3]
+            for index in range(len(command) - 2)
+        ]
+
+        self.assertIn(
+            ["--dir", str(masked_home / "felipey")],
+            directory_operations,
+        )
+        self.assertIn(
+            ["--dir", str(project)],
+            directory_operations,
+        )
+        self.assertIn(
+            [
+                "--ro-bind-fd",
+                next(
+                    command[index + 1]
+                    for index in range(len(command) - 2)
+                    if command[index] == "--ro-bind-fd"
+                    and command[index + 2] == str(virtual_environment)
+                ),
+                str(virtual_environment),
+            ],
+            bind_operations,
+        )
+        self.assertNotIn(
+            [
+                "--ro-bind-fd",
+                next(
+                    (
+                        command[index + 1]
+                        for index in range(len(command) - 2)
+                        if command[index] == "--ro-bind-fd"
+                        and command[index + 2] == str(executable_directory)
+                    ),
+                    "not-mounted",
+                ),
+                str(executable_directory),
+            ],
+            bind_operations,
         )
 
 

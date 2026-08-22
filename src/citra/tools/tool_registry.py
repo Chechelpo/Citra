@@ -22,18 +22,12 @@ class ToolRegistry:
         current AgentSession.
 
     - MemoryTool:
-        Instantiated once per AgentSession and reused across model
-        calls so its in-memory extracts survive for the duration
-        of the agent run.
+        Owned by AgentSession and reused across model calls and turns, even
+        when older conversation messages are omitted from model context.
     """
 
     def __init__(self):
         self.__tools: dict[str, type[Tool]] = {}
-
-        self.__memory_tools: dict[
-            int,
-            dict[str, MemoryTool],
-        ] = {}
 
     def register(
         self,
@@ -92,28 +86,16 @@ class ToolRegistry:
         context: ExecutionContext,
         session: AgentSession,
     ) -> MemoryTool:
-        session_key = id(session)
-
-        session_tools = self.__memory_tools.setdefault(
-            session_key,
-            {},
+        tool = session.memory.get_or_create(
+            tool_id,
+            lambda: tool_type(
+                context=context,
+                session=session,
+            ),
         )
-
-        existing = session_tools.get(tool_id)
-
-        if existing is not None:
-            existing.rebind_context(
-                context
-            )
-            return existing
-
-        tool = tool_type(
-            context=context,
-            session=session,
+        tool.rebind_context(
+            context
         )
-
-        session_tools[tool_id] = tool
-
         return tool
 
     def release_session(
@@ -121,13 +103,11 @@ class ToolRegistry:
         session: AgentSession,
     ) -> None:
         """
-        Release MemoryTool instances associated with a completed
-        AgentSession.
+        Compatibility no-op; AgentSession owns and clears its own memory.
         """
-        self.__memory_tools.pop(
-            id(session),
-            None,
-        )
+        # Memory lifetime is explicitly controlled by AgentSession now.
+        # Retain this method for callers written against the old registry API.
+        del session
 
     def contains(
         self,

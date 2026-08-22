@@ -3,9 +3,8 @@
 > Slash-command framework for Citra's REPL.
 
 Commands are user-facing actions triggered by typing `/name` at the
-interactive prompt.  They run **outside** the agentic loop — they do not
-involve the model and are executed synchronously by `main.py`'s
-`handle_command()`.
+interactive prompt. They run **outside** the agentic loop and are dispatched
+synchronously by `CitraApplication.handle_command()`.
 
 ---
 
@@ -53,7 +52,7 @@ Re-exports `Command`, `CommandRegistry`, `CommandResult`,
 | `help`| `HelpCommand`  | `help.py`  | Lists all registered commands.          |
 | `test`| `TestCommand`  | `test.py`  | Runs diagnostic checks (config, model API, web search, bash, workspace). |
 
-Legacy alias: bare `/exit` is mapped to `/q` in `main.py`.
+Legacy alias: bare `/exit` is mapped to `/q` by `CitraApplication`.
 
 ---
 

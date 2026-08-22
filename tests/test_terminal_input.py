@@ -26,6 +26,7 @@ os.environ["PYTHONPATH"] = os.path.abspath(_SRC)
 from citra.utils.terminal_input import (  # noqa: E402
     _IdleTimeout,
     _IdleWatchdog,
+    _PredicateSatisfied,
     terminal_input,
     TerminalInput,
 )
@@ -193,6 +194,18 @@ class TerminalInputApiTests(unittest.TestCase):
 
     def test_module_singleton_exists(self):
         self.assertIsInstance(terminal_input, TerminalInput)
+
+    def test_prompt_until_returns_none_when_background_state_changes(self):
+        ti = TerminalInput()
+
+        with mock.patch.object(
+            ti._session,
+            "prompt",
+            side_effect=_PredicateSatisfied(),
+        ):
+            result = ti.prompt_until(lambda: True, "steer> ")
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

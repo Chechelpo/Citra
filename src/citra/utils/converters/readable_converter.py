@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 

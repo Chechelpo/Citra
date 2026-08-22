@@ -24,12 +24,14 @@ class TodoTool(MemoryTool[TodoExtract]):
         function=FunctionDefinition(
             name="todo",
             description=(
-                "Manage TODOs for the current agent run. "
+                "Manage TODOs for the current conversation. "
+                "Each TODO has a stable ID used by 'check' and 'remove'. "
                 "Operations may target one TODO or a batch. "
-                "Use 'add' to record required work, 'check' only after "
-                "the work has actually been completed, and 'remove' only "
-                "when TODOs are stale, invalid, irrelevant, or based on "
-                "incorrect assertions."
+                "Use 'add' to append required work, 'insert' to place newly "
+                "discovered work at a specific zero-based list position, "
+                "'check' only after the work has actually been completed, "
+                "and 'remove' only when TODOs are stale, invalid, irrelevant, "
+                "or based on incorrect assertions."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -39,6 +41,7 @@ class TodoTool(MemoryTool[TodoExtract]):
                             description="TODO operation to perform.",
                             enum=(
                                 "add",
+                                "insert",
                                 "check",
                                 "remove",
                             ),
@@ -48,7 +51,7 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="content",
                         schema=JsonSchema.string(
                             description=(
-                                "Single TODO description for 'add'. "
+                                "Single TODO description for 'add' or 'insert'. "
                                 "Use 'contents' to add multiple TODOs."
                             ),
                         ),
@@ -59,7 +62,22 @@ class TodoTool(MemoryTool[TodoExtract]):
                         schema=JsonSchema.array(
                             items=JsonSchema.string(),
                             description=(
-                                "TODO descriptions to add as a batch."
+                                "TODO descriptions to add as a batch. "
+                                "Supported by 'add' only."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="index",
+                        schema=JsonSchema.integer(
+                            description=(
+                                "Zero-based list position for 'insert'. "
+                                "This is not a TODO ID. Position 0 inserts "
+                                "before the first TODO; a position equal to "
+                                "the current TODO count inserts at the end. "
+                                "Existing TODOs at and after this position "
+                                "move down while keeping their IDs."
                             ),
                         ),
                         required=False,
@@ -68,8 +86,10 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="id",
                         schema=JsonSchema.integer(
                             description=(
-                                "Single TODO ID for 'check' or 'remove'. "
-                                "Use 'ids' to target multiple TODOs."
+                                "Stable TODO ID for a single TODO targeted by "
+                                "'check' or 'remove'. This is not a list "
+                                "position or step number. Use 'ids' to target "
+                                "multiple TODO IDs."
                             ),
                         ),
                         required=False,
@@ -79,7 +99,9 @@ class TodoTool(MemoryTool[TodoExtract]):
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
                             description=(
-                                "TODO IDs to check or remove as a batch."
+                                "Stable TODO IDs to check or remove as a batch. "
+                                "These are TODO IDs, not list positions or "
+                                "step numbers."
                             ),
                         ),
                         required=False,
@@ -129,7 +151,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         )
 
         return (
-            f"- [{mark}] [{extract.id}] "
+            f"- [{mark}] [ID {extract.id}] "
             f"{extract.content}"
         )
 
@@ -159,6 +181,11 @@ class TodoTool(MemoryTool[TodoExtract]):
                 arguments
             )
 
+        if action == "insert":
+            return self._insert(
+                arguments
+            )
+
         if action == "check":
             return self._check(
                 arguments
@@ -177,6 +204,11 @@ class TodoTool(MemoryTool[TodoExtract]):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        if arguments.get("index") is not None:
+            raise ValueError(
+                "'index' is only valid for TODO action 'insert'."
+            )
+
         contents = self._get_contents(
             arguments
         )
@@ -201,7 +233,7 @@ class TodoTool(MemoryTool[TodoExtract]):
             todo = added[0]
 
             return (
-                f"Added TODO [{todo.id}]: "
+                f"Added TODO ID {todo.id}: "
                 f"{todo.content}"
             )
 
@@ -210,7 +242,67 @@ class TodoTool(MemoryTool[TodoExtract]):
 
         return (
             f"Added {len(added)} TODOs "
-            f"[{first_id}-{last_id}]."
+            f"with IDs {first_id}-{last_id}."
+        )
+
+    def _insert(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        content = arguments.get(
+            "content"
+        )
+        contents = arguments.get(
+            "contents"
+        )
+        index = arguments.get(
+            "index"
+        )
+
+        if contents is not None:
+            raise ValueError(
+                "TODO action 'insert' accepts a single 'content', "
+                "not 'contents'."
+            )
+
+        if content is None:
+            raise ValueError(
+                "'content' is required for TODO action 'insert'."
+            )
+
+        content = content.strip()
+
+        if not content:
+            raise ValueError(
+                "TODO content cannot be empty."
+            )
+
+        if index is None:
+            raise ValueError(
+                "'index' is required for TODO action 'insert'."
+            )
+
+        if not 0 <= index <= len(self.__extracts):
+            raise ValueError(
+                f"TODO insertion index must be between 0 and "
+                f"{len(self.__extracts)}, got {index}."
+            )
+
+        todo = TodoExtract(
+            id=self.__next_id,
+            content=content,
+        )
+
+        self.__next_id += 1
+
+        self.__extracts.insert(
+            index,
+            todo,
+        )
+
+        return (
+            f"Inserted TODO ID {todo.id} at list index {index}: "
+            f"{todo.content}"
         )
 
     def _check(
@@ -260,7 +352,7 @@ class TodoTool(MemoryTool[TodoExtract]):
                 ]
 
                 return (
-                    f"TODO [{todo.id}] is already checked: "
+                    f"TODO ID {todo.id} is already checked: "
                     f"{todo.content}"
                 )
 
@@ -271,7 +363,7 @@ class TodoTool(MemoryTool[TodoExtract]):
             ]
 
             return (
-                f"Checked TODO [{todo.id}]: "
+                f"Checked TODO ID {todo.id}: "
                 f"{todo.content}"
             )
 
@@ -279,7 +371,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
         if checked:
             parts.append(
-                "checked "
+                "checked TODO IDs "
                 + self._format_ids(
                     checked
                 )
@@ -287,7 +379,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
         if already_checked:
             parts.append(
-                "already checked "
+                "already checked TODO IDs "
                 + self._format_ids(
                     already_checked
                 )
@@ -331,12 +423,12 @@ class TodoTool(MemoryTool[TodoExtract]):
             todo = todos[0]
 
             return (
-                f"Removed TODO [{todo.id}]: "
+                f"Removed TODO ID {todo.id}: "
                 f"{todo.content}"
             )
 
         return (
-            f"Removed {len(todos)} TODOs "
+            f"Removed {len(todos)} TODOs with IDs "
             f"{self._format_ids(ids)}."
         )
 
@@ -420,7 +512,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
         if len(ids) != len(set(ids)):
             raise ValueError(
-                "'ids' cannot contain duplicates."
+                "'ids' cannot contain duplicate TODO IDs."
             )
 
         return list(
@@ -438,7 +530,7 @@ class TodoTool(MemoryTool[TodoExtract]):
                 return index
 
         raise ValueError(
-            f"TODO [{todo_id}] does not exist."
+            f"TODO ID {todo_id} does not exist."
         )
 
     @staticmethod

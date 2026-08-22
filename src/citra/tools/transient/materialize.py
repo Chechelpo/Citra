@@ -18,7 +18,7 @@ class Materialize(Tool):
             name="materialize",
             description=(
                 "Preview or copy selected files from read-only @source into "
-                "the turn-scoped agent workspace. Git is not required: "
+                "the lifecycle-scoped agent workspace. Git is not required: "
                 "tracked, untracked, and non-repository files are eligible. "
                 "Calls are additive and never overwrite files already copied "
                 "or edited by the agent. Directory and glob expansion obeys "

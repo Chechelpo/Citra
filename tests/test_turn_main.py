@@ -5,36 +5,25 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
 
-from citra import main as citra_main
 from citra.agent import AgentSession
-from citra.context.config_loader import WorkspaceContextConfig
+from citra.application import CitraApplication
+from citra.context import CitraConfig, ExecutionContext, WorkspaceContext
+from citra.context.libraries import Libraries
 from citra.tools.default_registry import TOOL_REGISTRY
 from citra.tools.session_memory import TodoTool
 
 
-class TurnMainTests(unittest.TestCase):
+class LifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.base = Path(self.temporary.name)
         self.source = self.base / "source"
         self.source.mkdir()
-        self.turns = self.base / "turns"
-        self.config = self.base / "config.toml"
-
-        self._git("init", "--quiet")
-        self._git("config", "user.name", "Test User")
-        self._git("config", "user.email", "test@example.invalid")
-        (self.source / "tracked.py").write_text(
-            "VALUE = 1\n",
-            encoding="utf-8",
-        )
-        self._git("add", "tracked.py")
-        self._git("commit", "--quiet", "-m", "baseline")
-
-        self.config.write_text(
-            """\
+        subprocess.run(["git", "init", "--quiet", str(self.source)], check=True)
+        self.config_path = self.base / "config.toml"
+        self.config_path.write_text(
+            f'''\
 [model]
 host = "https://example.invalid/v1"
 api_key = "test"
@@ -45,231 +34,116 @@ max_tokens = 128
 host_url = "http://example.invalid"
 
 [message-context]
-uncompressed_messages = 20
+uncompressed_messages = 1
 
 [workspace]
-temporary_workspace = "{temporary_workspace}"
-permanent_workspace = "{permanent_workspace}"
-""".format(
-                temporary_workspace=self.turns,
-                permanent_workspace=self.source,
-            ),
+temporary_workspace = "{self.base / 'agent'}"
+permanent_workspace = "{self.source}"
+''',
             encoding="utf-8",
         )
-        self.previous_config = os.environ.get(
-            "CITRA_CONFIG_PATH"
-        )
-        os.environ["CITRA_CONFIG_PATH"] = str(
-            self.config
-        )
+        self.previous = {
+            "CITRA_CONFIG_PATH": os.environ.get("CITRA_CONFIG_PATH"),
+            "CITRA_ROOT": os.environ.get("CITRA_ROOT"),
+        }
+        os.environ["CITRA_CONFIG_PATH"] = str(self.config_path)
+        os.environ["CITRA_ROOT"] = str(self.base / ".citra")
+        self.config = CitraConfig.load()
 
     def tearDown(self) -> None:
-        if self.previous_config is None:
-            os.environ.pop(
-                "CITRA_CONFIG_PATH",
-                None,
-            )
-        else:
-            os.environ["CITRA_CONFIG_PATH"] = self.previous_config
-
+        for name, value in self.previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         self.temporary.cleanup()
 
-    def _git(self, *arguments: str) -> str:
-        return subprocess.run(
-            [
-                "git",
-                "-C",
-                str(self.source),
-                *arguments,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True,
-        ).stdout
-
-    def test_repl_creates_and_removes_workspace_for_agent_turn(self) -> None:
-        inputs = iter(
-            [
-                "inspect the project",
-                "/q",
-            ]
-        )
+    def test_workspace_persists_across_turns_and_closes_with_process(self) -> None:
         roots: list[Path] = []
+        calls = 0
 
-        def fake_call_api(*, context, messages, tools):
-            roots.append(
-                context.workspace.root
-            )
-            self.assertEqual(
-                [
-                    path.name
-                    for path in context.workspace.workspace.iterdir()
-                ],
-                ["@source"],
-            )
-            self.assertEqual(
-                context.workspace.source_workspace,
-                self.source,
-            )
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "ok",
-                        }
-                    }
-                ]
-            }
+        def fake_api(*, context, messages, tools):
+            nonlocal calls
+            calls += 1
+            roots.append(context.workspace.root)
+            marker = context.workspace.workspace / "between-turns.txt"
+            if calls == 1:
+                marker.write_text("still here\n", encoding="utf-8")
+            else:
+                self.assertEqual(marker.read_text(encoding="utf-8"), "still here\n")
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
 
-        with mock.patch.object(
-            citra_main.terminal_input,
-            "prompt",
-            side_effect=lambda *args, **kwargs: next(inputs),
-        ), mock.patch.object(
-            citra_main,
-            "call_api",
-            side_effect=fake_call_api,
-        ), mock.patch(
-            "builtins.print"
-        ):
-            citra_main.main()
-
-        self.assertEqual(
-            len(roots),
-            1,
+        app = CitraApplication(
+            config=self.config,
+            source_workspace=self.source,
+            api_call=fake_api,
         )
-        self.assertFalse(
-            roots[0].exists()
-        )
-        self.assertEqual(
-            list(self.turns.iterdir()),
-            [],
-        )
-
-    def test_run_agent_turn_cleans_workspace_after_failure(self) -> None:
-        config = WorkspaceContextConfig(
-            temporary_workspace=str(self.turns),
-            permanent_workspace=str(self.source),
-        )
-
-        with mock.patch.object(
-            citra_main,
-            "_run_agent_turn_in_workspace",
-            side_effect=RuntimeError("test failure"),
-        ):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "test failure",
-            ):
-                citra_main.run_agent_turn(
-                    session=AgentSession(),
-                    source_workspace=self.source,
-                    workspace_config=config,
-                )
-
-        self.assertEqual(
-            list(self.turns.iterdir()),
-            [],
-        )
-
-    def test_workspace_tools_are_registered(self) -> None:
-        self.assertTrue(
-            TOOL_REGISTRY.contains("materialize")
-        )
-        self.assertTrue(
-            TOOL_REGISTRY.contains("commit")
-        )
-
-    def test_materialize_tool_supports_preview_action(self) -> None:
-        workspace = citra_main.WorkspaceContext.create(
-            config=WorkspaceContextConfig(
-                temporary_workspace=str(self.turns),
-                permanent_workspace=str(self.source),
-            ),
-            workspace=self.source,
-        )
-        session = AgentSession()
-
+        root = app.workspace.root
         try:
-            tools = TOOL_REGISTRY.instantiate(
-                citra_main.ExecutionContext(workspace),
-                session,
+            app.session.add_user_message("first")
+            app.run_agent_turn()
+            app.session.add_user_message("second")
+            app.run_agent_turn()
+            self.assertEqual(roots, [root, root])
+            self.assertTrue(root.exists())
+        finally:
+            app.close()
+        self.assertFalse(root.exists())
+
+    def test_turn_failure_does_not_destroy_lifecycle_workspace(self) -> None:
+        def fail(**_):
+            raise RuntimeError("provider failed")
+
+        app = CitraApplication(
+            config=self.config,
+            source_workspace=self.source,
+            api_call=fail,
+        )
+        root = app.workspace.root
+        try:
+            app.session.add_user_message("work")
+            with self.assertRaisesRegex(RuntimeError, "provider failed"):
+                app.run_agent_turn()
+            self.assertTrue(root.exists())
+        finally:
+            app.close()
+        self.assertFalse(root.exists())
+
+    def test_memory_is_owned_by_conversation_and_survives_tool_refresh(self) -> None:
+        workspace = WorkspaceContext.create(self.config.workspace_context, self.source)
+        session = AgentSession()
+        try:
+            context = ExecutionContext(
+                workspace,
+                libraries=Libraries(),
+                provided_config=self.config,
             )
-            result = tools["materialize"].execute(
+            first = TOOL_REGISTRY.instantiate(context, session)
+            todo = first["todo"]
+            self.assertIsInstance(todo, TodoTool)
+            todo.execute({"action": "add", "content": "survive history trimming"})
+            checkpoint = first["checkpoint"]
+            checkpoint.execute(
                 {
-                    "action": "preview",
-                    "paths": ["."],
+                    "action": "set",
+                    "content": "implementation is partially complete",
+                    "next_step": "resume verification",
                 }
             )
-
-            self.assertIn(
-                "Would materialize 1 file(s)",
-                result,
-            )
-            self.assertFalse(
-                (workspace.workspace / "tracked.py").exists()
-            )
+            session.add_user_message("old message")
+            session.add_user_message("new message")
+            self.assertEqual(len(session.get_last_n_messages(1)), 1)
+            second = TOOL_REGISTRY.instantiate(context, session)
+            self.assertIs(second["todo"], todo)
+            self.assertIs(second["checkpoint"], checkpoint)
+            self.assertIn("survive history trimming", todo.format_for_llm())
+            self.assertIn("resume verification", checkpoint.format_for_llm())
         finally:
-            TOOL_REGISTRY.release_session(session)
             workspace.cleanup()
 
-    def test_memory_tools_survive_turns_with_current_context(self) -> None:
-        first_workspace = citra_main.WorkspaceContext.create(
-            config=WorkspaceContextConfig(
-                temporary_workspace=str(self.turns),
-                permanent_workspace=str(self.source),
-            ),
-            workspace=self.source,
-        )
-        second_workspace = citra_main.WorkspaceContext.create(
-            config=WorkspaceContextConfig(
-                temporary_workspace=str(self.turns),
-                permanent_workspace=str(self.source),
-            ),
-            workspace=self.source,
-        )
-        session = AgentSession()
-
-        try:
-            first_tools = TOOL_REGISTRY.instantiate(
-                citra_main.ExecutionContext(first_workspace),
-                session,
-            )
-            todo = first_tools["todo"]
-            self.assertIsInstance(todo, TodoTool)
-            todo.execute(
-                {
-                    "action": "add",
-                    "content": "survive the turn boundary",
-                }
-            )
-
-            second_context = citra_main.ExecutionContext(
-                second_workspace
-            )
-            second_tools = TOOL_REGISTRY.instantiate(
-                second_context,
-                session,
-            )
-
-            self.assertIs(
-                second_tools["todo"],
-                todo,
-            )
-            self.assertIs(
-                todo.context,
-                second_context,
-            )
-            self.assertIn(
-                "survive the turn boundary",
-                todo.format_for_llm(),
-            )
-        finally:
-            TOOL_REGISTRY.release_session(session)
-            first_workspace.cleanup()
-            second_workspace.cleanup()
+    def test_workspace_and_lsp_tools_are_registered(self) -> None:
+        for tool_id in ("materialize", "commit", "lsp", "checkpoint"):
+            self.assertTrue(TOOL_REGISTRY.contains(tool_id))
 
 
 if __name__ == "__main__":

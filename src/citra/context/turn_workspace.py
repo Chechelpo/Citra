@@ -23,13 +23,11 @@ class AvailablePathAlias(str, Enum):
 
     WORKSPACE = "workspace"
     SOURCE = "source"
-    AGENT = "agent"
     HOME = "home"
     TMP = "tmp"
     CACHE = "cache"
     CONFIG = "config"
     DATA = "data"
-    STATE = "state"
     RUNTIME = "runtime"
 
     def as_alias(self) -> str:
@@ -39,12 +37,14 @@ class AvailablePathAlias(str, Enum):
 @dataclass(frozen=True)
 class WorkspaceContext:
     """
-    Filesystem context for one agent turn.
+    Filesystem context for one running Citra process.
 
     ``source_workspace`` is permanent and read-only to general tools.
     ``workspace`` is an initially empty working directory inside ``root``.
     ``changes`` selectively materializes source files and is the sole
-    service allowed to apply staged file updates back to the source.
+    service allowed to apply staged file updates back to the source. The
+    filesystem survives every conversation turn and is removed only when
+    the owning application lifecycle closes.
     """
 
     source_workspace: Path
@@ -90,14 +90,14 @@ class WorkspaceContext:
             )
             root = Path(
                 tempfile.mkdtemp(
-                    prefix="citra-agent-",
+                    prefix="citra-process-",
                     dir=str(temp_base_path),
                 )
             ).resolve()
         else:
             root = Path(
                 tempfile.mkdtemp(
-                    prefix="citra-agent-"
+                    prefix="citra-process-"
                 )
             ).resolve()
 
@@ -173,15 +173,35 @@ class WorkspaceContext:
 
     @property
     def allowed_roots(self) -> tuple[Path, ...]:
+        """Roots addressable by model-facing scoped filesystem tools.
+
+        ``root`` and ``state`` are deliberately absent: they contain Citra's
+        trusted baseline/index bookkeeping. Merely knowing an absolute path
+        to that control plane must not make it readable.
+        """
         return (
             self.source_workspace,
-            self.root,
+            self.workspace,
+            self.home,
+            self.tmp,
+            self.cache,
+            self.config,
+            self.data,
+            self.runtime,
         )
 
     @property
     def writable_roots(self) -> tuple[Path, ...]:
         """Return the roots writable by ordinary tools."""
-        return (self.root,)
+        return (
+            self.workspace,
+            self.home,
+            self.tmp,
+            self.cache,
+            self.config,
+            self.data,
+            self.runtime,
+        )
 
     def resolve_path(
         self,
@@ -248,7 +268,7 @@ class WorkspaceContext:
             return resolved
 
         raise ValueError(
-            "Path is outside @source and the turn-scoped agent "
+            "Path is outside @source and the lifecycle-scoped agent "
             f"filesystem: {resolved}"
         )
 
@@ -327,16 +347,8 @@ class WorkspaceContext:
                 self.data,
             ),
             (
-                AvailablePathAlias.STATE.value,
-                self.state,
-            ),
-            (
                 AvailablePathAlias.RUNTIME.value,
                 self.runtime,
-            ),
-            (
-                AvailablePathAlias.AGENT.value,
-                self.root,
             ),
         )
 
@@ -376,6 +388,13 @@ class WorkspaceContext:
             "SSL_CERT_DIR",
             "JAVA_HOME",
             "GOROOT",
+            "NODE_PATH",
+            "NVM_BIN",
+            "NVM_DIR",
+            "PYENV_ROOT",
+            "PYTHONPATH",
+            "RUSTUP_HOME",
+            "VIRTUAL_ENV",
         ):
             value = os.environ.get(
                 name
@@ -393,7 +412,7 @@ class WorkspaceContext:
                 "XDG_CACHE_HOME": str(self.cache),
                 "XDG_CONFIG_HOME": str(self.config),
                 "XDG_DATA_HOME": str(self.data),
-                "XDG_STATE_HOME": str(self.state),
+                "XDG_STATE_HOME": str(self.data / "xdg-state"),
                 "XDG_RUNTIME_DIR": str(self.runtime),
                 "CITRA_WORKSPACE": str(self.workspace),
                 "CITRA_SOURCE": str(self.source_workspace),
@@ -466,13 +485,11 @@ class WorkspaceContext:
         aliases: dict[str, Path] = {
             AvailablePathAlias.WORKSPACE.value: self.workspace,
             AvailablePathAlias.SOURCE.value: self.source_workspace,
-            AvailablePathAlias.AGENT.value: self.root,
             AvailablePathAlias.HOME.value: self.home,
             AvailablePathAlias.TMP.value: self.tmp,
             AvailablePathAlias.CACHE.value: self.cache,
             AvailablePathAlias.CONFIG.value: self.config,
             AvailablePathAlias.DATA.value: self.data,
-            AvailablePathAlias.STATE.value: self.state,
             AvailablePathAlias.RUNTIME.value: self.runtime,
         }
 

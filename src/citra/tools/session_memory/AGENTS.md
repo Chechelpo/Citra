@@ -1,12 +1,16 @@
-# AGENTS.md — Session Memory Tools
+# AGENTS.md — Conversation Memory Tools
 
-> Transient, in-run memory tools used by the agent to retain structured state such as TODOs, facts, decisions, and constraints.
+> Cross-turn conversation-memory tools used by the agent to retain structured
+> state such as TODOs, facts, decisions, constraints, and resume checkpoints.
 
 ## Overview
 
-Memory tools are model-visible tools that persist structured state for the lifetime of a single agent run.
+Memory tools are model-visible tools that persist structured state for the
+lifetime of a Citra conversation.
 
-They do **not** write their memory to disk automatically. Their state lives on the instantiated tool object and is expected to survive across model iterations within the same run.
+They do **not** write their memory to disk automatically. Their instances are
+owned by `AgentSession.memory`, survive user/agent turn boundaries, and remain
+injected when older chat messages are omitted from the request context.
 
 All memory tools extend:
 
@@ -27,27 +31,28 @@ Each memory tool is responsible for:
 
 Memory tools depend on instance persistence.
 
-Instantiate the tool registry once per agent run:
+Instantiate tools for each model call through the registry and active session:
 
 ```python
-tools = TOOL_REGISTRY.instantiate(context)
+tools = TOOL_REGISTRY.instantiate(context, session)
 
 while agent_running:
     ...
 ```
 
-Do **not** recreate memory tools on every model call:
+Do **not** construct memory-tool classes directly on every model call:
 
 ```python
 while agent_running:
-    tools = TOOL_REGISTRY.instantiate(context)  # wrong
+    tools = {"todo": TodoTool(context, session)}  # wrong
 ```
 
-Re-instantiation resets transient memory.
+Registry instantiation is safe: it reuses the instances owned by
+`session.memory` and refreshes their execution context.
 
 ## `memory_tool.py` — `MemoryTool`
 
-`MemoryTool` is the abstract base class for all transient memory tools.
+`MemoryTool` is the abstract base class for all conversation-memory tools.
 
 It extends `SessionTool` and defines the shared memory interface.
 
@@ -231,7 +236,7 @@ They are execution state, not long-term maintainer knowledge.
 
 ## `FactTool`
 
-`FactTool` retains assertions learned during the current agent run.
+`FactTool` retains assertions learned during the conversation.
 
 Facts may include supporting citations.
 
@@ -330,7 +335,8 @@ Example:
   - source: https://example.com/docs/auth (OAuth 2.0)
 ```
 
-Facts are transient memory unless deliberately persisted elsewhere.
+Facts are process-local conversation memory unless deliberately persisted
+elsewhere.
 
 ## `DecisionTool`
 
@@ -487,7 +493,7 @@ memory_context = "\n\n".join(sections)
 A resulting memory block might look like:
 
 ```md
-# Session Memory
+# Conversation Memory
 
 ## TODOs
 - [x] [1] Inspect the tool lifecycle
@@ -520,7 +526,7 @@ The tool is responsible for:
 
 The runtime is responsible for:
 
-* preserving memory tool instances throughout the run
+* preserving memory tool instances throughout the conversation
 * injecting memory into model context
 * enforcing completion invariants
 * collecting documentation proposals
@@ -540,7 +546,7 @@ In particular, `TodoTool` may expose `has_outstanding_todos()`, but the outer lo
 * Use immutable extract dataclasses.
 * Keep extract mutation private to the owning tool.
 * Return plain strings from `_execute()`.
-* Memory is transient by default.
+* Memory is process-local and conversation-durable by default.
 * Documentation proposals never imply automatic persistence.
-* Do not recreate memory tool instances during the agent loop.
+* Obtain memory tools through the registry and active session during the loop.
 * Keep memory formatting compact; it is repeatedly inserted into model context.

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Conversation/session state for one running Citra session.
 
@@ -16,13 +14,21 @@ Other threads, particularly the terminal/UI thread, may submit steering
 instructions through ``steering``.
 """
 
-from typing_extensions import Dict
-from pathlib import Path
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import cast
+
+from openai.types.chat import (
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionMessageParam,
+    ChatCompletionToolMessageParam,
+    ChatCompletionUserMessageParam,
+)
 
 from .steering import SteeringInbox
+from .conversation_memory import ConversationMemory
 
 
 __all__ = [
@@ -32,10 +38,7 @@ __all__ = [
 ]
 
 
-
-
-ChatMessage = dict[str, Any]
-
+ChatMessage = ChatCompletionMessageParam
 
 @dataclass
 class MessageGroup:
@@ -44,7 +47,7 @@ class MessageGroup:
 
     A group is never split when selecting recent conversation context.
     """
-    
+
     messages: list[ChatMessage] = field(
         default_factory=list
     )
@@ -55,6 +58,61 @@ class MessageGroup:
         """
         return list(self.messages)
 
+class ReadFile:
+    agent_turn: int
+    path: Path
+    start: int
+    end: int
+    dirty: bool
+
+
+class FileContext:
+    """
+    Class in charge of:
+
+        A) Tracking what files have been read and what part of them
+           (file + offsets).
+        B) Deduping calls to read the same contents, replacing old tool
+           calls results with a debug str.
+        C) Marking old reads that were then modified by recent tools as
+           dirty.
+    """
+
+    read_files: dict[Path, list[ReadFile]]
+
+    def __init__(self):
+        self.read_files = {}
+
+    def register_write(
+        self,
+        path: Path,
+        start_line: int = 0,
+        end_line: int | None = None,
+    ) -> None:
+        """
+        Invalidates a read file order if it was previously registered
+        """
+        pass
+
+    def register_new_read(
+        self,
+        path: Path,
+        start_offset: int,
+        end_offset: int,
+    ) -> None:
+        """
+        Registers a new read, invalidating previous ones.
+        """
+        pass
+
+    def newTurn(
+        self,
+        turn: int,
+    ) -> None:
+        """
+        Invalidates read file orders of old files ()
+        """
+        pass
 
 @dataclass
 class AgentSession:
@@ -82,6 +140,22 @@ class AgentSession:
         default_factory=SteeringInbox
     )
 
+    memory: ConversationMemory = field(
+        default_factory=ConversationMemory
+    )
+
+    turn_number: int = 0
+
+    files: FileContext = field(
+        default_factory=FileContext
+    )
+
+    def begin_turn(self) -> int:
+        """Advance and return the durable conversation turn number."""
+        self.turn_number += 1
+        self.files.newTurn(self.turn_number)
+        return self.turn_number
+
     def get_messages(self) -> list[ChatMessage]:
         """
         Return the complete conversation history in OpenAI-compatible
@@ -95,7 +169,7 @@ class AgentSession:
 
     def get_last_n_messages(
         self,
-        n: int
+        n: int,
     ) -> list[ChatMessage]:
         """
         Return messages from the last ``n`` protocol-safe message groups.
@@ -131,20 +205,20 @@ class AgentSession:
         if not content:
             return
 
+        message: ChatCompletionUserMessageParam = {
+            "role": "user",
+            "content": content,
+        }
+
         self.message_groups.append(
             MessageGroup(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": content,
-                    }
-                ],
+                messages=[message],
             )
         )
 
     def add_assistant_message(
         self,
-        message: ChatMessage,
+        message: ChatCompletionAssistantMessageParam,
     ) -> None:
         """
         Append an assistant message as a new message group.
@@ -179,12 +253,17 @@ class AgentSession:
                 "Cannot add a tool result to an empty message group."
             )
 
-        assistant_message = group.messages[0]
+        message = group.messages[0]
 
-        if assistant_message.get("role") != "assistant":
+        if message["role"] != "assistant":
             raise ValueError(
                 "Tool result must follow an assistant message."
             )
+
+        assistant_message = cast(
+            ChatCompletionAssistantMessageParam,
+            message,
+        )
 
         tool_calls = assistant_message.get("tool_calls")
 
@@ -205,9 +284,9 @@ class AgentSession:
             )
 
         existing_ids = {
-            message.get("tool_call_id")
+            message["tool_call_id"]
             for message in group.messages[1:]
-            if message.get("role") == "tool"
+            if message["role"] == "tool"
         }
 
         if tool_call_id in existing_ids:
@@ -216,13 +295,13 @@ class AgentSession:
                 "has already been added."
             )
 
-        group.messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": result,
-            }
-        )
+        tool_message: ChatCompletionToolMessageParam = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result,
+        }
+
+        group.messages.append(tool_message)
 
     def has_pending_tool_results(self) -> bool:
         """
@@ -237,10 +316,15 @@ class AgentSession:
         if not group.messages:
             return False
 
-        assistant_message = group.messages[0]
+        message = group.messages[0]
 
-        if assistant_message.get("role") != "assistant":
+        if message["role"] != "assistant":
             return False
+
+        assistant_message = cast(
+            ChatCompletionAssistantMessageParam,
+            message,
+        )
 
         tool_calls = assistant_message.get("tool_calls")
 
@@ -253,9 +337,9 @@ class AgentSession:
         }
 
         received_ids = {
-            message.get("tool_call_id")
+            message["tool_call_id"]
             for message in group.messages[1:]
-            if message.get("role") == "tool"
+            if message["role"] == "tool"
         }
 
         return expected_ids != received_ids
@@ -294,49 +378,16 @@ class AgentSession:
 
         return len(pending)
 
-    def clear_history(self) -> None:
+    def clear_history(
+        self,
+        *,
+        clear_memory: bool = True,
+    ) -> None:
         """
         Clear conversation history and pending steering instructions.
         """
         self.message_groups.clear()
         self.steering.clear()
 
-class ReadFile():
-    agent_turn: int
-    path: Path
-    start: int
-    end: int
-    dirty : bool
-
-class FileContext:
-    """
-    Class in charge of:
-        
-        A) Tracking what files have been read and what part of them (file + offsets).
-        B) Deduping calls to read the same contents, replacing old tool calls results with a debug str.
-        C) Marking old reads that were then modified by recent tools as dirty.
-
-    """
-
-    read_files : dict[Path, list[ReadFile]]
-
-    def __init__(self):
-        self.read_files = Dict()
-
-    def register_write(self, path:Path, start_line: int = 0, end_line: int | None = None) -> None:
-        """
-        Invalidates a read file order if it was previously registered
-        """
-        pass
-    
-    def register_new_read(self, path:Path, start_offset:int, end_offset:int) -> None:
-        """
-        Registers a new read, invalidating previous ones.
-        """
-        pass
-
-    def newTurn(self, turn:int) -> None:
-        """
-        Invalidates read file orders of old files ()
-        """
-        pass
+        if clear_memory:
+            self.memory.clear()

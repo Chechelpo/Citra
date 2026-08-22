@@ -1,19 +1,24 @@
 # AGENTS.md — `citra.agent`
 
-> Conversation and steering state for a running Citra session.
+> Conversation, durable memory, steering, and model-loop state for a running
+> Citra process.
 
 ---
 
 ## Purpose
 
-The `citra.agent` package owns persistent **agent-session state** that
-should survive across individual model API calls.
+The `citra.agent` package owns persistent **conversation state** that survives
+both individual model API calls and user/agent turn boundaries.
 
 It currently contains:
 
 ```text
 agent/
 ├── __init__.py
+├── conversation_memory.py
+├── interactions.py
+├── response.py
+├── runner.py
 ├── session.py
 └── steering.py
 ````
@@ -21,16 +26,15 @@ agent/
 The package is responsible for:
 
 * OpenAI-compatible conversation history;
+* durable structured working memory;
 * user steering messages;
 * safe insertion of steering into conversation history;
-* keeping conversation state separate from transient tools and execution
-  contexts.
+* protocol-safe model/tool-call orchestration;
+* foreground handoff for model-originated user questions.
 
 It does **not** own:
 
 ```text
-model API transport
-tool execution
 terminal rendering
 terminal input
 command registration
@@ -50,21 +54,25 @@ Those responsibilities belong elsewhere.
 It owns:
 
 ```python
-messages: list[ChatMessage]
+message_groups: list[MessageGroup]
 steering: SteeringInbox
+memory: ConversationMemory
+turn_number: int
 ```
 
-`messages` contains the OpenAI-compatible conversation history.
+`message_groups` contains the OpenAI-compatible conversation history without
+ever splitting an assistant tool-call message from its tool results.
 
-`steering` contains user instructions that have been queued for later
-insertion into the conversation.
+`steering` contains user instructions queued for later insertion.
+`memory` owns the long-lived TODO/fact/decision/constraint/checkpoint tool
+instances, so truncating old chat messages cannot erase working state.
 
 ### Message ownership
 
 Only the agent execution path should directly mutate:
 
 ```python
-session.messages
+session.message_groups
 ```
 
 Other code should prefer the methods exposed by `AgentSession`.
@@ -78,7 +86,7 @@ Available operations:
 | `add_tool_result(tool_call_id, result)` | Append a `role="tool"` result associated with a tool call.          |
 | `queue_steering(content)`               | Add a user correction to the steering inbox.                        |
 | `flush_steering()`                      | Convert all queued steering instructions into normal user messages. |
-| `clear_history()`                       | Clear conversation history and pending steering state.              |
+| `clear_history(clear_memory=True)`      | Clear history, steering, and normally durable memory.                |
 
 ---
 
@@ -142,8 +150,8 @@ model API layer is migrated at the same time.
 Steering instructions are intentionally kept outside `messages` until
 they can be inserted safely.
 
-`flush_steering()` converts queued steering instructions into normal
-user messages:
+`flush_steering()` converts queued steering instructions into normal user
+messages only after all tool results in the active group are present:
 
 ```text
 SteeringInbox
@@ -317,12 +325,11 @@ AgentSession
 └── steering state
 ```
 
-Do not recreate the session for every model API call.
+Do not recreate the session for every model API call or user turn.
 
 Transient objects such as:
 
 ```text
-ExecutionContext
 Tool instances
 individual API request objects
 ```
@@ -333,18 +340,20 @@ have a shorter lifetime than `AgentSession`.
 
 ## Clearing state
 
-`clear_history()` must clear both:
+By default, `clear_history()` must clear all three:
 
 ```python
 messages
 steering
+memory
 ```
 
 This prevents queued steering from leaking into a newly cleared
 conversation.
 
-Do not clear unrelated application services or global infrastructure
-from this method.
+Passing `clear_memory=False` is reserved for callers deliberately replacing
+only visible chat history. Do not clear application services or global
+infrastructure from this method.
 
 ---
 
@@ -377,8 +386,8 @@ Keep the package boundary approximately:
 
 ```text
 citra.agent
-    conversation state
-    steering state
+    conversation state and memory
+    steering and model-loop protocol
 
 citra.tools
     model tools and execution
@@ -389,8 +398,8 @@ citra.context
 citra.utils
     reusable helpers
 
-main / agent execution loop
-    orchestration
+application / cli
+    process lifecycle and terminal orchestration
     API calls
     tool-call sequencing
 ```
@@ -439,9 +448,11 @@ rather than depending on internal implementation details.
 
 ## Notes for agents
 
-* `AgentSession` is persistent conversation state.
-* `ExecutionContext` is not conversation state.
-* Tools remain transient and must not own the session.
+* `AgentSession` is process-lifetime conversation state.
+* `ExecutionContext` and the workspace are process-lifetime application
+  services, but are not conversation memory.
+* Ordinary tools remain transient. Memory-tool instances are owned by
+  `AgentSession.memory` and rebound to the current context when instantiated.
 * Steering uses FIFO ordering.
 * Never directly insert steering into the middle of an unresolved
   assistant tool-call sequence.
@@ -455,4 +466,3 @@ rather than depending on internal implementation details.
   steering.
 * Prefer adding small state-management primitives here rather than
   turning `AgentSession` into a general application controller.
-

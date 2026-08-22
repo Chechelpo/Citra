@@ -21,10 +21,10 @@ class DecisionExtract:
 
 class DecisionTool(MemoryTool[DecisionExtract]):
     """
-    Manage decisions retained in memory for the current agent run.
+    Manage decisions retained for the current conversation lifecycle.
 
     Actions:
-    - add: record one or more decisions made during the run
+    - add: record one or more decisions made during the conversation
     - remove: remove one or more stale, invalid, or superseded decisions
     """
 
@@ -32,7 +32,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         function=FunctionDefinition(
             name="decision",
             description=(
-                "Manage decisions made during the current agent run. "
+                "Manage decisions made during the current conversation. "
                 "Operations may target one decision or a batch. "
                 "Use 'add' after implementation, architectural, behavioral, "
                 "or design choices have actually been made. Use 'remove' "
