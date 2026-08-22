@@ -64,7 +64,7 @@ _EXT_TO_LANGUAGE = _extension_to_language()
 
 
 # Languages for which a concrete server adapter is implemented.
-_IMPLEMENTED_LANGUAGES: frozenset[Language] = frozenset(
+IMPLEMENTED_LANGUAGES: frozenset[Language] = frozenset(
     {
         Language.PYTHON,
         Language.JAVASCRIPT,
@@ -117,12 +117,12 @@ def is_supported_source_file(path: str | Path) -> bool:
     language = detect_language(path)
     if language is None:
         return False
-    return language in _IMPLEMENTED_LANGUAGES
+    return language in IMPLEMENTED_LANGUAGES
 
 
 def supports_language(language: Language) -> bool:
     """Return ``True`` when a server adapter is available for *language*."""
-    return language in _IMPLEMENTED_LANGUAGES
+    return language in IMPLEMENTED_LANGUAGES
 
 
 def server_for_language(language: Language) -> str:
@@ -131,7 +131,7 @@ def server_for_language(language: Language) -> str:
     Raises:
         ValueError: when no server adapter is implemented for *language*.
     """
-    if language not in _IMPLEMENTED_LANGUAGES:
+    if language not in IMPLEMENTED_LANGUAGES:
         raise ValueError(
             f"No server adapter implemented for language {language!r}"
         )

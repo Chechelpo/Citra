@@ -959,6 +959,7 @@ def call_api(
     initial_backoff: float | None = None,
     max_backoff: float | None = None,
     retry_interrupt: Callable[[], bool] | None = None,
+    sys_prompt: str | None = None
 ) -> dict[str, Any]:
     """
     Perform one OpenAI-compatible Chat Completions request.
@@ -1043,6 +1044,8 @@ def call_api(
             Optional callback checked during retry backoff. Returning true
             aborts the obsolete request so queued steering can rebuild it.
 
+        sys_prompt:
+            Optional system prompt for establishing constant system prompts.
     Returns:
         The decoded JSON response from the model API.
 
@@ -1083,6 +1086,8 @@ def call_api(
             "max_backoff",
             30.0,
         )
+    if sys_prompt is None:
+        sys_prompt = system_prompt(context)
 
     if max_attempts < 1:
         raise ValueError(
@@ -1116,9 +1121,7 @@ def call_api(
     ] = [
         {
             "role": "system",
-            "content": system_prompt(
-                context
-            ),
+            "content": sys_prompt
         }
     ]
 

@@ -73,6 +73,7 @@ def build_system_prompt(
         "tree",
         {"path": "@workspace", "max_depth": 3, "limit": 200},
     )
+    available_skills = context.skills.format_for_prompt()
 
     return f"""\
 # Persona
@@ -123,23 +124,16 @@ Avoid generic explanations when specific technical information is available.
 
 Relative paths refer to the isolated agent workspace.
 
-## Source structure
+## Initial source structure
 
 ```text
 {initial_source_tree}
 ```
 
-This tree describes `@source`, not the initially empty agent workspace. Use it
+This tree describes the initial `@source`, not the initially empty agent workspace. Use it
 to orient yourself before making unnecessary discovery calls.
 
-## Workspace structure
-
-```text
-{current_workspace_tree}
-```
-
-This tree describes the current `@workspace`, not source. Use this filesystem
-to make and test changes before committing them.
+If you make commits, this source will change, so don't take it as a snapshot.
 
 ## Execution environment
 
@@ -203,6 +197,10 @@ Prefer textual search when searching for literal strings, configuration, comment
 Prefer actual execution over inference when determining whether code builds, tests pass, or runtime behavior is correct.
 
 Do not use Bash to reproduce functionality already provided by a safer dedicated tool when the dedicated tool is appropriate.
+
+## Available skills
+
+{available_skills}
 
 # Constraints
 
@@ -321,6 +319,7 @@ Before finishing:
 * ensure stale or incorrect memory entries have been removed;
 * ensure important decisions and constraints are accurately reflected in memory;
 * consider whether retained decisions or constraints should be proposed for persistent project documentation.
+* If available, diagnose source files with your LSP tool.
 
 Do not repeat large amounts of source code unless the user asks for it.
 """

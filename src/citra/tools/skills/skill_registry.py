@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from citra.tools.skills.web_app_debugging import WebAppDebugging
+from citra.tools.skills.coding_conventions import CodingConventions
+from collections.abc import Iterable
+
 import os
 
 from dataclasses import dataclass
@@ -33,9 +37,13 @@ class SkillRegistry:
         self.skills_root = skills_root
         self.skills: dict[str, Skill] = dict()
         
-        self._register(TaskRecognition())
-        self._register(SandboxEnvironment())
-
+        self._register((
+            TaskRecognition(),
+            SandboxEnvironment(),
+            CodingConventions(),
+            WebAppDebugging()
+        ))
+        
         self._load()
         
     def _load(self) -> None:
@@ -59,13 +67,17 @@ class SkillRegistry:
 
             self._register(skill)
     
-    def _register(self, skill:Skill) -> None:
-        if skill.name in self.skills:
-            raise ValueError(
-                   f"Duplicate skill name: {skill.name!r}"
-            )
-        
-        self.skills[skill.name] = skill
+
+    def _register(self, skill: Skill | Iterable[Skill]) -> None:
+        if isinstance(skill, Skill):
+            if skill.name in self.skills:
+                raise ValueError(f"Duplicate skill name: {skill.name!r}")
+
+            self.skills[skill.name] = skill
+            return
+
+        for s in skill:
+            self._register(s)
 
 
     def _load_skill(
@@ -116,12 +128,11 @@ class SkillRegistry:
 
         return skill.get_md( context )
 
-    def list(self) -> str:
-        """
-        Return the compact skill index supplied to the model.
-        """
+    def format_for_prompt(
+        self,
+    ) -> str:
         if not self.skills:
-            return "# SKILLS\n\nNo skills are installed."
+            return "No optional skills are available."
 
         entries = "\n".join(
             f"- `{skill.name}`: {skill.description}"
@@ -132,7 +143,7 @@ class SkillRegistry:
         )
 
         return (
-            "# SKILLS\n\n"
-            "Load a relevant skill before performing its workflow.\n\n"
-            f"{entries}"
+            "Load a relevant skill with the `skill` tool before "
+            "performing the workflow it describes.\n\n"
+            + entries
         )

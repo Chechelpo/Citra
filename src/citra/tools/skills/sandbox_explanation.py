@@ -191,51 +191,66 @@ Relative paths resolve from `@workspace`.
 
 Use ordinary relative paths for normal materialized project files.
 
-## Scoped filesystem tools versus sandboxed commands
+## Filesystem visibility
 
-Citra intentionally exposes different filesystem views to different kinds of
-tools.
+Citra's filesystem inspection tools and sandboxed commands operate inside the
+same Bubblewrap filesystem namespace.
 
-Scoped filesystem tools may only access the source workspace and the
-model-facing lifecycle directories described above.
+Read-oriented filesystem tools such as Read, Glob, Grep, and Tree may inspect
+any path that is visible inside that sandbox namespace, including configured
+read-only host binds.
 
-Bash and other sandboxed processes run inside Bubblewrap. For compatibility
-with normal development toolchains, they may see more of the host filesystem,
-but that does not imply that those paths are writable or available through
-scoped filesystem tools.
+Relative paths still resolve from `@workspace`, and Citra path aliases provide
+convenient access to the lifecycle filesystem and source project.
 
-Do not infer filesystem-tool access from something being visible to Bash.
+Visibility does not imply write permission.
+
+Write-oriented filesystem operations remain restricted to Citra-owned writable
+lifecycle directories. Paths exposed only through read-only host binds can be
+inspected but cannot be modified.
 
 ## Host filesystem visibility
 
-Sandboxed commands use the host filesystem as a read-only compatibility
-baseline.
+The sandbox starts from a read-only host filesystem compatibility baseline.
 
 Sensitive or stateful host areas are masked, including normal host home,
-temporary, runtime, mount, and similar state directories. Citra then reopens
-only specifically approved paths.
+temporary, runtime, mount, and similar state directories. Citra may then
+reopen specifically approved paths.
 
-Ordinary command writes are limited to Citra-owned writable lifecycle
-directories unless the sandbox configuration explicitly grants another
-writable bind.
+As a result:
+
+* some ordinary host paths may be readable;
+* masked host paths are unavailable unless explicitly reopened;
+* configured read-only binds may be inspected by Read, Glob, Grep, Tree, Bash,
+  and other sandboxed tools;
+* read visibility never grants write permission;
+* ordinary writes remain limited to Citra-owned writable lifecycle directories
+  unless the sandbox explicitly grants another writable bind.
 
 The original source project is mounted read-only after other mount setup so
-earlier compatibility mounts cannot accidentally make it writable.
+earlier compatibility or writable mounts cannot accidentally make it writable.
 
 ## Additional read-only host binds
 
 The current sandbox configuration explicitly exposes these additional host
-paths to sandboxed commands as read-only:
+paths read-only:
 
 {extra_readonly_binds}
 
-These paths are provided for inspection or development-tool compatibility.
+These paths may be inspected directly using their absolute paths with
+read-oriented filesystem tools or sandboxed commands.
 
-They are not additional model-facing filesystem roots. Scoped filesystem tools
-cannot access a path merely because Bash can see it.
+They remain strictly read-only. Do not attempt to edit, overwrite, delete, or
+create files beneath them.
 
-They remain read-only. Visibility of a bound path does not grant write access
-to it and does not expose the surrounding masked host tree.
+A specifically exposed bind does not expose the surrounding masked host tree.
+Only paths actually visible in the sandbox namespace should be assumed
+accessible.
+
+Citra may also expose additional read-only paths automatically when required
+for executable, runtime, PATH, certificate, or development-tool compatibility.
+Those paths follow the same rule: they may be inspected when visible, but they
+must be treated as read-only.
 
 ## Temporary files and host state
 
@@ -282,11 +297,13 @@ circumvent.
 
 In particular:
 
-* inspect source through `@source`;
+* inspect source through `@source` when working with the user's project;
 * materialize source files before editing them;
 * make project changes in `@workspace`;
 * use `@tmp` for disposable work;
-* expect non-Citra host paths to be inspection-only when they are visible;
+* use absolute paths when inspecting visible read-only host binds;
+* treat non-Citra host paths as read-only unless explicitly documented
+  otherwise;
 * do not attempt to expose masked host state;
 * do not attempt to write into read-only binds;
 * do not attempt to access Citra's trusted control-plane state;

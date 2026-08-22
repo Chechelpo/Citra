@@ -105,30 +105,58 @@ class ScopedFilesystem:
         except ValueError:
             return False
 
-    def resolve_path(self, value: str | Path) -> Path:
+    def resolve_path(self, value: str | Path,) -> Path:
         raw = str(value)
         alias_raw = raw
+
         while alias_raw.startswith("./"):
             alias_raw = alias_raw[2:]
 
-        match = _ALIAS.fullmatch(alias_raw)
+        match = _ALIAS.fullmatch(
+            alias_raw
+        )
+
         if match:
             alias, remainder = match.groups()
+
             try:
                 base = self._aliases[alias]
             except KeyError as error:
-                raise ValueError(f"Unknown workspace path alias: @{alias}") from error
-            candidate = base if not remainder else base / remainder
-        elif raw == "~" or raw.startswith("~/"):
-            remainder = "" if raw == "~" else raw[2:]
-            candidate = self.home if not remainder else self.home / remainder
-        else:
-            candidate = Path(raw)
-            if not candidate.is_absolute():
-                candidate = self.workspace / candidate
+                raise ValueError(
+                    f"Unknown workspace path alias: @{alias}"
+                ) from error
 
-        resolved = candidate.resolve()
-        return self.require_allowed_path(resolved)
+            candidate = (
+                base
+                if not remainder
+                else base / remainder
+            )
+
+        elif raw == "~" or raw.startswith("~/"):
+            remainder = (
+                ""
+                if raw == "~"
+                else raw[2:]
+            )
+
+            candidate = (
+                self.home
+                if not remainder
+                else self.home / remainder
+            )
+
+        else:
+            candidate = Path(
+                raw
+            )
+
+            if not candidate.is_absolute():
+                candidate = (
+                    self.workspace
+                    / candidate
+                )
+
+        return candidate.resolve()
 
     def require_allowed_path(self, value: str | Path) -> Path:
         resolved = Path(value).resolve()
@@ -237,13 +265,18 @@ def _expand_read_path(fs: ScopedFilesystem, value: str) -> list[Path]:
     if not root.is_dir():
         raise NotADirectoryError(f"Glob search root is not a directory: {fs.display_path(root)}")
     matches: set[Path] = set()
-    for raw in globlib.glob(str(root / pattern), recursive=True):
-        try:
-            resolved = fs.require_allowed_path(raw)
-        except ValueError:
-            continue
+    for raw in globlib.glob(
+        str(root / pattern),
+        recursive=True,
+    ):
+        resolved = Path(
+            raw
+        ).resolve()
+
         if resolved.is_file():
-            matches.add(resolved)
+            matches.add(
+                resolved
+            )
     return sorted(matches, key=lambda path: fs.display_path(path).casefold())
 
 

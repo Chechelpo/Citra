@@ -12,50 +12,27 @@ from ...utils.json_schema import (
 
 class SkillTool(Tool):
     """
-    Lists and reads the available skills.
-
-    Skills are referenced by name rather than arbitrary filesystem paths.
+    Loads instructions for an available skill.
     """
-
-    ACTIONS = frozenset(
-        {
-            "list",
-            "read",
-        }
-    )
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="skill",
             description=(
-                "List or read the skills available to the current agent. "
-                "Use 'list' to discover available skill names and 'read' "
-                "to load the instructions for one skill. Skills are "
-                "read-only and are referenced by their skill name."
+                "Load the full instructions for one of the skills "
+                "listed in the system prompt. Use a skill before "
+                "performing the workflow it describes."
             ),
             parameters=JsonSchema.object(
                 properties=(
                     JsonProperty(
-                        name="action",
-                        schema=JsonSchema.string(
-                            description=(
-                                "Skill operation to perform."
-                            ),
-                            enum=(
-                                "list",
-                                "read",
-                            ),
-                        ),
-                    ),
-                    JsonProperty(
                         name="name",
                         schema=JsonSchema.string(
                             description=(
-                                "Name of the skill to read. Required for "
-                                "action 'read' and invalid for action 'list'."
+                                "Name of the skill to load, exactly as "
+                                "listed in the available-skills section."
                             ),
                         ),
-                        required=False,
                     ),
                 ),
                 additional_properties=False,
@@ -77,30 +54,16 @@ class SkillTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        action = str(
-            arguments["action"]
-        ).strip()
-
-        if action not in self.ACTIONS:
-            raise ValueError(
-                f"Unsupported skill action: {action!r}"
-            )
-
-        if action == "list":
-            if "name" in arguments:
-                raise ValueError(
-                    "'name' is not valid for skill action 'list'."
-                )
-
-            return self.context.skills.list()
-
         name = str(
-            arguments.get("name", "")
+            arguments["name"]
         ).strip()
 
         if not name:
             raise ValueError(
-                "'name' is required for skill action 'read'."
+                "'name' cannot be empty."
             )
 
-        return self.context.skills.get_skill(name, self.context)
+        return self.context.skills.get_skill(
+            name,
+            self.context,
+        )

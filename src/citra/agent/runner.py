@@ -1,6 +1,7 @@
 """Protocol-safe agent loop independent of workspace and REPL lifecycle."""
-
 from __future__ import annotations
+
+from citra.utils.prompt import build_system_prompt
 
 from typing import Any, Callable, cast
 
@@ -48,6 +49,7 @@ class AgentRunner:
 
     def run_turn(self) -> None:
         self.session.begin_turn()
+        prompt:str = build_system_prompt(self.context)
         while True:
             self.session.flush_steering()
             tools = TOOL_REGISTRY.instantiate(self.context, self.session)
@@ -65,7 +67,8 @@ class AgentRunner:
 
             if self.api_call is call_api:
                 api_arguments["retry_interrupt"] = self.session.steering.has_pending
-
+                
+            api_arguments["sys_prompt"] = prompt
             try:
                 response = self.api_call(**api_arguments)
             except ModelRequestInterrupted:
