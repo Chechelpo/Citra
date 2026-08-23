@@ -422,6 +422,8 @@ language-server implementations
 Re-export the public agent-state API:
 
 ```python
+from .conversation_memory import ConversationMemory
+from .interactions import UserInteractionBroker, UserPromptRequest
 from .session import AgentSession, ChatMessage
 from .steering import SteeringInbox
 ```
@@ -432,6 +434,9 @@ Expected public surface:
 __all__ = [
     "AgentSession",
     "ChatMessage",
+    "ConversationMemory",
+    "UserInteractionBroker",
+    "UserPromptRequest",
     "SteeringInbox",
 ]
 ```

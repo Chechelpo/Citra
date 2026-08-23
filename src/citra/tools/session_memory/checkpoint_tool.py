@@ -23,16 +23,20 @@ class CheckpointExtract:
 
 
 class CheckpointTool(MemoryTool[CheckpointExtract]):
-    """Keep one authoritative resume point across agent turns."""
+    """Keep one authoritative resume point across agent turns.
+
+    Checkpoints are derived handoff state, not durable beliefs, so they are the
+    one memory type that does not require promotion from working state.
+    """
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="checkpoint",
             description=(
                 "Set or clear the conversation's compact handoff checkpoint. "
-                "Set it before ending or when work may be interrupted; record "
-                "what is already true and the exact next step. It survives "
-                "agent-turn boundaries and chat-history truncation."
+                "A checkpoint summarizes already-established memory and the "
+                "next action. It is independent handoff state and is never "
+                "promoted from working state."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -68,7 +72,11 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
-        super().__init__(context=context, session=session, definition=self.DEFINITION)
+        super().__init__(
+            context=context,
+            session=session,
+            definition=self.DEFINITION,
+        )
         self._checkpoint: CheckpointExtract | None = None
 
     @property
@@ -101,11 +109,16 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
             return "Cleared handoff checkpoint."
         if action != "set":
             raise ValueError(f"Unsupported checkpoint action: {action}")
+
         content = str(arguments.get("content") or "").strip()
         if not content:
             raise ValueError("'content' is required for checkpoint action 'set'.")
         next_step_raw = arguments.get("next_step")
-        next_step = str(next_step_raw).strip() if next_step_raw is not None else None
+        next_step = (
+            str(next_step_raw).strip()
+            if next_step_raw is not None
+            else None
+        )
         self._checkpoint = CheckpointExtract(
             content=content,
             next_step=next_step or None,
@@ -114,26 +127,17 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         return "Updated handoff checkpoint."
 
     @override
-    def format_call_log(
-        self,
-        arguments: dict[str, Any],
-    ) -> str:
+    def format_call_log(self, arguments: dict[str, Any]) -> str:
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
-
         content = arguments.get("content")
         if content is not None:
             parts.append(f"content={self._truncate(str(content))}")
-
         next_step = arguments.get("next_step")
         if next_step is not None:
             parts.append(f"next_step={self._truncate(str(next_step))}")
-
         return " | ".join(parts)
 
     @staticmethod
     def _truncate(value: str) -> str:
-        if len(value) <= 80:
-            return value
-        return value[:80] + "..."
-
+        return value if len(value) <= 80 else value[:80] + "..."

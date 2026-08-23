@@ -1,32 +1,39 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import override
+from typing import TYPE_CHECKING, override
+
 from .skill import Skill
-from typing import TYPE_CHECKING
-from ..lsp.language import IMPLEMENTED_LANGUAGES
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
 
 
 class CodingConventions(Skill):
-    
+
     def __init__(self) -> None:
-        super().__init__("coding-conventions", "Describes coding conventions of a good citra agent, also detailing tools", Path())
+        super().__init__(
+            "coding",
+            "Describes correct patterns and formatting for any code project",
+            Path(),
+        )
 
     @override
-    def get_md(self, context:ExecutionContext) -> str:
-        return ""
+    def get_md(
+        self,
+        context: ExecutionContext,
+    ) -> str:
+        return __PROMPT
 
-__PROMPT:str = """
+
+__PROMPT: str = """
 # Coding conventions
 
 These conventions apply across languages unless the project already establishes
 a stronger local convention.
 
 Preserve the repository's existing architecture, naming, formatting, and style.
-Prefer the smallest coherent change that solves the requested problem.
+Prefer the smallest coherent change that fully solves the requested problem.
 
 ## Control flow
 
@@ -51,108 +58,113 @@ over deeply nesting the main behavior inside several conditional blocks.
 
 Do not force early-return style when it makes control flow less clear.
 
-## Semantic code intelligence
+## Structure
 
-Citra provides an LSP tool for supported languages, currently Python and
-JavaScript/TypeScript.
+Keep functions and classes focused on coherent responsibilities.
 
-**Use LSP proactively.**
+Prefer straightforward control flow and explicit data movement over unnecessary
+abstraction.
 
-Do not treat LSP as an optional last resort when semantic information would make
-the change safer or faster.
+Reuse existing project abstractions when they fit. Do not introduce wrappers,
+helpers, base classes, or indirection that provide no meaningful simplification
+or reuse.
 
-### Prefer LSP when symbol identity matters
+Avoid unrelated refactors while implementing a focused change.
 
-Use LSP instead of textual search when answering questions such as:
+When a change affects an existing abstraction, preserve its established
+semantics unless changing them is part of the task.
 
-* Where is this class, function, method, variable, property, or type defined?
-* Which references refer to this exact symbol?
-* What type does this expression or symbol have?
-* What implementation or declaration corresponds to this symbol?
-* What symbols exist in this file?
-* What diagnostics does the language server report for this file?
-* Will renaming, removing, or changing this symbol affect other code?
+## Naming
 
-Useful LSP actions include:
+Use names that describe purpose and domain meaning.
 
-* `document_symbols` to understand the semantic structure of a known file;
-* `definition` or `go_to_definition` to follow a symbol to its definition;
-* `references` to find semantic usages of a symbol;
-* `hover` to inspect inferred or declared type/signature information;
-* `implementation`, `declaration`, and `type_definition` when those relationships
-  matter;
-* `diagnostics` to check affected source files after modifications;
-* `status` when you need to determine whether the relevant language server is
-  available.
+Follow existing repository naming conventions before introducing a new style.
 
-Position-based LSP actions use 1-based line and character values.
+Avoid vague names when a more precise name is practical.
 
-### Prefer textual search for textual questions
-
-Use Grep when searching for:
-
-* literal strings;
-* configuration keys or values;
-* comments;
-* log messages;
-* generated text;
-* filenames or path fragments;
-* broad occurrences where symbol identity is irrelevant.
-
-Glob and Tree are appropriate when the question is primarily about file
-location or project structure.
-
-It is often useful to combine tools:
-
-1. use Tree, Glob, Read, or Grep to locate likely files;
-2. use LSP once the relevant symbol or source position is known;
-3. use Read to inspect the surrounding implementation;
-4. use LSP references or definitions before changing a shared symbol.
-
-Do not substitute Grep for semantic references merely because the textual name
-is easy to search. Different symbols may share the same spelling, aliases may
-hide usages, and textual occurrences may not represent actual references.
-
-## Working with unfamiliar code
-
-When entering an unfamiliar implementation:
-
-1. inspect the relevant files and surrounding project structure;
-2. use `document_symbols` when it provides a faster semantic overview than
-   manually scanning a large source file;
-3. follow relevant definitions with LSP;
-4. inspect references before changing shared APIs or behavior;
-5. read the concrete implementation before editing.
-
-Use semantic information to reduce unnecessary file inspection, not to replace
-reading the code that will actually be changed.
-
-## Diagnostics and verification
-
-After modifying Python or JavaScript/TypeScript source, run focused LSP
-diagnostics on the affected files when the language server is available.
-
-Treat diagnostics as evidence to investigate. Do not silently ignore new
-errors or warnings introduced by the change.
-
-LSP diagnostics complement execution; they do not replace tests, builds,
-type-checkers, compilers, or runtime verification when those materially verify
-the task.
-
-For broader refactors, use references before editing and diagnostics afterward.
+Do not rename existing public or shared symbols without a reason related to the
+task.
 
 ## Types
 
-Preserve and improve useful type information when doing so is consistent with
-the project's conventions.
-
-Before guessing the type, signature, or origin of a symbol in a supported
-language, prefer LSP hover or definition information when available.
+Preserve and improve useful type information when consistent with the project's
+conventions.
 
 Do not introduce unnecessary casts, type suppressions, `Any`, or equivalent
-escape hatches merely to silence diagnostics. Understand the underlying type
-relationship first.
+escape hatches merely to silence diagnostics.
 
-When a diagnostic exposes a real inconsistency, prefer fixing the code or type
-model over suppressing the diagnostic.
+When a type diagnostic exposes a real inconsistency, prefer fixing the code or
+type model over suppressing the diagnostic.
+
+Avoid redundant annotations when the project's style clearly relies on
+inference.
+
+## Error handling
+
+Handle failures at the layer that has enough context to respond meaningfully.
+
+Do not silently swallow errors unless the behavior is intentionally best-effort
+and that convention is established by the project.
+
+Prefer specific validation and error messages over failures that obscure the
+invalid state.
+
+Do not catch broad exceptions merely to convert programming errors into normal
+control flow.
+
+Preserve existing exception and error-reporting conventions when modifying an
+established API.
+
+## State and mutation
+
+Keep state ownership clear.
+
+Prefer local, explicit mutation over hidden side effects when both approaches
+are practical.
+
+Do not duplicate authoritative state when an existing source of truth can be
+used directly.
+
+When multiple structures must remain synchronized, update them atomically when
+practical and validate inputs before mutating state.
+
+## Comments and documentation
+
+Prefer code that communicates its intent through structure and naming.
+
+Add comments when they explain non-obvious constraints, invariants, protocol
+details, compatibility requirements, or reasoning that cannot be expressed
+clearly in code alone.
+
+Do not add comments that merely restate the code.
+
+Update documentation or docstrings when a behavioral or public API change would
+otherwise leave them incorrect.
+
+## Compatibility
+
+Preserve existing public behavior and compatibility boundaries unless the task
+explicitly requires changing them.
+
+Avoid changing serialized formats, schemas, public signatures, command
+behavior, configuration semantics, or persistent state implicitly.
+
+When compatibility must change, make the boundary explicit and keep the change
+as narrow as practical.
+
+## Diagnostics and verification
+
+After modifying source code, run relevant diagnostics when available.
+
+Treat new errors and warnings as evidence to investigate rather than suppressing
+them without understanding the cause.
+
+Diagnostics complement execution; they do not replace tests, builds,
+type-checkers, compilers, or runtime verification when those materially verify
+the task.
+
+Do not claim that code works solely because it is syntactically valid or has no
+language-server diagnostics.
 """
+
+

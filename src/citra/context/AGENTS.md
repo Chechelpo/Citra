@@ -36,15 +36,30 @@ prohibit normal assignment.
 
 Configuration uses frozen dataclasses, including:
 
-- **`ModelConfig`** — model identity, limits, reasoning, and retry policy.
+- **`ModelConfig` / `ModelConfigStore`** — model identity, limits, reasoning,
+  and retry policy. `ModelConfigStore` (from `config/model_config.py`) loads
+  and persists the active model section; `CitraConfig.model()` returns the
+  resolved `ModelConfig`.
 - **`RetryConfig`** — attempts, request timeout, and backoff bounds.
 - **`WebSearchConfig`** — `host_url`.
 - **`WorkspaceContextConfig`** — source and temporary-root selection.
 - **`LspContextConfig`** — enable flag and protocol timeouts.
+- **`BashConfig`** — network permission and Bash defaults.
+- **`SubprocessConfig`** — subprocess network permission and output caps.
+- **`BrowserConfig`** — Playwright path, timeouts, and unsafe-action policy.
+- **`CurlConfig`** — always-allow network, permission, and timeout limits.
+- **`NotificationConfig`** — `prompt_bell`.
+- **`SandboxContextConfig`** — Bubblewrap sandbox policy (binds, namespaces,
+  environment handling).
 - **`CitraConfig`** — top-level config, loaded from a TOML file via
-  `CitraConfig.load()`. Missing required keys raise `ValueError`.
+  `CitraConfig.load()`. Missing required keys raise `ValueError`; the model,
+  web-search, and workspace TOML sections are required.
 
-TOML parsing uses the stdlib `tomllib` module.
+`CitraConfig.load()` resolves the config path from the **`CITRA_CONFIG_PATH`**
+env var and raises `RuntimeError` if it is not defined (Citra is normally
+started through `start.sh`). TOML parsing uses the stdlib `tomllib` module.
+Various positive-value validations are enforced (LSP/curl/bash/subprocess/
+browser limits).
 
 ### `__init__.py`
 

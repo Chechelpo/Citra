@@ -1,16 +1,17 @@
 # AGENTS.md — Conversation Memory Tools
 
 > Cross-turn conversation-memory tools used by the agent to retain structured
-> state such as TODOs, facts, decisions, constraints, and resume checkpoints.
+> state such as TODOs, facts, decisions, constraints, working state, and resume
+> checkpoints.
 
 ## Overview
 
 Memory tools are model-visible tools that persist structured state for the
 lifetime of a Citra conversation.
 
-They do **not** write their memory to disk automatically. Their instances are
-owned by `AgentSession.memory`, survive user/agent turn boundaries, and remain
-injected when older chat messages are omitted from the request context.
+They do **not** write their memory to disk automatically. Their state is
+retained for the process lifetime, survives user/agent turn boundaries, and
+remains injected when older chat messages are omitted from the request context.
 
 All memory tools extend:
 
@@ -20,14 +21,25 @@ MemoryTool
         └── Tool
 ```
 
-Each memory tool is responsible for:
+### A lifecycle of working state → durable memory
 
-1. Holding its own extracts in memory.
-2. Exposing model-facing actions through the normal `Tool` contract.
-3. Rendering its extracts into an LLM-readable Markdown section.
-4. Optionally proposing that useful session knowledge be persisted into project documentation at the end of the run.
+Durable memory (TODOs, facts, decisions, constraints) is **not** created
+directly. The agent first creates a provisional **working state**, then
+**promotes** it into one or more durable memories. A working state may be
+promoted to several durable entries, or never promoted and discarded.
 
-## Tool lifetime
+The memory types and their ownership are:
+
+* **Working state** (`working_state`) — provisional hypotheses and reasoning.
+  The seed for everything else. Not authoritative.
+* **TODO** (`todo`) — required work, optionally hierarchical.
+* **Fact** (`fact`) — verified information, optionally with citations.
+* **Decision** (`decision`) — a choice later work must respect.
+* **Constraint** (`constraint`) — an active rule or invariant.
+* **Checkpoint** (`checkpoint`) — a compact resume point. The one memory type
+  **not** promoted from working state; it is set directly.
+
+## Tool lifetime and shared state
 
 Memory tools depend on instance persistence.
 
@@ -35,156 +47,145 @@ Instantiate tools for each model call through the registry and active session:
 
 ```python
 tools = TOOL_REGISTRY.instantiate(context, session)
-
-while agent_running:
-    ...
 ```
 
-Do **not** construct memory-tool classes directly on every model call:
+Do **not** construct memory-tool classes directly on every model call.
+Registry instantiation is safe: it reuses the instances owned by a session
+and refreshes their execution context.
+
+### Shared `ConversationMemoryState`
+
+All memory tools for one `AgentSession` share a single
+`ConversationMemoryState` instance (defined in `memory_tool.py`) that owns the
+working-state collection and their promotion references. This lets e.g. a
+`todo` promotion record which durable memory was created from which working
+state.
 
 ```python
-while agent_running:
-    tools = {"todo": TodoTool(context, session)}  # wrong
+memory_state = conversation_memory_state(session)
 ```
 
-Registry instantiation is safe: it reuses the instances owned by
-`session.memory` and refreshes their execution context.
+`conversation_memory_state()` stores one state per session by weak reference
+(`WeakKeyDictionary`), with a strong-reference fallback keyed by `id(session)`
+for sessions that cannot be weak-referenced.
 
 ## `memory_tool.py` — `MemoryTool`
 
-`MemoryTool` is the abstract base class for all conversation-memory tools.
+`MemoryTool` is the abstract generic base class for all conversation-memory
+tools.
 
-It extends `SessionTool` and defines the shared memory interface.
-
-A memory tool should provide:
+It extends `SessionTool` and defines:
 
 ```python
 @property
-def heading(self) -> str:
-    ...
+@abstractmethod
+def heading(self) -> str: ...
+
+@abstractmethod
+def get_extracts(self) -> list[TExtract]: ...
+
+@abstractmethod
+def format_extract(self, extract: TExtract) -> str: ...
+
+@abstractmethod
+def should_offer_documentation(self) -> bool: ...
 ```
 
-The Markdown section heading used when exposing memory to the model.
+- `heading` — the Markdown section heading used when exposing memory.
+- `get_extracts()` — the extracts currently retained. Return a copy where
+  practical so callers cannot mutate internal state directly.
+- `format_extract()` — convert one extract into LLM-readable Markdown.
+- `should_offer_documentation()` — return whether this memory type may contain
+  information worth persisting into repository documentation at the end of the
+  work. Returning `True` only indicates the runtime may ask; it never writes
+  documentation automatically.
 
-```python
-def get_extracts(self) -> list[TExtract]:
-    ...
-```
+The base `format_for_llm()` assembles `heading` + extracted formatted entries
+into a Markdown section, returning `""` when there are no extracts.
 
-Returns the extracts currently retained by the tool.
+### Extracts and immutable dataclasses
 
-Return a copy where practical so callers cannot mutate internal state directly.
-
-```python
-def format_extract(
-    self,
-    extract: TExtract,
-) -> str:
-    ...
-```
-
-Converts one extract into LLM-readable Markdown.
-
-```python
-def format_for_llm(self) -> str:
-    ...
-```
-
-Produces the complete Markdown section for the tool.
-
-The base implementation should normally assemble `heading`, `get_extracts()`, and `format_extract()`.
-
-Memory tools may also expose:
-
-```python
-def get_documentation_proposal(
-    self,
-) -> DocumentationProposal | None:
-    ...
-```
-
-This indicates whether information discovered during the run may be worth persisting for future maintainers.
-
-Returning a proposal does **not** write documentation. It only gives the end-of-run layer enough information to ask whether documentation should be created or updated.
-
-## Extract conventions
-
-Extracts should normally be immutable dataclasses.
-
-Example:
+Extracts are immutable frozen dataclasses, for example:
 
 ```python
 @dataclass(frozen=True)
 class DecisionExtract:
     id: int
     content: str
+    working_state_id: int
 ```
 
-Each tool owns its extract collection:
+Each tool owns its extract collection privately (e.g. `__extracts`) and never
+exposes the mutable list directly — `get_extracts()` returns a copy. IDs are
+local to that memory tool.
 
-```python
-self.__extracts: list[DecisionExtract] = []
-self.__next_id = 1
-```
+Durable extracts carry a `working_state_id` (except `CheckpointExtract`) linking
+them back to the working state they were promoted from. Promoting a working
+state registers a `PromotionRef(kind, memory_id)` on it via
+`register_promotion()`; removing a durable memory calls
+`unregister_promotion()`.
 
-IDs are local to that memory tool unless a global ID scheme is introduced explicitly.
+## Working state: `WorkingStateTool`
 
-Do not expose the internal mutable list directly.
-
-Prefer:
-
-```python
-def get_extracts(self) -> list[DecisionExtract]:
-    return list(self.__extracts)
-```
-
-## Model-facing action conventions
-
-Memory tools expose actions through a single tool function.
-
-Example:
-
-```json
-{
-  "action": "add",
-  "content": "Preserve the existing public API."
-}
-```
-
-Action-specific requirements that cannot be expressed by the current JSON Schema DSL must be validated inside `_execute()` or its helper methods.
-
-For example:
-
-```python
-content = arguments.get("content")
-
-if not content:
-    raise ValueError(
-        "'content' is required for constraint action 'add'."
-    )
-```
-
-Use exceptions for invalid operations. The normal agent loop will surface the error to the model.
-
-## `TodoTool`
-
-`TodoTool` tracks work that the agent is obligated to complete.
+`WorkingStateTool` manages provisional reasoning. It is the prerequisite step
+for every other durable memory.
 
 ### Actions
 
-* `add` — create a new outstanding TODO.
-* `check` — mark a TODO completed while retaining it in memory.
-* `remove` — delete a TODO that is stale, invalid, irrelevant, or based on a bad assertion.
+* `create` — create one working state (`content`) or several (`contents`).
+* `update` — replace the content of one working state (`id` + `content`).
+* `resolve` — mark working state(s) resolved. Requires each to have at least one
+  durable promotion (use `id`/`ids`).
+* `discard` — drop working state(s) with no durable promotions.
 
-`remove` is **not** equivalent to completion.
+### Rules
 
-A TODO that was actually performed should be checked:
+- `create` allows `content` or `contents`, never both, and rejects `id`/`ids`.
+- `update` accepts exactly one `id` and one `content`.
+- A working state with promotions cannot be discarded; it must be resolved.
+- A working state without promotions cannot be resolved; it must be discarded.
 
-```text
-[ ] → [x]
+### Extract shape
+
+```python
+@dataclass(frozen=True)
+class WorkingStateExtract:
+    id: int
+    content: str
+    created_turn: int
+    updated_turn: int
+    promotions: tuple[PromotionRef, ...] = ()
 ```
 
-A TODO should only be removed when the TODO itself should no longer exist.
+`PromotionRef` is `(kind: str, memory_id: int)`.
+
+### LLM formatting
+
+```md
+- [W1] Provisional hypothesis...
+  - promoted: FACT [3], TODO [5]
+```
+
+`WorkingStateTool.should_offer_documentation()` is `False`.
+
+## `TodoTool`
+
+`TodoTool` manages **hierarchical** TODOs, each promoted from a working state.
+
+### Actions
+
+* `promote` — create one or more TODOs from working states
+  (`working_state_id`/`working_state_ids`). Optional `content` override and
+  `parent_id` (sub-step) / `index` (sibling position) for a **single**
+  promotion.
+* `check` — mark TODOs completed (via `id`/`ids`). A TODO cannot be checked
+  while descendant TODOs remain incomplete. Checking a TODO with a completed
+  ancestor reopens that ancestor.
+* `remove` — delete TODOs that are stale/invalid (via `id`/`ids`), including
+  their descendants. Not equivalent to completion.
+
+`remove` is **not** completion: performed work is `check`ed (`[ ] → [x]`), and
+`remove` is reserved for TODOs that should no longer exist.
 
 ### Extract shape
 
@@ -193,161 +194,76 @@ A TODO should only be removed when the TODO itself should no longer exist.
 class TodoExtract:
     id: int
     content: str
+    working_state_id: int
     completed: bool = False
+    parent_id: int | None = None
 ```
 
-### LLM formatting
-
-Format TODOs as Markdown task items:
-
-```md
-## TODOs
-- [x] [1] Inspect the existing tool registry
-- [ ] [2] Register the new memory tools
-```
-
-Checked TODOs remain visible as execution history.
+Storage is pre-order so each subtree stays contiguous while rendering flatly,
+with indentation derived from ancestry depth.
 
 ### Completion invariant
 
-Outstanding TODOs should block normal agent completion.
-
-The runtime, not the model prompt, must enforce this.
-
-Example:
-
 ```python
 def has_outstanding_todos(self) -> bool:
-    return any(
-        not todo.completed
-        for todo in self.__extracts
-    )
+    return any(not todo.completed for todo in self.__extracts)
 ```
 
-Before accepting a final agent response, inspect the TODO tool. If unresolved TODOs remain, continue the agent loop instead of terminating.
+Outstanding TODOs should block normal agent completion. The runtime, not the
+model prompt, must enforce this.
 
-Do not rely only on instructions such as “complete all TODOs before finishing.”
-
-### Documentation
-
-TODOs generally should not produce documentation proposals.
-
-They are execution state, not long-term maintainer knowledge.
+`TodoTool.should_offer_documentation()` is `False` (execution state, not
+long-term maintainer knowledge).
 
 ## `FactTool`
 
-`FactTool` retains assertions learned during the conversation.
-
-Facts may include supporting citations.
+`FactTool` retains verified facts promoted from working states.
 
 ### Actions
 
-* `add` — retain a fact, optionally with citations.
-* `remove` — delete a stale, incorrect, or invalid fact.
-
-### Extract shape
-
-A fact should contain:
-
-```python
-@dataclass(frozen=True)
-class FactExtract:
-    id: int
-    content: str
-    citations: tuple[Citation, ...] = ()
-```
+* `promote` — promote a single working state (`working_state_id`, optional
+  `content`, optional `citations`) or a batch (`facts` array).
+* `remove` — delete stale/incorrect facts (`id`/`ids`).
 
 ### Citations
 
-Supported citation source types:
-
-* `file`
-* `url`
-
-A citation may be represented as:
+A fact may carry citations:
 
 ```python
 @dataclass(frozen=True)
 class Citation:
-    type: str
+    type: str              # "file" | "url"
     source: str
     line: int | None = None
     end_line: int | None = None
     reference: str | None = None
 ```
 
-### File citations
-
-File citations use:
-
-* `source` — workspace-relative file path.
-* `line` — optional starting line.
-* `end_line` — optional ending line.
-
-Example:
-
-```json
-{
-  "type": "file",
-  "source": "src/citra/tools/tool.py",
-  "line": 61,
-  "end_line": 74
-}
-```
-
-Rules:
-
-* `end_line` requires `line`.
-* `line` must be at least 1.
-* `end_line` must not precede `line`.
-* `reference` is not valid for file citations.
-
-### URL citations
-
-URL citations use:
-
-* `source` — the URL.
-* `reference` — optional anchor, heading, section, fragment, or other useful reference.
-
-Example:
-
-```json
-{
-  "type": "url",
-  "source": "https://example.com/docs/auth",
-  "reference": "OAuth 2.0"
-}
-```
-
-Rules:
-
-* URL citations must not use `line` or `end_line`.
+- `file` citations use `source` (workspace-relative path), optional `line`,
+  and `end_line` (which requires `line` and must not precede it).
+  `reference` is not valid for file citations.
+- `url` citations use `source` (the URL) and optional `reference`; `line` and
+  `end_line` are invalid.
 
 ### LLM formatting
 
-Example:
-
 ```md
-## Facts
-- [1] Tool.execute validates arguments before invoking _execute.
+- [3] Tool.execute validates before invoking _execute.
+  - origin: working state W1
   - source: src/citra/tools/tool.py:61-74
-- [2] The external API uses OAuth 2.0.
-  - source: https://example.com/docs/auth (OAuth 2.0)
 ```
 
-Facts are process-local conversation memory unless deliberately persisted
-elsewhere.
+`FactTool.should_offer_documentation()` is `False`.
 
 ## `DecisionTool`
 
 `DecisionTool` records choices made during the run.
 
-Use it for implementation, architectural, behavioral, or design decisions that the agent should remain consistent with.
-
 ### Actions
 
-* `add` — record a decision.
-* `remove` — remove a decision that is stale, invalid, or superseded.
+* `promote` — promote working state(s) to decisions (`working_state_id`/
+  `working_state_ids`; optional single `content`).
+* `remove` — remove stale/superseded decisions (`id`/`ids`).
 
 ### Extract shape
 
@@ -356,47 +272,22 @@ Use it for implementation, architectural, behavioral, or design decisions that t
 class DecisionExtract:
     id: int
     content: str
+    working_state_id: int
 ```
 
-### LLM formatting
-
-```md
-## Decisions
-- [1] Keep argument validation inside Tool.execute().
-- [2] Memory tools retain state on their tool instances.
-```
-
-### Documentation
-
-Decisions are strong candidates for end-of-run documentation.
-
-`get_documentation_proposal()` should return a proposal when meaningful decisions exist.
-
-Typical rationale:
-
-> These decisions may explain architectural or implementation choices to future maintainers.
-
-The end-of-run layer may use the proposal to ask whether the decisions should be added to `AGENTS.md`, an architecture document, or another appropriate repository document.
-
-Do not write documentation automatically merely because a proposal exists.
+`DecisionTool.should_offer_documentation()` returns `True` when decisions
+exist — they are strong candidates for end-of-run documentation. Returning a
+proposal indicator is advisory and never writes documentation automatically.
 
 ## `ConstraintTool`
 
-`ConstraintTool` records rules or limitations that must remain true during the run.
-
-Examples include:
-
-* compatibility requirements
-* invariants
-* public API restrictions
-* architectural boundaries
-* repository conventions
-* implementation limitations
+`ConstraintTool` records rules or limitations that must remain true during the
+run.
 
 ### Actions
 
-* `add` — record a constraint.
-* `remove` — remove one that is stale, incorrect, or no longer applicable.
+* `promote` — promote working state(s) to constraints.
+* `remove` — remove a stale/inapplicable constraint.
 
 ### Extract shape
 
@@ -405,75 +296,39 @@ Examples include:
 class ConstraintExtract:
     id: int
     content: str
+    working_state_id: int
 ```
 
-### LLM formatting
+Constraints must be reintroduced into model context on subsequent iterations so
+the agent does not forget them. `ConstraintTool.should_offer_documentation()`
+returns `True` when constraints exist.
 
-```md
-## Constraints
-- [1] Do not change the public Tool.execute() lifecycle.
-- [2] Interactive input must use citra.utils.terminal_input.
-```
+## `CheckpointTool`
 
-Constraints should be reintroduced into model context on subsequent iterations so the agent does not forget them.
+`CheckpointTool` keeps one authoritative resume point across agent turns. It is
+the one memory type set directly (`set`/`clear`), not promoted from working
+state, because it is derived handoff state rather than a durable belief.
 
-### Documentation
+### Actions
 
-Constraints are strong candidates for end-of-run documentation because they frequently matter to future maintainers.
+* `set` — set the checkpoint (`content` required, `next_step` optional).
+* `clear` — remove the checkpoint (`content`/`next_step` invalid for clear).
 
-`get_documentation_proposal()` should return a proposal when retained constraints exist.
-
-Typical rationale:
-
-> These constraints may affect future changes and should be considered for repository documentation.
-
-## Documentation proposals
-
-Prefer a structured proposal type instead of raw dictionaries.
-
-Example:
+### Extract shape
 
 ```python
 @dataclass(frozen=True)
-class DocumentationProposal:
-    title: str
-    reason: str
+class CheckpointExtract:
     content: str
+    next_step: str | None
+    turn: int
 ```
 
-Then:
-
-```python
-def get_documentation_proposal(
-    self,
-) -> DocumentationProposal | None:
-    ...
-```
-
-At the end of the run, collect proposals from all memory tools:
-
-```python
-proposals = []
-
-for tool in tools.values():
-    if not isinstance(tool, MemoryTool):
-        continue
-
-    proposal = tool.get_documentation_proposal()
-
-    if proposal is not None:
-        proposals.append(proposal)
-```
-
-The runtime may then ask the user whether the proposed knowledge should be written into repository documentation.
-
-The proposal mechanism is advisory. It must not silently persist memory.
+`CheckpointTool.should_offer_documentation()` is `False`.
 
 ## Injecting memory into model context
 
-Memory tools should expose their retained state to the model between iterations.
-
-Example:
+Memory tools expose their retained state to the model between iterations:
 
 ```python
 sections: list[str] = []
@@ -481,9 +336,7 @@ sections: list[str] = []
 for tool in tools.values():
     if not isinstance(tool, MemoryTool):
         continue
-
     section = tool.format_for_llm()
-
     if section:
         sections.append(section)
 
@@ -495,22 +348,22 @@ A resulting memory block might look like:
 ```md
 # Conversation Memory
 
-## TODOs
-- [x] [1] Inspect the tool lifecycle
-- [ ] [2] Add completion gating
+## Todos
+- [ ] [ID 2] Rewrite session_memory/AGENTS.md (from W1)
 
 ## Facts
-- [1] ToolRegistry stores tool classes rather than instances.
-  - source: src/citra/tools/tool_registry.py:12-34
+- [3] Citra uses a working-state promotion model.
+  - origin: working state W1
 
 ## Decisions
-- [1] Memory state will live on persistent tool instances.
+- [1] Keep memory tools process-local.
 
 ## Constraints
-- [1] Tool.execute() remains the final validation and logging path.
+- [1] Durable memory must be promoted from working state.
 ```
 
-Do not require the model to spend tool calls merely to rediscover memory that the runtime already owns.
+Do not require the model to spend tool calls merely to rediscover memory that
+the runtime already owns.
 
 ## Runtime responsibilities
 
@@ -522,31 +375,35 @@ The tool is responsible for:
 * validating operations
 * changing extract state
 * rendering memory
-* exposing documentation proposals
+* signaling whether documentation may be offered
 
 The runtime is responsible for:
 
-* preserving memory tool instances throughout the conversation
+* preserving memory tool instances and shared state throughout the conversation
 * injecting memory into model context
-* enforcing completion invariants
-* collecting documentation proposals
-* deciding when to ask the user about persistence
+* enforcing completion invariants (e.g. outstanding TODOs)
+* deciding whether and when to ask the user about persistence
 
-In particular, `TodoTool` may expose `has_outstanding_todos()`, but the outer loop must enforce it.
+In particular, `TodoTool` may expose `has_outstanding_todos()`, but the outer
+loop must enforce it.
 
 ## General implementation conventions
 
 * Memory tools extend `MemoryTool`, not `SessionTool` directly.
-* Keep model-facing function names concise: `todo`, `fact`, `decision`, `constraint`.
-* Use the JSON schema DSL from `citra.utils.json_schema`.
-* Never hand-write raw tool-schema dictionaries.
+* Keep model-facing function names concise: `working_state`, `todo`, `fact`,
+  `decision`, `constraint`, `checkpoint`.
+* Use the JSON schema DSL from `citra.utils.json_schema`. Never hand-write raw
+  tool-schema dictionaries.
 * Set `additional_properties=False`.
-* Validate action-specific requirements in Python when the schema DSL cannot express them.
-* Raise exceptions for invalid IDs and malformed operations.
+* Validate action-specific requirements in Python when the schema DSL cannot
+  express them.
+* Raise exceptions for invalid IDs, malformed operations, and duplicate/empty
+  content.
 * Use immutable extract dataclasses.
 * Keep extract mutation private to the owning tool.
 * Return plain strings from `_execute()`.
-* Memory is process-local and conversation-durable by default.
-* Documentation proposals never imply automatic persistence.
+* Durable memory is process-local and conversation-durable; it is promoted from
+  working state, never created directly.
+* `should_offer_documentation()` does not imply automatic persistence.
 * Obtain memory tools through the registry and active session during the loop.
 * Keep memory formatting compact; it is repeatedly inserted into model context.

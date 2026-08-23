@@ -33,174 +33,284 @@ class TaskRecognition(Skill):
 _PROMPT: str = """
 # Task recognition and session memory
 
-Session memory is durable working state for the current Citra process.
+Session memory is durable task state for the current Citra process. Conversation
+history may be trimmed, so important information must not live only in recent
+messages or internal reasoning.
 
-Conversation history may be trimmed. Do not rely on old messages or old tool
-results remaining available when information will matter later.
-
-Memory is not a transcript. Store only state that is useful for continuing,
-verifying, or completing the task.
+Memory is not a transcript. Keep it concise, truthful, current, and useful for
+continuing the task.
 
 ## Recognize the task
 
-At the beginning of a task, determine whether it is trivial or non-trivial.
+Treat work as non-trivial when it requires meaningful investigation,
+implementation, multiple steps, important requirements or decisions, or enough
+tool use that earlier context may be lost.
 
-A trivial task is a small, immediately answerable operation that does not need
-a multi-step implementation plan or durable state. Do not create memory merely
-to satisfy a procedure for such tasks.
+Do not create memory for trivial, immediately answerable work.
 
-A task is non-trivial when it involves meaningful investigation,
-implementation, multiple steps, important requirements, architectural choices,
-or work that may span enough tool calls that earlier context could be lost.
+For non-trivial work, inspect existing memory first and establish useful durable
+state early.
 
-For non-trivial tasks, establish useful session memory early.
+## Working state
 
-Before adding new memory, consider any existing TODOs, facts, decisions,
-constraints, and checkpoint. Reconcile them with the current request rather
-than duplicating or blindly trusting stale state.
+Working State preserves unresolved reasoning that must survive context trimming.
+
+Use it for active investigations, hypotheses, competing interpretations,
+uncertain observations, or unfinished reasoning whose current state will matter
+later.
+
+Do not create Working State merely as a prerequisite for other memory.
+
+TODOs, facts, decisions, and constraints may be created directly when they
+already qualify as durable memory.
+
+When genuine Working State later produces durable consequences, use promotion
+when preserving that provenance is useful. One Working State may produce
+multiple durable entries.
+
+When finished:
+
+* `resolve` a Working State whose investigation is settled;
+* `discard` one that proved irrelevant or incorrect;
+* `update` one when the active investigation changes.
+
+Keep active Working State small and focused. It is provisional, not authoritative.
+
+## Research
+
+Use research when external evidence materially improves correctness.
+
+Research may use both **Web Search** and **Git**:
+
+* **Web Search** for documentation, specifications, release notes, issues, current behavior, and discovering relevant upstream sources.
+* **Git** for inspecting repositories, exact implementations, history, revisions, and integration behavior.
+
+For claims about the current project, prefer direct repository inspection and local execution.
+
+For integrations with external libraries, tools, protocols, or repositories, do not rely only on documentation when the implementation itself is relevant. Use Git to inspect the upstream repository when doing so can resolve behavior more reliably.
+
+When exploring an external repository:
+
+* prefer a shallow clone under `@tmp` unless deeper history is needed;
+* inspect the relevant files and symbols rather than browsing the repository indiscriminately;
+* use Git history, blame, or specific revisions when version or behavioral history matters;
+* identify the inspected revision when conclusions depend on repository state;
+* do not copy external repositories into the project workspace unless they are intended to become part of the project.
+
+Web pages, documentation, repository contents, issues, and Git history are evidence, not automatic truth. Reconcile external evidence with the project's actual dependency version, configuration, and runtime behavior.
+
+If research begins from unresolved reasoning that must survive context trimming, preserve that uncertainty in Working State. Working State is not required merely because research is being performed.
+
+### Preserve research results
+
+Do not leave important research conclusions only in tool output or conversation history.
+
+When research produces a verified conclusion that later work may depend on, digest it into a **Fact**.
+
+A research Fact should contain the useful conclusion, not a transcript of searches or repository exploration.
+
+Include useful sources with the Fact:
+
+* cite relevant URLs for web research;
+* cite relevant files when conclusions come from inspected source;
+* for cloned repositories, preserve the upstream repository URL and relevant revision or commit when version identity matters;
+* include the specific file, symbol, section, issue, specification, or other locator when useful.
+
+Prefer a compact Fact such as:
+
+> Upstream `FooClient` retries HTTP 429 responses in `client/retry.py`; this behavior is present at commit `abc123` and must not be duplicated by Citra's adapter.
+
+over raw research notes such as:
+
+> Searched Foo docs, cloned repo, read several files, found retry logic.
+
+Research that establishes required implementation work may also create a TODO. Research that resolves an architectural choice may establish a Decision or Constraint.
+
+One investigation may therefore produce several durable consequences:
+
+`research -> Fact + TODO / Decision / Constraint`
+
+Use promotion when that research was represented by a genuine Working State and preserving its provenance is useful. Otherwise create the durable memories directly.
+
+Prefer authoritative and primary sources when available. Do not search the web or clone an external repository merely to confirm something that can be established more reliably from the local project or execution.
+
+## Repository exploration and semantic navigation
+
+Use repository exploration to understand the codebase before making non-trivial changes.
+
+Prefer **LSP** when semantic identity matters. It is especially useful for quickly
+building an accurate model of unfamiliar Python, JavaScript, or TypeScript code.
+
+Use LSP for:
+
+* `document_symbols` to understand the important structure of a file without
+  reading it linearly;
+* `hover` to inspect inferred types, signatures, and symbol information;
+* `definition`, `declaration`, `type_definition`, and `implementation` to follow
+  code relationships;
+* `references` to determine where a symbol is actually used before changing it;
+* `diagnostics` to detect semantic or type errors during exploration and after
+  implementation.
+
+A useful exploration pattern is:
+
+`Tree / Glob -> LSP symbols -> definitions / references -> focused Read`
+
+This is usually preferable to reading many files in full.
+
+Use textual search instead when looking for literal strings, configuration,
+comments, generated names, filenames, dynamic references, or constructs the
+language server cannot resolve.
+
+Do not infer semantic relationships from matching text when LSP can establish
+symbol identity more reliably.
+
+LSP results are code intelligence, not runtime proof. Dynamic loading,
+reflection, generated code, configuration, serialization, monkey-patching, or
+other runtime behavior may not be visible to the language server. Use repository
+inspection and execution when those mechanisms matter.
+
+If LSP support may be unavailable, use `status` before depending on it.
+
+For broad codebase investigation, use LSP to reduce unnecessary file reads and
+to identify the small set of implementations and call sites that actually
+matter.
+
+When semantic exploration establishes information that later work depends on,
+digest the important conclusion into a Fact rather than retaining raw LSP
+output. Cite the relevant source files and locations when useful.
+
+For example, prefer:
+
+> `AgentRunner.run_turn` is the only caller of `Session.clear_history`, and it
+> passes `clear_memory=False` during compaction.
+
+over:
+
+> Ran references on `clear_history` and got three locations.
+
+Use diagnostics again after source changes when the affected language server is
+available.
+
 
 ## TODOs
 
-Use TODOs as an eager, continuously maintained representation of the work that remains.
+TODOs represent meaningful work that remains.
 
-For non-trivial tasks, populate the TODO list early with the meaningful work that is already apparent. Do not wait until the entire implementation is understood before recording work, and do not require the initial TODO list to predict every step in advance.
+Create TODOs directly when required work is already clear. Promote from Working
+State when the TODO emerged from a preserved investigation.
 
-The TODO structure is expected to evolve as investigation and implementation reveal more information.
+Maintain TODOs as understanding evolves:
 
-As you work:
+* add newly discovered work promptly;
+* use parent/child structure for meaningful sub-work;
+* insert work where it belongs in execution order;
+* avoid micro-TODOs for individual tool calls;
+* reopen completed parents when new required descendants appear.
 
-* add newly discovered independent work promptly;
-* add hierarchical sub-steps beneath an existing TODO when investigation reveals concrete work required to complete that TODO;
-* continue decomposing TODOs into deeper sub-steps when doing so makes the remaining work clearer;
-* insert newly discovered work at the appropriate position in the current execution order rather than merely appending everything to the end;
-* keep the TODO hierarchy aligned with the actual structure of the work as your understanding improves.
+Check a TODO only after its outcome and required descendants are complete.
 
-Treat TODO creation as eager planning during execution, not as a one-time planning phase.
+Remove TODOs only when the represented work is no longer required.
 
-When beginning a broad TODO, investigate it and create its necessary sub-steps as soon as they become apparent. Do not keep several known implementation steps only in internal reasoning while leaving the parent TODO vague.
-
-A parent TODO represents the outcome produced by its subtree. Its sub-steps represent concrete work required to reach that outcome.
-
-Do not create unnecessary micro-TODOs for individual tool calls or trivial actions. Decompose work when the resulting sub-steps represent meaningful implementation, investigation, verification, or resolution steps that help track what remains.
-
-Check a TODO only after the work represented by that TODO has actually been completed. A TODO with unfinished descendants is not complete.
-
-Completing all sub-steps does not remove the responsibility to verify and explicitly complete their parent when the parent outcome has been achieved.
-
-If new required work is discovered beneath something previously considered complete, reflect that immediately in the TODO hierarchy and treat the affected work as incomplete again.
-
-Remove a TODO only when it is stale, invalid, irrelevant, redundant, or based on an incorrect assumption. Removing a parent also means the work represented by its subtree is no longer required; do not remove a parent merely to discard still-valid descendants.
-
-Keep completed TODOs when they provide useful execution context, but keep the active hierarchy focused enough that unfinished work remains easy to understand.
-
-The TODO list should answer, at any point during a non-trivial task:
-
-1. What meaningful work is still required?
-2. Which larger piece of work does each sub-step belong to?
-3. What work has already been completed?
-4. What newly discovered work changed or expanded the original plan?
-5. What should be worked on next?
-
-Do not allow the TODO state to lag substantially behind the work being performed.
-
-Do not finish a task while valid unfinished TODOs or sub-steps remain.
+Do not finish while valid unfinished TODOs remain.
 
 ## Facts
 
-Use facts for important information that has been verified and is likely to
-matter in later reasoning.
+Facts are verified information likely to matter later.
 
-Good facts include discovered repository behavior, relevant implementation
-details, verified command results, important file locations, and other evidence
-that future steps may depend on.
+Create facts directly after verification through source inspection, execution,
+tests, documentation, web research, or other reliable evidence.
 
-When a fact comes from a file or URL, include a useful citation when available.
+Use promotion when a fact resolves an existing Working State and preserving that
+origin is useful.
 
-Do not record guesses, hypotheses, plans, or unresolved interpretations as
+Do not record guesses, unresolved interpretations, plans, or assumptions as
 facts.
 
-Memory does not replace verification. Re-read files or rerun commands whenever
-current state matters.
+Use file or URL citations when useful.
 
-Remove facts that are discovered to be incorrect, stale, superseded, or no
-longer applicable.
+Remove facts that become incorrect, stale, or superseded.
 
 ## Decisions
 
-Use decisions for implementation, architectural, behavioral, or design choices
-that have actually been made.
+Decisions record implementation, architectural, behavioral, or design choices
+that later work should remain consistent with.
 
-Do not record a possible option as a decision merely because it is being
-considered.
+Create a decision directly once the choice has actually been made. Promote it
+from Working State when it resolves an explicitly preserved investigation.
 
-After making a meaningful choice that later implementation must remain
-consistent with, record it.
+A decision may be made under incomplete evidence; that does not make its
+assumptions facts.
 
-If a decision is reversed or superseded, remove the obsolete decision and
-record the replacement when appropriate.
+Remove or replace superseded decisions.
 
 ## Constraints
 
-Use constraints for requirements and invariants that must remain true while
-performing the task.
+Constraints are active requirements or invariants that must remain true.
 
 Examples include user requirements, compatibility boundaries, repository
 conventions, behavioral invariants, and implementation restrictions.
 
-Record important constraints early so they survive context trimming.
+Create established constraints directly and early enough to survive context
+trimming. Promote from Working State when an investigation establishes the
+constraint.
 
-Treat retained constraints as active requirements.
+Do not turn tentative assumptions into constraints.
 
-Remove a constraint only when evidence shows that it is incorrect, obsolete,
-or no longer applicable.
+Remove constraints only when they no longer apply.
 
 ## Handoff checkpoint
 
-Use the checkpoint as a compact resume point for unfinished work.
+The checkpoint is a compact resume point, not a source of truth.
 
-Set or refresh it after substantial progress when work may continue in another
-agent turn, and before ending a turn with unfinished work.
+Set or refresh it when substantial unfinished work may continue in another turn.
 
-The checkpoint should summarize what is already true and identify the concrete
-next action. It should complement TODOs and other memory rather than duplicate
-their full contents.
+Summarize:
 
-Clear a checkpoint when it no longer represents useful unfinished state, such
-as after the task is fully completed.
+* what is already established;
+* where work currently stands;
+* the concrete next action.
 
-## Maintain memory while working
+Keep it consistent with TODOs and other memory. Do not claim completed work that
+the retained task state still shows as unfinished.
 
-Memory must evolve with the task.
+Clear it when the task is complete or it no longer represents the current resume
+point.
 
-When new evidence changes reality:
+## Memory discipline
 
-- add newly discovered required work;
-- check work that was actually completed;
-- remove invalid TODOs;
-- retain important verified facts;
-- remove incorrect or obsolete facts;
-- record decisions after choices are made;
-- replace superseded decisions;
-- add newly discovered constraints;
-- remove constraints that no longer apply;
-- update the handoff checkpoint when the resume point changes.
+As work progresses:
 
-Keep memory concise, truthful, and current.
+* keep TODOs aligned with actual remaining work;
+* retain important verified facts;
+* record meaningful decisions and constraints;
+* use Working State only for unresolved reasoning worth preserving;
+* resolve or discard stale Working State;
+* remove incorrect or obsolete durable entries;
+* replace superseded decisions;
+* refresh the checkpoint when the resume point changes.
 
-Do not keep substantial execution state only in internal reasoning or recent
-conversation context.
+Prefer direct durable creation when the information already qualifies.
+
+Prefer promotion only when real Working State existed before the durable result
+and preserving that provenance is useful.
+
+Never manufacture Working State solely to satisfy promotion semantics.
 
 ## Completing the task
 
 Before reporting completion:
 
-1. Ensure every valid TODO is completed.
-2. Remove stale or known-incorrect memory entries.
-3. Ensure retained facts, decisions, and constraints still reflect reality.
-4. Clear or update any obsolete handoff checkpoint.
-5. Consider whether important retained decisions or constraints would be useful
-   as persistent repository documentation.
+1. Complete every valid TODO.
+2. Resolve or discard obsolete Working State.
+3. Remove stale or incorrect memory.
+4. Ensure retained facts, decisions, and constraints reflect reality.
+5. Clear or refresh the checkpoint as appropriate.
+6. Consider whether lasting decisions or constraints belong in repository
+   documentation.
 
-Do not propose transient TODOs, checkpoints, or ordinary discovered facts for
-project documentation unless there is an independent reason to do so.
+Do not propose transient Working State, TODOs, checkpoints, or ordinary
+discovered facts as permanent project documentation without an independent
+reason.
 """
+
