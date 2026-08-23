@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import json
 import re
 from typing import Any, override
@@ -26,9 +27,49 @@ class WebSearch(Tool):
     Search the public web through the OpenSERP instance configured in the
     current ExecutionContext.
 
+    A call may contain either one ``query`` or a batch of ``queries``. Batch
+    queries share the same search options and are executed concurrently against
+    OpenSERP's ``/mega/search`` endpoint. Successful and failed batch items are
+    kept separate so one failed query does not discard the other results.
+
     Citra intentionally exposes a smaller API than OpenSERP itself. Provider-
     specific proxy, aggregation, and transport controls remain implementation
     details rather than model-facing search semantics.
+
+    Result formats
+    --------------
+
+    text:
+        Default. OpenSERP's compact plain-text representation optimized for
+        model context.
+
+    markdown:
+        OpenSERP's rendered Markdown representation.
+
+    json:
+        Citra-normalized structured search results.
+
+    ndjson:
+        OpenSERP's newline-delimited JSON. For batch calls, each output line is
+        wrapped with the originating query and batch index so provenance is not
+        lost.
+
+    Batch behavior
+    --------------
+
+    ``query`` and ``queries`` are mutually exclusive.
+
+    Batch calls may contain up to ``MAX_BATCH_QUERIES`` non-empty queries.
+    Duplicate queries are rejected because they would perform redundant network
+    work.
+
+    Batch searches run with bounded concurrency. A failed query is represented
+    as an error for that query while successful queries are retained. If every
+    query fails, the tool raises ``WebSearchError``.
+
+    All search parameters other than ``query`` / ``queries`` are shared by the
+    entire batch. ``timeout_seconds`` applies independently to each OpenSERP
+    request rather than to the batch as a whole.
     """
 
     DEFAULT_ENGINES = (
@@ -65,6 +106,12 @@ class WebSearch(Tool):
     DEFAULT_TIMEOUT_SECONDS = 20.0
     MAX_TIMEOUT_SECONDS = 60.0
 
+    MAX_BATCH_QUERIES = 10
+    MAX_BATCH_WORKERS = 4
+
+    # JSON extraction can contain an entire article or documentation page.
+    # Bound each extracted result before returning structured data to the
+    # model. Rendered text/Markdown responses are controlled by OpenSERP.
     MAX_EXTRACTED_CONTENT_LENGTH = 20_000
 
     DATE_RANGE_PATTERN = re.compile(
@@ -75,8 +122,10 @@ class WebSearch(Tool):
         function=FunctionDefinition(
             name="web_search",
             description=(
-                "Search the public web through OpenSERP. Use this for current "
-                "or external research, documentation, specifications, upstream "
+                "Search the public web through OpenSERP. Supply either one "
+                "'query' or a batch of 'queries'. Batch queries share the same "
+                "search options and run concurrently. Use this for current or "
+                "external research, documentation, specifications, upstream "
                 "projects, issues, releases, and other information not "
                 "authoritatively available in the local repository. Searches "
                 "multiple engines by default. Returns compact plain text "
@@ -90,10 +139,24 @@ class WebSearch(Tool):
                         name="query",
                         schema=JsonSchema.string(
                             description=(
-                                "Search query. Be specific and include important "
-                                "names, versions, errors, or other constraints."
+                                "One search query. Mutually exclusive with "
+                                "'queries'. Be specific and include important "
+                                "names, versions, errors, or constraints."
                             ),
                         ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="queries",
+                        schema=JsonSchema.array(
+                            JsonSchema.string(),
+                            description=(
+                                "Batch of search queries. Mutually exclusive "
+                                "with 'query'. All queries share the same search "
+                                "options. Up to 10 queries may be supplied."
+                            ),
+                        ),
+                        required=False,
                     ),
                     JsonProperty(
                         name="format",
@@ -103,8 +166,8 @@ class WebSearch(Tool):
                                 "compact plain-text representation optimized "
                                 "for LLM context; 'markdown' returns rendered "
                                 "Markdown; 'json' returns Citra-normalized "
-                                "structured results; 'ndjson' returns one raw "
-                                "result object per line. Defaults to 'text'."
+                                "structured results; 'ndjson' returns "
+                                "newline-delimited JSON. Defaults to 'text'."
                             ),
                             enum=SUPPORTED_FORMATS,
                         ),
@@ -206,8 +269,8 @@ class WebSearch(Tool):
                         name="max_results",
                         schema=JsonSchema.integer(
                             description=(
-                                "Maximum number of search results returned. "
-                                "Defaults to 10; Citra allows at most 50."
+                                "Maximum number of search results returned per "
+                                "query. Defaults to 10; Citra allows at most 50."
                             ),
                         ),
                         required=False,
@@ -217,8 +280,9 @@ class WebSearch(Tool):
                         schema=JsonSchema.integer(
                             description=(
                                 "Fetch and embed cleaned page content for the "
-                                "top N results. 0 disables extraction. Valid "
-                                "range is 0-5 and defaults to 0."
+                                "top N results of each query. 0 disables "
+                                "extraction. Valid range is 0-5 and defaults "
+                                "to 0."
                             ),
                         ),
                         required=False,
@@ -255,8 +319,8 @@ class WebSearch(Tool):
                         name="timeout_seconds",
                         schema=JsonSchema.number(
                             description=(
-                                "Maximum number of seconds to wait for the "
-                                "OpenSERP request. Defaults to 20; maximum 60."
+                                "Maximum seconds to wait for each OpenSERP "
+                                "search request. Defaults to 20; maximum 60."
                             ),
                         ),
                         required=False,
@@ -281,14 +345,9 @@ class WebSearch(Tool):
         self,
         arguments: dict[str, Any],
     ) -> dict[str, Any] | str:
-        query = str(
-            arguments["query"]
-        ).strip()
-
-        if not query:
-            raise WebSearchError(
-                "Search query cannot be empty."
-            )
+        queries, batch = self._queries(
+            arguments
+        )
 
         engines = self._engines(
             arguments
@@ -299,7 +358,7 @@ class WebSearch(Tool):
                 "mode",
                 self.DEFAULT_MODE,
             )
-        )
+        ).lower()
 
         if mode not in {
             "balanced",
@@ -409,8 +468,7 @@ class WebSearch(Tool):
                     "'date_range' must use YYYYMMDD..YYYYMMDD format."
                 )
 
-        params: dict[str, str | int] = {
-            "text": query,
+        base_params: dict[str, str | int] = {
             "engines": ",".join(
                 engines
             ),
@@ -437,7 +495,7 @@ class WebSearch(Tool):
         )
 
         if language is not None:
-            params["lang"] = language
+            base_params["lang"] = language
 
         region = self._optional_text(
             arguments,
@@ -445,7 +503,7 @@ class WebSearch(Tool):
         )
 
         if region is not None:
-            params["region"] = region
+            base_params["region"] = region
 
         site = self._optional_text(
             arguments,
@@ -453,7 +511,7 @@ class WebSearch(Tool):
         )
 
         if site is not None:
-            params["site"] = site
+            base_params["site"] = site
 
         file_type = self._optional_text(
             arguments,
@@ -461,48 +519,38 @@ class WebSearch(Tool):
         )
 
         if file_type is not None:
-            params["file"] = file_type.lstrip(".")
+            base_params["file"] = file_type.lstrip(".")
 
         if date_range is not None:
-            params["date"] = date_range
+            base_params["date"] = date_range
 
         if extract_mode is not None:
-            params["extract_mode"] = str(
+            base_params["extract_mode"] = str(
                 extract_mode
             )
 
-        payload = self._request(
-            params=params,
-            timeout=float(timeout),
-            result_format=result_format,
-        )
-
-        # OpenSERP already renders text, Markdown, and NDJSON into useful
-        # model-facing representations. Preserve those instead of parsing and
-        # reconstructing them.
-        if result_format != "json":
-            if not isinstance(payload, str):
-                raise WebSearchError(
-                    "OpenSERP returned an unexpected rendered response type."
-                )
-
-            return payload
-
-        if not isinstance(payload, dict):
-            raise WebSearchError(
-                "OpenSERP returned an unexpected JSON response type."
-            )
-
-        return self._normalize_json_response(
-            payload=payload,
-            query=query,
-            mode=mode,
-            engines=engines,
-            max_results=max_results,
-            include_features=arguments.get(
+        search_arguments = {
+            "base_params": base_params,
+            "timeout": float(timeout),
+            "result_format": result_format,
+            "mode": mode,
+            "engines": engines,
+            "max_results": max_results,
+            "include_features": arguments.get(
                 "include_features",
                 False,
             ),
+        }
+
+        if not batch:
+            return self._search_one(
+                queries[0],
+                **search_arguments,
+            )
+
+        return self._search_batch(
+            queries,
+            **search_arguments,
         )
 
     @override
@@ -510,16 +558,39 @@ class WebSearch(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        query = str(
-            arguments.get(
-                "query",
-                "",
-            )
+        query = arguments.get(
+            "query"
+        )
+        queries = arguments.get(
+            "queries"
         )
 
-        parts = [
-            f"query={self._truncate(query, 120)}"
-        ]
+        if query is not None:
+            parts = [
+                f"query={self._truncate(str(query), 120)}"
+            ]
+
+        elif isinstance(
+            queries,
+            list,
+        ):
+            parts = [
+                f"queries={len(queries)}"
+            ]
+
+            if queries:
+                parts.append(
+                    "first="
+                    + self._truncate(
+                        str(queries[0]),
+                        80,
+                    )
+                )
+
+        else:
+            parts = [
+                "query=?"
+            ]
 
         result_format = arguments.get(
             "format"
@@ -620,6 +691,35 @@ class WebSearch(Tool):
                 result
             )
 
+        if result.get(
+            "batch"
+        ) is True:
+            total = result.get(
+                "query_count",
+                0,
+            )
+            succeeded = result.get(
+                "successful_queries",
+                0,
+            )
+            failed = result.get(
+                "failed_queries",
+                0,
+            )
+
+            parts = [
+                f"{succeeded}/{total} query(s) succeeded"
+            ]
+
+            if failed:
+                parts.append(
+                    f"{failed} failed"
+                )
+
+            return " | ".join(
+                parts
+            )
+
         count = result.get(
             "returned_results",
             0,
@@ -668,6 +768,352 @@ class WebSearch(Tool):
 
         return " | ".join(
             parts
+        )
+
+    def _search_one(
+        self,
+        query: str,
+        *,
+        base_params: dict[str, str | int],
+        timeout: float,
+        result_format: str,
+        mode: str,
+        engines: tuple[str, ...],
+        max_results: int,
+        include_features: bool,
+    ) -> dict[str, Any] | str:
+        params = {
+            **base_params,
+            "text": query,
+        }
+
+        payload = self._request(
+            params=params,
+            timeout=timeout,
+            result_format=result_format,
+        )
+
+        if result_format != "json":
+            if not isinstance(
+                payload,
+                str,
+            ):
+                raise WebSearchError(
+                    "OpenSERP returned an unexpected rendered response type."
+                )
+
+            return payload
+
+        if not isinstance(
+            payload,
+            dict,
+        ):
+            raise WebSearchError(
+                "OpenSERP returned an unexpected JSON response type."
+            )
+
+        return self._normalize_json_response(
+            payload=payload,
+            query=query,
+            mode=mode,
+            engines=engines,
+            max_results=max_results,
+            include_features=include_features,
+        )
+
+    def _search_batch(
+        self,
+        queries: tuple[str, ...],
+        *,
+        base_params: dict[str, str | int],
+        timeout: float,
+        result_format: str,
+        mode: str,
+        engines: tuple[str, ...],
+        max_results: int,
+        include_features: bool,
+    ) -> dict[str, Any] | str:
+        results: list[dict[str, Any]] = [
+            {
+                "query": query,
+            }
+            for query in queries
+        ]
+
+        worker_count = min(
+            len(queries),
+            self.MAX_BATCH_WORKERS,
+        )
+
+        futures: dict[
+            Future[dict[str, Any] | str],
+            int,
+        ] = {}
+
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="citra-web-search",
+        ) as executor:
+            for index, query in enumerate(
+                queries
+            ):
+                future = executor.submit(
+                    self._search_one,
+                    query,
+                    base_params=base_params,
+                    timeout=timeout,
+                    result_format=result_format,
+                    mode=mode,
+                    engines=engines,
+                    max_results=max_results,
+                    include_features=include_features,
+                )
+
+                futures[future] = index
+
+            for future in as_completed(
+                futures
+            ):
+                index = futures[
+                    future
+                ]
+
+                try:
+                    result = future.result()
+
+                except WebSearchError as error:
+                    results[index][
+                        "error"
+                    ] = str(
+                        error
+                    )
+
+                else:
+                    results[index][
+                        "result"
+                    ] = result
+
+        successful = sum(
+            1
+            for item in results
+            if "result" in item
+        )
+
+        failed = (
+            len(results)
+            - successful
+        )
+
+        if successful == 0:
+            first_error = next(
+                (
+                    str(item["error"])
+                    for item in results
+                    if item.get("error")
+                ),
+                "unknown error",
+            )
+
+            raise WebSearchError(
+                f"All {len(queries)} batch searches failed. "
+                f"First error: {first_error}"
+            )
+
+        if result_format == "json":
+            return {
+                "batch": True,
+                "query_count": len(
+                    queries
+                ),
+                "successful_queries": successful,
+                "failed_queries": failed,
+                "results": results,
+            }
+
+        if result_format == "markdown":
+            return self._format_markdown_batch(
+                results
+            )
+
+        if result_format == "ndjson":
+            return self._format_ndjson_batch(
+                results
+            )
+
+        return self._format_text_batch(
+            results
+        )
+
+    @staticmethod
+    def _format_text_batch(
+        results: list[dict[str, Any]],
+    ) -> str:
+        """
+        Combine OpenSERP plain-text responses while preserving query identity.
+
+        Each individual response remains untouched apart from surrounding batch
+        headers.
+        """
+        sections: list[str] = []
+
+        for index, item in enumerate(
+            results,
+            start=1,
+        ):
+            query = WebSearch._display_query(
+                str(item["query"])
+            )
+
+            header = (
+                f"[Query {index}] {query}"
+            )
+
+            if "error" in item:
+                body = (
+                    "ERROR: "
+                    + str(item["error"])
+                )
+
+            else:
+                body = str(
+                    item.get(
+                        "result",
+                        "",
+                    )
+                ).strip()
+
+            sections.append(
+                f"{header}\n{body}"
+            )
+
+        return "\n\n".join(
+            sections
+        )
+
+    @staticmethod
+    def _format_markdown_batch(
+        results: list[dict[str, Any]],
+    ) -> str:
+        """
+        Combine OpenSERP Markdown responses under per-query headings.
+        """
+        sections: list[str] = []
+
+        for index, item in enumerate(
+            results,
+            start=1,
+        ):
+            query = WebSearch._display_query(
+                str(item["query"])
+            )
+
+            header = (
+                f"## Query {index}: {query}"
+            )
+
+            if "error" in item:
+                body = (
+                    "**Error:** "
+                    + str(item["error"])
+                )
+
+            else:
+                body = str(
+                    item.get(
+                        "result",
+                        "",
+                    )
+                ).strip()
+
+            sections.append(
+                f"{header}\n\n{body}"
+            )
+
+        return "\n\n".join(
+            sections
+        )
+
+    @staticmethod
+    def _format_ndjson_batch(
+        results: list[dict[str, Any]],
+    ) -> str:
+        """
+        Preserve valid NDJSON while attaching batch provenance.
+
+        Every OpenSERP result line is wrapped in:
+
+        {
+            "batch_index": ...,
+            "query": ...,
+            "result": ...
+        }
+
+        Failed queries produce one NDJSON error object.
+        """
+        lines: list[str] = []
+
+        for index, item in enumerate(
+            results,
+            start=1,
+        ):
+            query = str(
+                item["query"]
+            )
+
+            if "error" in item:
+                lines.append(
+                    json.dumps(
+                        {
+                            "batch_index": index,
+                            "query": query,
+                            "error": str(
+                                item["error"]
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+
+                continue
+
+            raw = str(
+                item.get(
+                    "result",
+                    "",
+                )
+            )
+
+            for raw_line in raw.splitlines():
+                raw_line = raw_line.strip()
+
+                if not raw_line:
+                    continue
+
+                try:
+                    result = json.loads(
+                        raw_line
+                    )
+
+                except json.JSONDecodeError:
+                    # Preserve unexpected provider output without breaking the
+                    # overall NDJSON stream.
+                    result = {
+                        "raw": raw_line,
+                    }
+
+                lines.append(
+                    json.dumps(
+                        {
+                            "batch_index": index,
+                            "query": query,
+                            "result": result,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+
+        return "\n".join(
+            lines
         )
 
     def _request(
@@ -742,6 +1188,7 @@ class WebSearch(Tool):
                 return raw.decode(
                     "utf-8"
                 )
+
             except UnicodeDecodeError as error:
                 raise WebSearchError(
                     "OpenSERP returned a non-UTF-8 rendered response."
@@ -901,6 +1348,12 @@ class WebSearch(Tool):
         cls,
         result: dict[str, Any],
     ) -> dict[str, Any]:
+        """
+        Reduce OpenSERP result objects to fields useful to the model.
+
+        Provider/UI metadata such as favicons and low-level position details
+        are intentionally omitted.
+        """
         normalized: dict[str, Any] = {
             "rank": result.get(
                 "rank"
@@ -1130,6 +1583,106 @@ class WebSearch(Tool):
             if item is not None
         }
 
+    def _queries(
+        self,
+        arguments: dict[str, Any],
+    ) -> tuple[tuple[str, ...], bool]:
+        """
+        Validate the mutually-exclusive single-query and batch-query inputs.
+
+        Returns:
+            (queries, batch)
+
+        ``batch`` reflects which API form the model requested rather than the
+        number of queries. A ``queries`` array containing one element therefore
+        still receives batch-shaped output.
+        """
+        query_supplied = (
+            "query" in arguments
+            and arguments.get("query") is not None
+        )
+
+        queries_supplied = (
+            "queries" in arguments
+            and arguments.get("queries") is not None
+        )
+
+        if query_supplied == queries_supplied:
+            raise WebSearchError(
+                "Supply exactly one of 'query' or 'queries'."
+            )
+
+        if query_supplied:
+            query = str(
+                arguments["query"]
+            ).strip()
+
+            if not query:
+                raise WebSearchError(
+                    "Search query cannot be empty."
+                )
+
+            return (
+                query,
+            ), False
+
+        raw_queries = arguments.get(
+            "queries"
+        )
+
+        if (
+            not isinstance(raw_queries, list)
+            or not raw_queries
+        ):
+            raise WebSearchError(
+                "'queries' must contain at least one search query."
+            )
+
+        if len(raw_queries) > self.MAX_BATCH_QUERIES:
+            raise WebSearchError(
+                "'queries' may contain at most "
+                f"{self.MAX_BATCH_QUERIES} search queries."
+            )
+
+        queries: list[str] = []
+        seen: set[str] = set()
+
+        for index, raw_query in enumerate(
+            raw_queries,
+            start=1,
+        ):
+            if not isinstance(
+                raw_query,
+                str,
+            ):
+                raise WebSearchError(
+                    f"Query {index} in 'queries' must be a string."
+                )
+
+            query = raw_query.strip()
+
+            if not query:
+                raise WebSearchError(
+                    f"Query {index} in 'queries' cannot be empty."
+                )
+
+            if query in seen:
+                raise WebSearchError(
+                    f"Duplicate batch query: {query}"
+                )
+
+            seen.add(
+                query
+            )
+
+            queries.append(
+                query
+            )
+
+        return tuple(
+            queries
+        ), True
+
     def _engines(
         self,
         arguments: dict[str, Any],
@@ -1202,14 +1755,14 @@ class WebSearch(Tool):
 
         except Exception:
             return (
-                error.reason
+                str(error.reason)
                 if error.reason
                 else None
             )
 
         if not raw:
             return (
-                error.reason
+                str(error.reason)
                 if error.reason
                 else None
             )
@@ -1279,6 +1832,15 @@ class WebSearch(Tool):
         )
 
     @staticmethod
+    def _display_query(
+        query: str,
+    ) -> str:
+        """Collapse whitespace for compact batch headings."""
+        return " ".join(
+            query.split()
+        )
+
+    @staticmethod
     def _truncate(
         value: str,
         limit: int,
@@ -1296,3 +1858,4 @@ class WebSearch(Tool):
             + "\n"
             + f"... <truncated {omitted} characters>"
         )
+
