@@ -688,6 +688,67 @@ class RepoLibrary(Tool):
             f"Unhandled repository library action: {action}"
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        parts = [f"action={action}"]
+
+        repo_url = arguments.get("repo_url")
+        if repo_url is not None:
+            parts.append(f"repo={repo_url}")
+
+        commit = arguments.get("commit")
+        if commit is not None:
+            parts.append(f"commit={commit}")
+
+        path = arguments.get("path")
+        if path is not None:
+            parts.append(f"path={path}")
+
+        query = arguments.get("query")
+        if query is not None:
+            parts.append(f"query={self._truncate(str(query))}")
+
+        files = arguments.get("files")
+        if files:
+            parts.append(f"files={len(files)}")
+
+        documents = arguments.get("documents")
+        if documents:
+            parts.append(f"documents={len(documents)}")
+
+        edits = arguments.get("edits")
+        if edits:
+            parts.append(f"edits={len(edits)}")
+
+        moves = arguments.get("moves")
+        if moves:
+            parts.append(f"moves={len(moves)}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text:
+            return "empty"
+
+        lines = text.splitlines()
+        return f"{len(lines)} lines"
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 120:
+            return value
+        return value[:120] + "..."
+
     @staticmethod
     def _require_string(
         arguments: dict[str, Any],

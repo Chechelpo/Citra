@@ -228,6 +228,65 @@ class Git(Tool):
             timeout,
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        parts = [f"action={action}"]
+
+        path = arguments.get("path")
+        if path is not None:
+            parts.append(f"path={path}")
+
+        ref = arguments.get("ref")
+        if ref is not None:
+            parts.append(f"ref={ref}")
+
+        file = arguments.get("file")
+        if file is not None:
+            parts.append(f"file={file}")
+
+        url = arguments.get("url")
+        if url is not None:
+            parts.append(f"url={url}")
+
+        limit = arguments.get("limit")
+        if limit is not None:
+            parts.append(f"limit={limit}")
+
+        if arguments.get("staged"):
+            parts.append("staged=true")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text:
+            return "empty output"
+
+        lines = text.splitlines()
+        parts = [f"{len(lines)} lines", f"{len(text)} chars"]
+
+        if "(timed out after " in text:
+            parts.append("timed-out")
+
+        if "error: git exited with code " in text:
+            match = re.search(
+                r"error: git exited with code (\d+)",
+                text,
+            )
+            if match:
+                parts.append(f"exit={match.group(1)}")
+
+        return " | ".join(parts)
+
     def _inspect(
         self,
         action: str,

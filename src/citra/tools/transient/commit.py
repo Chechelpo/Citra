@@ -172,6 +172,42 @@ class Commit(Tool):
             f"Unsupported commit action: {action}"
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        parts = [f"action={action}"]
+
+        paths = arguments.get("paths")
+        if paths:
+            preview = ", ".join(paths[:3])
+            if len(paths) > 3:
+                preview += f", +{len(paths) - 3} more"
+            parts.append(f"paths=[{preview}]")
+
+        if arguments.get("staged"):
+            parts.append("staged=true")
+
+        if "patch" in arguments:
+            parts.append("patch=<redacted>")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text:
+            return "empty"
+
+        lines = text.splitlines()
+        return f"{len(lines)} lines | {len(text)} chars"
+
     @staticmethod
     def _required_paths(
         arguments: dict[str, Any],

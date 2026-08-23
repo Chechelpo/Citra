@@ -112,3 +112,34 @@ class Materialize(Tool):
                 False,
             ),
         ).format()
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "copy")
+        paths = arguments.get("paths", [])
+
+        preview = ", ".join(str(p) for p in paths[:3])
+        if len(paths) > 3:
+            preview += f", +{len(paths) - 3} more"
+
+        parts = [f"action={action}", f"paths=[{preview}]"]
+
+        if arguments.get("include_ignored"):
+            parts.append("include_ignored=true")
+
+        if arguments.get("allow_large"):
+            parts.append("allow_large=true")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+        lines = text.splitlines()
+        return f"{len(lines)} lines"

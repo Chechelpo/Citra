@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from time import perf_counter
 from typing import Any, final
 import logging
 
@@ -39,7 +40,6 @@ class Tool(ABC):
         self,
         context: ExecutionContext,
     ) -> None:
-        """Bind a reused conversation tool to the active execution context."""
         self.__context = context
 
     @property
@@ -51,10 +51,6 @@ class Tool(ABC):
         return self.__definition.function.description
 
     def get_as_tool(self) -> dict[str, Any]:
-        """
-        Return the OpenAI-compatible tool definition
-        exposed to the model.
-        """
         return self.__definition.to_dict()
 
     def validate_arguments(
@@ -97,31 +93,75 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> Any:
-        """
-        Validate model-provided arguments, execute the tool,
-        and log the call.
-        """
         self.validate_arguments(arguments)
 
-        try:
-            result = self._execute(arguments)
-        except Exception as error:
-            logger.exception(
-                "[%s] %s -> ERROR: %s",
-                self.id,
-                arguments,
-                error,
-            )
-            raise
+        call_log = self.format_call_log(
+            arguments
+        )
 
         logger.info(
-            "[%s] %s -> %s",
+            "[%s] START %s",
             self.id,
-            arguments,
-            self._truncate_log_value(result),
+            call_log,
+        )
+
+        started = perf_counter()
+
+        try:
+            result = self._execute(
+                arguments
+            )
+        except Exception as error:
+            elapsed = perf_counter() - started
+
+            logger.exception(
+                "[%s] ERROR after %.3fs | %s | %s",
+                self.id,
+                elapsed,
+                call_log,
+                error,
+            )
+
+            raise
+
+        elapsed = perf_counter() - started
+
+        result_log = self.format_result_log(
+            result
+        )
+
+        logger.info(
+            "[%s] DONE in %.3fs | %s",
+            self.id,
+            elapsed,
+            self._truncate_log_value(
+                result_log
+            ),
         )
 
         return result
+
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        """
+        Human-friendly description of the invocation.
+
+        Tools can override this when the raw argument dict isn't useful.
+        """
+        return str(arguments)
+
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        """
+        Human-friendly description of the result.
+
+        Tools should override this for structured/large results.
+        """
+        return str(result)
 
     @staticmethod
     def _truncate_log_value(
@@ -133,7 +173,9 @@ class Tool(ABC):
         if len(text) <= max_length:
             return text
 
-        truncated_chars = len(text) - max_length
+        truncated_chars = (
+            len(text) - max_length
+        )
 
         return (
             text[:max_length]

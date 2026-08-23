@@ -376,6 +376,55 @@ class Browser(Tool):
             ensure_ascii=False,
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = str(arguments.get("action", "?"))
+        parts = [f"action={action}"]
+
+        url = arguments.get("url")
+        if url is not None:
+            parts.append(f"url={url}")
+
+        ref = arguments.get("ref")
+        if ref is not None:
+            parts.append(f"ref={ref}")
+
+        selector = arguments.get("selector")
+        if selector is not None:
+            parts.append(f"selector={selector}")
+
+        value = arguments.get("value")
+        if value is not None:
+            parts.append(f"value={self._truncate(str(value))}")
+
+        key = arguments.get("key")
+        if key is not None:
+            parts.append(f"key={key}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if text == "Browser session closed.":
+            return "closed"
+
+        lines = text.splitlines()
+        return f"{len(lines)} lines"
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 120:
+            return value
+        return value[:120] + "..."
+
     def _authorize_navigation(
         self,
         *,

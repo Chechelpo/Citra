@@ -7,6 +7,7 @@ Add new commands here by importing their class and registering it,
 exactly like ``citra.tools.default_registry``.
 """
 
+from .model import ModelCommand
 from .clear import ClearCommand
 from .command import CommandRegistry
 from .help import HelpCommand
@@ -20,3 +21,4 @@ COMMAND_REGISTRY.register("q", QuitCommand)
 COMMAND_REGISTRY.register("c", ClearCommand)
 COMMAND_REGISTRY.register("help", HelpCommand)
 COMMAND_REGISTRY.register("test", TestCommand)
+COMMAND_REGISTRY.register("model", ModelCommand)

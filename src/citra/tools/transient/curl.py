@@ -258,6 +258,56 @@ class Curl(Tool):
             return f"Downloaded to {shown}"
         return formatted
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        method = str(arguments.get("method", "GET")).upper()
+        url = str(arguments.get("url", ""))
+        parts = [f"{method} {url}"]
+
+        headers = arguments.get("headers")
+        if headers:
+            parts.append(f"headers={len(headers)}")
+
+        data = arguments.get("data")
+        if data is not None:
+            parts.append(f"body={len(str(data))} bytes")
+
+        if arguments.get("follow_redirects"):
+            parts.append("redirects=true")
+
+        if arguments.get("include_response_headers"):
+            parts.append("include-headers=true")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if text.startswith("Downloaded to "):
+            return text
+
+        if text.startswith("permission-denied"):
+            return "permission-denied"
+
+        if text.startswith("error: curl exited with code"):
+            lines = text.splitlines()
+            return f"error | {len(lines)} lines"
+
+        lines = text.splitlines()
+        parts = [f"{len(lines)} lines", f"{len(text)} chars"]
+
+        if "(timed out after " in text:
+            parts.append("timed-out")
+
+        return " | ".join(parts)
+
     @staticmethod
     def _validate_url(url: str) -> None:
         parsed = urlparse(url)

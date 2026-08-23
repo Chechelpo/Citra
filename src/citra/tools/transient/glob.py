@@ -73,3 +73,29 @@ class Glob(Tool):
             "glob",
             arguments,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        pat = arguments.get("pat", "")
+        path = arguments.get("path")
+
+        if path is not None:
+            return f"pat={pat} | path={path}"
+
+        return f"pat={pat}"
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text or text == "none":
+            return "no matches"
+
+        lines = text.splitlines()
+        return f"{len(lines)} match(es)"

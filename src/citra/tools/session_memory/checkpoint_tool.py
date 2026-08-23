@@ -113,3 +113,27 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         )
         return "Updated handoff checkpoint."
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        parts = [f"action={action}"]
+
+        content = arguments.get("content")
+        if content is not None:
+            parts.append(f"content={self._truncate(str(content))}")
+
+        next_step = arguments.get("next_step")
+        if next_step is not None:
+            parts.append(f"next_step={self._truncate(str(next_step))}")
+
+        return " | ".join(parts)
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 80:
+            return value
+        return value[:80] + "..."
+

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, override
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -263,6 +263,55 @@ class WebSearch(Tool):
             "suggestions": payload.get("suggestions", []),
             "corrections": payload.get("corrections", []),
         }
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        query = arguments.get("query", "")
+        parts = [f"query={self._truncate(query)}"]
+
+        page = arguments.get("page", 1)
+        if page and page > 1:
+            parts.append(f"page={page}")
+
+        categories = arguments.get("categories")
+        if categories:
+            parts.append(f"categories={','.join(categories)}")
+
+        max_results = arguments.get("max_results")
+        if max_results is not None:
+            parts.append(f"max={max_results}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        if isinstance(result, dict):
+            count = result.get("returned_results", 0)
+            answers = len(result.get("answers", []))
+            suggestions = len(result.get("suggestions", []))
+            parts = [f"{count} result(s)"]
+
+            if answers:
+                parts.append(f"{answers} answer(s)")
+
+            if suggestions:
+                parts.append(f"{suggestions} suggestion(s)")
+
+            return " | ".join(parts)
+
+        return str(result)
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 120:
+            return value
+        return value[:120] + "..."
 
     def _request(
         self,

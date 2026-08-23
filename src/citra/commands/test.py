@@ -94,7 +94,7 @@ class TestCommand(Command):
     # ------------------------------------------------------------------
 
     def _check_config(self) -> str:
-        model = self.context.model_config
+        model = self.context.model_config()
         web = self.context.web_search_config
 
         return (
@@ -103,7 +103,7 @@ class TestCommand(Command):
         )
 
     def _check_model_api(self) -> str:
-        model = self.context.model_config
+        model = self.context.model_config()
 
         payload: dict[str, Any] = {
             "model": model.id,
@@ -121,7 +121,7 @@ class TestCommand(Command):
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {model.api_key}",
+                "Authorization": f"Bearer {model.encrypted_key}",
             },
             method="POST",
         )

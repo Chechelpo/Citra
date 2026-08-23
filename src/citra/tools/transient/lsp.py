@@ -148,6 +148,38 @@ class Lsp(Tool):
         definition_kind = "definition" if action == "go_to_definition" else action
         return self._format_locations(client.definitions(definition_kind, uri, position))
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        path = arguments.get("path")
+        parts = [f"action={action}"]
+
+        if path is not None:
+            parts.append(f"path={path}")
+
+        line = arguments.get("line")
+        character = arguments.get("character")
+        if line is not None and character is not None:
+            parts.append(f"pos={line}:{character}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if text == "none":
+            return "none"
+
+        lines = text.splitlines()
+        return f"{len(lines)} line(s)"
+
     @staticmethod
     def _position(arguments: dict[str, Any], text: str) -> SourcePosition:
         line = arguments.get("line")

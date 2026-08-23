@@ -492,32 +492,27 @@ def _get_retry_after(
 
     return None
 
-
 def _should_retry_http_status(
     status: int,
 ) -> bool:
     """
-    Decide whether an HTTP response should be retried.
+    Decide whether an HTTP status is generically retryable.
 
-    Retry policy
-    ------------
+    This function handles status-only policy. Provider-specific exceptions
+    which require inspecting the response body belong in
+    ``_should_retry_http_error``.
 
-    * Most HTTP 4xx responses are NOT retried. They normally indicate
-      that our request, credentials, endpoint, payload, or permissions
-      are invalid and retrying the same request will not fix them.
+    Policy:
 
-    * A small set of 4xx responses which commonly represent temporary
-      conditions are retried.
+    * HTTP 429 is retryable only when ``RETRY_ON_RATE_LIMIT`` is enabled.
+    * A small allowlist of temporary 4xx statuses is retryable.
+    * Every 5xx status is retryable.
+    * All other statuses are treated as permanent by default.
 
-    * HTTP 429 is retried only when RETRY_ON_RATE_LIMIT is enabled.
-
-    * All HTTP 5xx responses are retried because they represent a
-      server-side or upstream failure rather than a malformed client
-      request.
-
-    Unknown 4xx responses deliberately default to non-retryable. This
-    is safer than repeatedly submitting a request the server has
-    explicitly rejected.
+    In particular, a normal HTTP 404 is *not* retryable. Some routers return
+    HTTP 404 for a temporary downstream routing failure; that special case is
+    recognized separately when the structured provider code is
+    ``upstream_404``.
     """
     if status == 429:
         return RETRY_ON_RATE_LIMIT
@@ -531,12 +526,341 @@ def _should_retry_http_status(
     return False
 
 
+def _http_error_fields(
+    body: str,
+) -> list[tuple[str, str]]:
+    """
+    Extract useful classifier fields from a router/provider error body.
+
+    OpenAI-compatible routers may wrap the actual provider response. OpenRouter,
+    for example, can place the downstream error in ``error.metadata.raw`` as a
+    JSON-encoded string while leaving a generic top-level error message.
+
+    The returned list contains ``(path, value)`` pairs for fields useful to
+    retry classification, including ``type``, ``code``, ``message``, provider
+    metadata, and nested serialized JSON found in ``raw``.
+
+    The traversal is deliberately bounded so malformed or unexpectedly large
+    error bodies cannot recurse indefinitely.
+    """
+    try:
+        data = json.loads(
+            body
+        )
+    except (
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ):
+        stripped = body.strip()
+
+        if stripped:
+            return [
+                (
+                    "body",
+                    stripped,
+                )
+            ]
+
+        return []
+
+    fields: list[
+        tuple[str, str]
+    ] = []
+
+    interesting_keys = {
+        "code",
+        "error_type",
+        "message",
+        "provider",
+        "provider_code",
+        "provider_name",
+        "raw",
+        "type",
+    }
+
+    def visit(
+        value: Any,
+        path: str,
+        depth: int = 0,
+    ) -> None:
+        if depth > 6:
+            return
+
+        if isinstance(
+            value,
+            dict,
+        ):
+            for key, child in value.items():
+                key_text = str(
+                    key
+                )
+                normalized_key = key_text.casefold()
+
+                child_path = (
+                    f"{path}.{key_text}"
+                    if path
+                    else key_text
+                )
+
+                if isinstance(
+                    child,
+                    (dict, list),
+                ):
+                    visit(
+                        child,
+                        child_path,
+                        depth + 1,
+                    )
+                    continue
+
+                if child is None:
+                    continue
+
+                if normalized_key in interesting_keys:
+                    fields.append(
+                        (
+                            child_path.casefold(),
+                            str(child),
+                        )
+                    )
+
+                # Routers frequently put the real provider error in a
+                # JSON-encoded metadata.raw string. Parse that representation
+                # as well so codes such as "upstream_404" are visible to the
+                # classifier instead of remaining hidden in an opaque string.
+                if (
+                    normalized_key == "raw"
+                    and isinstance(
+                        child,
+                        str,
+                    )
+                ):
+                    try:
+                        nested = json.loads(
+                            child
+                        )
+                    except (
+                        json.JSONDecodeError,
+                        TypeError,
+                        ValueError,
+                    ):
+                        continue
+
+                    visit(
+                        nested,
+                        f"{child_path}.json",
+                        depth + 1,
+                    )
+
+            return
+
+        if isinstance(
+            value,
+            list,
+        ):
+            for index, child in enumerate(
+                value[:20]
+            ):
+                visit(
+                    child,
+                    f"{path}[{index}]",
+                    depth + 1,
+                )
+
+    visit(
+        data,
+        "",
+    )
+
+    return fields
+
+
+def _normalized_error_codes(
+    fields: list[tuple[str, str]],
+) -> set[str]:
+    """
+    Return normalized structured error ``code`` and ``type`` values.
+
+    Normalization lets providers use forms such as ``invalid-request-error``,
+    ``invalid request error``, and ``invalid_request_error`` without requiring
+    separate classifier entries.
+    """
+    return {
+        value
+        .casefold()
+        .replace(
+            "-",
+            "_",
+        )
+        .replace(
+            " ",
+            "_",
+        )
+        for key, value in fields
+        if (
+            key.endswith(
+                "code"
+            )
+            or key.endswith(
+                "type"
+            )
+        )
+    }
+
+
+def _should_retry_http_error(
+    status: int,
+    body: str,
+) -> bool:
+    """
+    Decide whether a specific HTTP failure should be retried.
+
+    Most retry policy is status-based, but routers can translate downstream
+    provider failures into otherwise permanent-looking HTTP statuses. This
+    function therefore inspects structured provider metadata before falling
+    back to the generic status policy.
+
+    Special cases:
+
+    * ``404`` + structured code ``upstream_404`` is retryable. This means the
+      router accepted the request but the selected provider's own upstream
+      route was unavailable. An ordinary 404 remains permanent.
+
+    * ``400`` is retryable only when structured codes or provider text clearly
+      identify a transient router/provider condition. Invalid requests,
+      authentication failures, context-length failures, and similar client
+      errors fail immediately.
+
+    The order of checks matters: the provider-specific ``upstream_404`` case is
+    checked before generic 4xx handling.
+    """
+    fields = _http_error_fields(
+        body
+    )
+    codes = _normalized_error_codes(
+        fields
+    )
+
+    # Some providers report an internal/routing 404 using HTTP 404 plus an
+    # explicit provider code. Retrying this narrow case is useful; retrying
+    # arbitrary 404s is not.
+    if (
+        status == 404
+        and "upstream_404" in codes
+    ):
+        return True
+
+    if status != 400:
+        return _should_retry_http_status(
+            status
+        )
+
+    permanent_codes = {
+        "authentication_error",
+        "context_length_exceeded",
+        "invalid_api_key",
+        "invalid_request_error",
+        "permission_denied",
+        "unprocessable_entity",
+    }
+
+    if codes & permanent_codes:
+        return False
+
+    transient_codes = {
+        "all_fallbacks_failed",
+        "empty_response",
+        "engine_overloaded",
+        "model_not_available",
+        "no_available_provider",
+        "overloaded_error",
+        "provider_error",
+        "rate_limit_error",
+        "server_error",
+        "service_unavailable",
+        "temporarily_unavailable",
+        "upstream_error",
+    }
+
+    detail = " ".join(
+        value
+        for _, value in fields
+    ).casefold()
+
+    permanent_markers = (
+        "authentication failed",
+        "context length",
+        "context_length_exceeded",
+        "invalid api key",
+        "invalid request",
+        "invalid_request_error",
+        "invalid tool",
+        "maximum context",
+        "permission denied",
+        "unprocessable",
+    )
+
+    if any(
+        marker in detail
+        for marker in permanent_markers
+    ):
+        return False
+
+    if codes & transient_codes:
+        return True
+
+    # Some routers map a temporary provider failure onto HTTP 400 while
+    # retaining only a textual upstream hint rather than a structured code.
+    transient_provider_markers = (
+        "provider returned error",
+        "upstream error",
+        "upstream provider",
+        "provider unavailable",
+        "provider error",
+        "all fallbacks failed",
+        "no available provider",
+        "no endpoints found",
+        "model not available",
+        "rate limit",
+        "server error",
+        "service unavailable",
+        "temporarily unavailable",
+        "overloaded",
+    )
+
+    return any(
+        marker in detail
+        for marker in transient_provider_markers
+    )
+
+
 def _http_retry_reason(
     status: int,
+    body: str = "",
 ) -> str:
     """
-    Return a human-readable reason for a retryable HTTP status.
+    Return a concise human-readable reason for a retryable HTTP failure.
+
+    The response body is inspected so provider-specific failures can receive a
+    more accurate explanation than their outer HTTP status alone.
     """
+    fields = _http_error_fields(
+        body
+    )
+    codes = _normalized_error_codes(
+        fields
+    )
+
+    if (
+        status == 404
+        and "upstream_404" in codes
+    ):
+        return (
+            "hit a temporary upstream "
+            "provider routing failure"
+        )
+
     reasons = {
         400: "hit a transient upstream provider error",
         408: "timed out at the server",
@@ -559,7 +883,6 @@ def _http_retry_reason(
             f"{status}"
         ),
     )
-
 
 def _is_retryable_url_error(
     error: urllib.error.URLError,
@@ -709,18 +1032,30 @@ def _http_error_detail(
     body: str,
 ) -> str:
     """
-    Extract the most useful error text from an OpenAI-compatible
-    HTTP error response.
+    Extract the most useful human-readable error text from an
+    OpenAI-compatible HTTP error response.
 
-    Routers such as OpenRouter may expose a generic top-level message
-    while placing the downstream provider's actual error in
-    error.metadata.raw.
+    Routers such as OpenRouter may expose a generic top-level message while
+    placing the downstream provider's actual response in
+    ``error.metadata.raw``. ``raw`` is frequently a JSON-encoded string.
+
+    Preference order:
+
+    1. Nested provider message from ``metadata.raw``.
+    2. Nested provider type/code when the provider message is empty.
+    3. Top-level ``error.message``.
+    4. The original response body.
+
+    When provider metadata identifies the downstream provider, its name is
+    included in the returned text.
     """
     if not body:
         return ""
 
     try:
-        data = json.loads(body)
+        data = json.loads(
+            body
+        )
     except (
         json.JSONDecodeError,
         TypeError,
@@ -728,52 +1063,116 @@ def _http_error_detail(
     ):
         return body.strip()
 
-    if not isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict,
+    ):
         return body.strip()
 
-    error_data = data.get("error")
+    error_data = data.get(
+        "error"
+    )
 
-    if not isinstance(error_data, dict):
+    if not isinstance(
+        error_data,
+        dict,
+    ):
         return body.strip()
 
-    metadata = error_data.get("metadata")
+    metadata = error_data.get(
+        "metadata"
+    )
 
-    if isinstance(metadata, dict):
-        raw = metadata.get("raw")
+    if isinstance(
+        metadata,
+        dict,
+    ):
+        raw = metadata.get(
+            "raw"
+        )
         provider = (
-            metadata.get("provider_name")
-            or metadata.get("provider")
+            metadata.get(
+                "provider_name"
+            )
+            or metadata.get(
+                "provider"
+            )
         )
 
         if raw:
-            raw_text = str(raw).strip()
+            raw_text = str(
+                raw
+            ).strip()
 
-            # Sometimes metadata.raw is itself serialized JSON.
-            try:
-                raw_data = json.loads(raw_text)
-            except (
-                json.JSONDecodeError,
-                TypeError,
-                ValueError,
+            raw_data: Any = None
+
+            if isinstance(
+                raw,
+                (dict, list),
             ):
-                raw_data = None
+                raw_data = raw
+            else:
+                try:
+                    raw_data = json.loads(
+                        raw_text
+                    )
+                except (
+                    json.JSONDecodeError,
+                    TypeError,
+                    ValueError,
+                ):
+                    raw_data = None
 
-            if isinstance(raw_data, dict):
-                nested_error = raw_data.get("error")
+            if isinstance(
+                raw_data,
+                dict,
+            ):
+                nested_error = raw_data.get(
+                    "error"
+                )
 
-                if isinstance(nested_error, dict):
+                if isinstance(
+                    nested_error,
+                    dict,
+                ):
                     nested_message = nested_error.get(
                         "message"
+                    )
+                    nested_type = nested_error.get(
+                        "type"
+                    )
+                    nested_code = nested_error.get(
+                        "code"
                     )
 
                     if nested_message:
                         raw_text = str(
                             nested_message
                         )
+                    elif (
+                        nested_type
+                        and nested_code
+                    ):
+                        raw_text = (
+                            f"{nested_type}: "
+                            f"{nested_code}"
+                        )
+                    elif nested_code:
+                        raw_text = str(
+                            nested_code
+                        )
+                    elif nested_type:
+                        raw_text = str(
+                            nested_type
+                        )
 
-                elif raw_data.get("message"):
+                elif raw_data.get(
+                    "message"
+                ):
                     raw_text = str(
-                        raw_data["message"]
+                        raw_data[
+                            "message"
+                        ]
                     )
 
             if provider:
@@ -784,142 +1183,145 @@ def _http_error_detail(
 
             return raw_text
 
-    message = error_data.get("message")
+    message = error_data.get(
+        "message"
+    )
 
     if message:
-        return str(message)
+        return str(
+            message
+        )
+
+    error_type = error_data.get(
+        "type"
+    )
+    error_code = error_data.get(
+        "code"
+    )
+
+    if (
+        error_type
+        and error_code
+    ):
+        return (
+            f"{error_type}: "
+            f"{error_code}"
+        )
+
+    if error_code:
+        return str(
+            error_code
+        )
+
+    if error_type:
+        return str(
+            error_type
+        )
 
     return body.strip()
 
-def _should_retry_http_error(
-    status: int,
-    body: str,
-) -> bool:
-    """
-    Decide whether this specific HTTP failure should be retried.
-    """
-    if status != 400:
-        return _should_retry_http_status(status)
+def _finish_reason_entries(
+    value: Any,
+) -> list[str]:
+    """Return printable finish-reason entries for every response choice."""
+    if not isinstance(value, dict):
+        return ["<response is not an object>"]
 
-    fields = _http_error_fields(body)
-    codes = {
-        value.casefold().replace("-", "_").replace(" ", "_")
-        for key, value in fields
-        if key.endswith("code") or key.endswith("type")
-    }
+    choices = value.get("choices")
 
-    permanent_codes = {
-        "authentication_error",
-        "context_length_exceeded",
-        "invalid_api_key",
-        "invalid_request_error",
-        "permission_denied",
-        "unprocessable_entity",
-    }
-    if codes & permanent_codes:
-        return False
+    if not isinstance(choices, list) or not choices:
+        return ["<no choices>"]
 
-    transient_codes = {
-        "all_fallbacks_failed",
-        "empty_response",
-        "engine_overloaded",
-        "model_not_available",
-        "no_available_provider",
-        "overloaded_error",
-        "provider_error",
-        "rate_limit_error",
-        "server_error",
-        "service_unavailable",
-        "temporarily_unavailable",
-        "upstream_error",
-    }
-    detail = " ".join(value for _, value in fields).casefold()
+    entries: list[str] = []
 
-    permanent_markers = (
-        "authentication failed",
-        "context length",
-        "context_length_exceeded",
-        "invalid api key",
-        "invalid request",
-        "invalid tool",
-        "maximum context",
-        "permission denied",
-        "unprocessable",
-    )
-    if any(marker in detail for marker in permanent_markers):
-        return False
+    for index, choice in enumerate(choices):
+        if not isinstance(choice, dict):
+            entries.append(
+                f"{index}=<invalid choice>"
+            )
+            continue
 
-    if codes & transient_codes:
-        return True
+        entries.append(
+            f"{index}={choice.get('finish_reason')!r}"
+        )
 
-    # A router may map an upstream transient provider failure onto
-    # HTTP 400 even though the user's request itself is valid.
-    transient_provider_markers = (
-        "provider returned error",
-        "upstream error",
-        "upstream provider",
-        "provider unavailable",
-        "provider error",
-        "all fallbacks failed",
-        "no available provider",
-        "no endpoints found",
-        "model not available",
-        "rate limit",
-        "server error",
-        "service unavailable",
-        "[stealth] error",
-        "temporarily unavailable",
-        "overloaded",
-    )
+    return entries
 
-    return any(
-        marker in detail
-        for marker in transient_provider_markers
+
+def _log_finish_reasons(
+    value: Any,
+) -> None:
+    """Log finish_reason for every decoded HTTP-200 completion response."""
+    print(
+        f"{DIM}"
+        f"⏺ Model finish_reason(s): "
+        f"{', '.join(_finish_reason_entries(value))}"
+        f"{RESET}"
     )
 
 
-def _http_error_fields(body: str) -> list[tuple[str, str]]:
-    """Extract classifier fields without trusting one preferred message.
+def _choice_output_diagnostic(
+    value: Any,
+) -> str:
+    """Describe response output shape without dumping model content."""
+    if not isinstance(value, dict):
+        return "response is not a JSON object"
 
-    OpenRouter often places the useful provider signal in ``metadata.raw``
-    while keeping a generic message at ``error.message``. Classification must
-    inspect both, plus structured error/type/code fields.
-    """
-    try:
-        data = json.loads(body)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return [("body", body.strip())] if body.strip() else []
+    choices = value.get("choices")
 
-    fields: list[tuple[str, str]] = []
+    if not isinstance(choices, list):
+        return "choices is not a list"
 
-    def visit(value: Any, path: str, depth: int = 0) -> None:
-        if depth > 5:
-            return
-        if isinstance(value, dict):
-            for key, child in value.items():
-                child_path = f"{path}.{key}" if path else str(key)
-                if isinstance(child, (dict, list)):
-                    visit(child, child_path, depth + 1)
-                elif child is not None and str(key).casefold() in {
-                    "code",
-                    "error_type",
-                    "message",
-                    "provider_code",
-                    "provider_name",
-                    "raw",
-                    "type",
-                }:
-                    fields.append((child_path.casefold(), str(child)))
-        elif isinstance(value, list):
-            for index, child in enumerate(value[:20]):
-                visit(child, f"{path}[{index}]", depth + 1)
+    if not choices:
+        return "choices is empty"
 
-    visit(data, "")
-    return fields
+    first = choices[0]
+
+    if not isinstance(first, dict):
+        return "choices[0] is not an object"
+
+    message = first.get("message")
+
+    if not isinstance(message, dict):
+        return "choices[0].message is missing or invalid"
+
+    content = message.get("content")
+    tool_calls = message.get("tool_calls")
+
+    if content is None:
+        content_detail = "content=null"
+    elif isinstance(content, str):
+        content_detail = (
+            "content=empty-string"
+            if not content.strip()
+            else f"content={len(content)} chars"
+        )
+    else:
+        content_detail = (
+            f"content_type={type(content).__name__}"
+        )
+
+    if tool_calls is None:
+        tool_detail = "tool_calls=null"
+    elif isinstance(tool_calls, list):
+        tool_detail = f"tool_calls={len(tool_calls)}"
+    else:
+        tool_detail = (
+            f"tool_calls_type={type(tool_calls).__name__}"
+        )
+
+    return f"{content_detail}, {tool_detail}"
 
 
 def _has_usable_choice(value: Any) -> bool:
-    """Check the minimum response shape needed by the agent protocol."""
+    """
+    Check that the first choice contains an actual assistant action.
+
+    A provider response is usable only when it contains non-whitespace text
+    or at least one tool call. HTTP 200 responses with null/empty content and
+    no tool calls are suspicious empty completions and must be retried rather
+    than silently accepted as successful agent output.
+    """
     if not isinstance(value, dict):
         return False
 
@@ -939,13 +1341,62 @@ def _has_usable_choice(value: Any) -> bool:
         return False
 
     content = message.get("content")
-
-    if content is not None and not isinstance(content, str):
-        return False
-
     tool_calls = message.get("tool_calls")
 
-    return tool_calls is None or isinstance(tool_calls, list)
+    has_content = (
+        isinstance(content, str)
+        and bool(content.strip())
+    )
+    has_tool_calls = (
+        isinstance(tool_calls, list)
+        and bool(tool_calls)
+    )
+
+    return has_content or has_tool_calls
+
+
+def _is_stealth_continue_work_error(
+    status: int,
+    body: str,
+) -> bool:
+    """
+    Detect the provider-specific ``[Stealth] ERROR`` failure mode.
+
+    This is deliberately *not* treated as an ordinary retry. Some stealth
+    providers reject a hands-off/agentic continuation request but accept the
+    same conversation once the client explicitly asks the model to continue.
+    For that narrow case, call_api() gets one recovery request with an added
+    user message: ``continue your work``.
+    """
+    if status not in {400, 422}:
+        return False
+
+    fields = _http_error_fields(
+        body
+    )
+    detail = " ".join(
+        value
+        for _, value in fields
+    ).casefold()
+
+    return "[stealth] error" in detail
+
+
+def _append_continue_work_message(
+    messages: list[ChatMessage],
+) -> list[ChatMessage]:
+    """Return a copied request history with an explicit continuation turn."""
+    continued = list(messages)
+    continued.append(
+        cast(
+            ChatMessage,
+            {
+                "role": "user",
+                "content": "continue your work",
+            },
+        )
+    )
+    return continued
 
 
 def call_api(
@@ -984,7 +1435,7 @@ def call_api(
 
     * 401 Unauthorized
     * 403 Forbidden
-    * 404 Not Found
+    * ordinary 404 Not Found responses
     * 405 Method Not Allowed
     * 413 Content Too Large
     * 415 Unsupported Media Type
@@ -994,9 +1445,26 @@ def call_api(
     repeatedly without any chance of recovery.
 
     * 400 Bad Request is retried only when structured error codes or provider
-      metadata identify a transient upstream/router failure (including the
-      OpenRouter ``[Stealth] ERROR`` form). Invalid requests and context-length
-      failures fail immediately.
+      metadata identify a transient upstream/router failure. Invalid requests
+      and context-length failures fail immediately.
+
+    * ``[Stealth] ERROR`` is intentionally not handled as an ordinary retry.
+      On the first HTTP 400/422 response containing that marker, one recovery
+      request is made using a copied history with a final user message reading
+      ``continue your work``. If that recovery receives the same stealth error,
+      it is surfaced instead of entering the standard retry loop.
+
+    * 404 Not Found is normally permanent. A narrow provider-specific
+      exception is made when the structured downstream code is
+      ``upstream_404``; this represents a router/provider upstream route
+      failure rather than an invalid user endpoint.
+
+    HTTP 200 responses are also validated. A response with no non-whitespace
+    assistant text and no tool calls is considered a suspicious empty response
+    and is retried with the normal backoff policy.
+
+    The ``finish_reason`` of every decoded HTTP-200 response is logged, even
+    when the response is empty/malformed and will be retried.
 
     Transport-level failures such as timeouts, temporary DNS errors,
     refused connections, dropped connections, and connection resets
@@ -1006,9 +1474,11 @@ def call_api(
     honored as a minimum wait time in addition to the normal
     exponential backoff.
 
-    ``max_attempts`` counts the initial request. For example,
-    ``max_attempts=3`` permits one initial request followed by at most
-    two retries.
+    ``max_attempts`` counts ordinary attempts, including the initial request.
+    For example, ``max_attempts=3`` permits one initial request followed by at
+    most two ordinary retries. The one-time ``continue your work`` stealth
+    recovery is a changed request and does not consume an additional ordinary
+    retry slot.
 
     Args:
         context:
@@ -1030,8 +1500,8 @@ def call_api(
             Timeout, in seconds, for each individual HTTP request.
 
         max_attempts:
-            Maximum total number of attempts, including the initial
-            request. Defaults to DEFAULT_MAX_RETRIES.
+            Maximum total number of ordinary attempts, including the initial
+            request. Defaults to the model retry configuration.
 
         initial_backoff:
             Initial retry delay in seconds before jitter.
@@ -1046,6 +1516,7 @@ def call_api(
 
         sys_prompt:
             Optional system prompt for establishing constant system prompts.
+
     Returns:
         The decoded JSON response from the model API.
 
@@ -1057,35 +1528,15 @@ def call_api(
         ValueError:
             If retry/request configuration is invalid.
     """
-    retry_config = getattr(
-        context.model_config,
-        "retry",
-        None,
-    )
+    retry_config = context.config.model().retry
     if max_attempts is None:
-        max_attempts = getattr(
-            retry_config,
-            "max_attempts",
-            DEFAULT_MAX_RETRIES,
-        )
+        max_attempts = retry_config.max_attempts
     if request_timeout is None:
-        request_timeout = getattr(
-            retry_config,
-            "request_timeout",
-            120.0,
-        )
+        request_timeout = retry_config.request_timeout
     if initial_backoff is None:
-        initial_backoff = getattr(
-            retry_config,
-            "initial_backoff",
-            1.0,
-        )
+        initial_backoff = retry_config.initial_backoff
     if max_backoff is None:
-        max_backoff = getattr(
-            retry_config,
-            "max_backoff",
-            30.0,
-        )
+        max_backoff = retry_config.max_backoff
     if sys_prompt is None:
         sys_prompt = system_prompt(context)
 
@@ -1114,14 +1565,14 @@ def call_api(
             "initial_backoff cannot exceed max_backoff."
         )
 
-    model = context.model_config
+    model = context.config.model()
 
     system_messages: list[
         ChatCompletionSystemMessageParam
     ] = [
         {
             "role": "system",
-            "content": sys_prompt
+            "content": sys_prompt,
         }
     ]
 
@@ -1129,17 +1580,7 @@ def call_api(
         tools
     )
 
-    if memory_context:
-        system_messages.append(
-            {
-                "role": "system",
-                "content": memory_context,
-            }
-        )
-
-    messages_to_merge: list[
-        ChatMessage
-    ] = [
+    messages_to_merge: list[ChatMessage] = [
         *system_messages,
         *messages,
     ]
@@ -1147,12 +1588,23 @@ def call_api(
     request_messages = merge_consecutive_roles(
         messages_to_merge
     )
+
+    request_messages = insert_memory_context(
+        request_messages,
+        memory_context,
+    )
+
+    request_messages = normalize_message_content(
+        request_messages
+    )
+
     validate_tool_history(
         request_messages
     )
+
     payload: dict[str, Any] = {
         "model": model.id,
-        "max_tokens": model.max_tokens,
+        "max_tokens": model.max_output_tokens,
         "messages": request_messages,
     }
 
@@ -1171,20 +1623,28 @@ def call_api(
             "tools"
         ] = tool_definitions
 
-    request_data = json.dumps(
-        payload
-    ).encode(
-        "utf-8"
-    )
-
     url = chat_completions_url(
         model.host
     )
 
-    for attempt in range(
-        1,
-        max_attempts + 1,
-    ):
+    active_request_messages = list(
+        request_messages
+    )
+    stealth_continue_used = False
+    recovery_request_pending = False
+    attempt = 1
+
+    while attempt <= max_attempts:
+        payload[
+            "messages"
+        ] = active_request_messages
+
+        request_data = json.dumps(
+            payload
+        ).encode(
+            "utf-8"
+        )
+
         request = urllib.request.Request(
             url,
             data=request_data,
@@ -1193,11 +1653,28 @@ def call_api(
                     "application/json"
                 ),
                 "Authorization": (
-                    f"Bearer {model.api_key}"
+                    f"Bearer {model.decrypt_api_key()}"
                 ),
             },
             method="POST",
         )
+
+        if recovery_request_pending:
+            request_label = "stealth continuation recovery"
+            recovery_request_pending = False
+        else:
+            request_label = "model request"
+
+        print(
+            f"{DIM}"
+            f"⏺ Starting {request_label} "
+            f"(attempt {attempt}/{max_attempts}, "
+            f"model={model.id}, "
+            f"timeout={request_timeout:.1f}s)"
+            f"{RESET}"
+        )
+
+        started_at = time.monotonic()
 
         try:
             with urllib.request.urlopen(
@@ -1208,6 +1685,19 @@ def call_api(
                     "utf-8",
                     errors="replace",
                 )
+                response_status = getattr(
+                    response,
+                    "status",
+                    200,
+                )
+
+            elapsed = time.monotonic() - started_at
+            print(
+                f"{DIM}"
+                f"⏺ Model HTTP {response_status} received "
+                f"in {elapsed:.2f}s"
+                f"{RESET}"
+            )
 
             try:
                 decoded = json.loads(raw_response)
@@ -1221,10 +1711,25 @@ def call_api(
                     reason="received an invalid JSON response",
                     interrupt=retry_interrupt,
                 )
+                attempt += 1
                 continue
+
+            _log_finish_reasons(
+                decoded
+            )
 
             if _has_usable_choice(decoded):
                 return decoded
+
+            diagnostic = _choice_output_diagnostic(
+                decoded
+            )
+            print(
+                f"{YELLOW}"
+                f"⚠ Model API returned HTTP 200 without usable "
+                f"assistant output ({diagnostic})."
+                f"{RESET}"
+            )
 
             response_error = RuntimeError(
                 "Model API returned HTTP 200 without a usable choice."
@@ -1235,9 +1740,13 @@ def call_api(
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 error=response_error,
-                reason="returned an empty or malformed response",
+                reason=(
+                    "returned an empty or malformed response "
+                    f"({diagnostic})"
+                ),
                 interrupt=retry_interrupt,
             )
+            attempt += 1
             continue
 
         except urllib.error.HTTPError as error:
@@ -1253,8 +1762,6 @@ def call_api(
                 body
             )
 
-            # Always show the HTTP error, whether or not it will
-            # subsequently be retried.
             print(
                 f"{RED}"
                 f"✖ Model API returned HTTP "
@@ -1262,6 +1769,57 @@ def call_api(
                 f"{detail or error.reason}"
                 f"{RESET}"
             )
+
+            if _is_stealth_continue_work_error(
+                error.code,
+                body,
+            ):
+                if stealth_continue_used:
+                    raise RuntimeError(
+                        f"Model API returned HTTP "
+                        f"{error.code} after the one-time "
+                        f"'continue your work' recovery: "
+                        f"{detail or error.reason}"
+                    ) from error
+
+                if (
+                    retry_interrupt is not None
+                    and retry_interrupt()
+                ):
+                    raise ModelRequestInterrupted(
+                        "Model recovery interrupted by user steering."
+                    ) from error
+
+                active_request_messages = (
+                    _append_continue_work_message(
+                        active_request_messages
+                    )
+                )
+                active_request_messages = (
+                    normalize_message_content(
+                        active_request_messages
+                    )
+                )
+                validate_tool_history(
+                    active_request_messages
+                )
+
+                stealth_continue_used = True
+                recovery_request_pending = True
+
+                print(
+                    f"{YELLOW}"
+                    f"⏺ Stealth provider failure detected. "
+                    f"Appending user message "
+                    f"'continue your work' and issuing one "
+                    f"continuation recovery request."
+                    f"{RESET}"
+                )
+
+                # This is a changed request, not a retry of the failed payload,
+                # so it deliberately does not consume another ordinary retry
+                # slot or wait for exponential backoff.
+                continue
 
             if _should_retry_http_error(
                 error.code,
@@ -1273,7 +1831,8 @@ def call_api(
                 )
 
                 reason = _http_retry_reason(
-                    error.code
+                    error.code,
+                    body,
                 )
 
                 if detail:
@@ -1290,6 +1849,7 @@ def call_api(
                     interrupt=retry_interrupt,
                 )
 
+                attempt += 1
                 continue
 
             raise RuntimeError(
@@ -1311,6 +1871,7 @@ def call_api(
                 reason="timed out",
                 interrupt=retry_interrupt,
             )
+            attempt += 1
             continue
 
         except urllib.error.URLError as error:
@@ -1329,6 +1890,7 @@ def call_api(
                     ),
                     interrupt=retry_interrupt,
                 )
+                attempt += 1
                 continue
 
             raise RuntimeError(
@@ -1352,10 +1914,11 @@ def call_api(
                 ),
                 interrupt=retry_interrupt,
             )
+            attempt += 1
             continue
 
     # The loop should only terminate by returning a response or by
-    # _retry_after_error() raising after the final allowed attempt.
+    # _retry_after_error() raising after the final allowed ordinary attempt.
     raise RuntimeError(
         "Model API request failed unexpectedly."
     )
@@ -1402,3 +1965,132 @@ def build_memory_context(
             *sections,
         )
     )
+
+def insert_memory_context(
+    messages: list[ChatMessage],
+    memory_context: str | None,
+) -> list[ChatMessage]:
+    """
+    Insert mutable conversation memory late in the prompt to maximize
+    reusable prompt-cache prefix length.
+
+    Preference:
+
+    1. Immediately before the most recent assistant tool-call message.
+    2. Otherwise immediately before the most recent user message.
+    3. Otherwise at the end.
+    """
+    if not memory_context:
+        return list(messages)
+
+    memory_message = cast(
+        ChatMessage,
+        {
+            "role": "system",
+            "content": memory_context,
+        },
+    )
+
+    result = list(messages)
+
+    # Never insert between an assistant tool call and its tool results.
+    # Instead place memory before the entire latest tool exchange.
+    for index in range(
+        len(result) - 1,
+        -1,
+        -1,
+    ):
+        message = result[index]
+
+        if (
+            message.get("role") == "assistant"
+            and isinstance(
+                message.get("tool_calls"),
+                list,
+            )
+            and message.get("tool_calls")
+        ):
+            result.insert(
+                index,
+                memory_message,
+            )
+
+            return result
+
+    # No historical tool exchange. Keep mutable memory near the end,
+    # but before the current user turn.
+    for index in range(
+        len(result) - 1,
+        -1,
+        -1,
+    ):
+        if result[index].get("role") == "user":
+            result.insert(
+                index,
+                memory_message,
+            )
+
+            return result
+
+    result.append(
+        memory_message
+    )
+
+    return result
+
+def normalize_message_content(
+    messages: list[ChatMessage],
+) -> list[ChatMessage]:
+    """
+    Normalize OpenAI-compatible message content for stricter providers.
+
+    Some providers reject assistant tool-call messages whose content is
+    null, despite the OpenAI protocol permitting omitted/null content
+    when tool_calls are present.
+    """
+    normalized: list[ChatMessage] = []
+
+    for index, message in enumerate(messages):
+        current = cast(
+            dict[str, Any],
+            dict(message),
+        )
+
+        content = current.get(
+            "content"
+        )
+
+        role = current.get(
+            "role"
+        )
+
+        if content is None:
+            if (
+                role == "assistant"
+                and current.get("tool_calls")
+            ):
+                current["content"] = ""
+            else:
+                raise ValueError(
+                    f"Message {index} with role {role!r} "
+                    "has null or missing content."
+                )
+
+        elif not isinstance(
+            content,
+            (str, list),
+        ):
+            raise ValueError(
+                f"Message {index} with role {role!r} "
+                "has invalid content type "
+                f"{type(content).__name__!r}."
+            )
+
+        normalized.append(
+            cast(
+                ChatMessage,
+                current,
+            )
+        )
+
+    return normalized

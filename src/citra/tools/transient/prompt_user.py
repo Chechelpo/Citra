@@ -23,7 +23,7 @@ resets it, so an actively typing user never times out.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, override
 
 from ...agent.interactions import UserInteractionBroker
 from ...context import ExecutionContext
@@ -244,6 +244,43 @@ class PromptUser(Tool):
                 return resolved
 
         return answer
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        question = str(arguments.get("question", ""))
+        options = arguments.get("options")
+
+        modality = "option-list" if options else "plain-text"
+        parts = [f"mode={modality}", f"q={self._truncate(question)}"]
+
+        if options:
+            parts.append(f"options={len(options)}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if text == USER_UNAVAILABLE_MESSAGE:
+            return "user-unavailable"
+
+        if text == "(empty response)":
+            return "empty response"
+
+        return self._truncate(text)
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 120:
+            return value
+        return value[:120] + "..."
 
     @staticmethod
     def _resolve_option(

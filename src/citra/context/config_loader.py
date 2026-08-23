@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from .config import *
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
 import tomllib
 
+from .config import ModelConfigStore
 
 @dataclass(frozen=True)
 class RetryConfig:
@@ -12,17 +15,6 @@ class RetryConfig:
     request_timeout: float = 120.0
     initial_backoff: float = 1.0
     max_backoff: float = 30.0
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-    host: str
-    api_key: str
-    id: str
-    max_tokens: int
-    reasoning_effort: str | None
-    retry: RetryConfig = RetryConfig()
-
 
 @dataclass(frozen=True)
 class WebSearchConfig:
@@ -64,12 +56,6 @@ class BrowserConfig:
 @dataclass(frozen=True)
 class NotificationConfig:
     prompt_bell: bool = True
-
-
-@dataclass(frozen=True)
-class MessageContextConfig:
-    uncompressed_messages: int
-
 
 @dataclass(frozen=True)
 class WorkspaceContextConfig:
@@ -170,9 +156,8 @@ class CitraConfig:
     declared at root.
     """
 
-    model: ModelConfig
+    model_config_store: ModelConfigStore
     web_search: WebSearchConfig
-    message_context: MessageContextConfig
     workspace_context: WorkspaceContextConfig
 
     bash: BashConfig = BashConfig()
@@ -184,21 +169,23 @@ class CitraConfig:
     sandbox: SandboxContextConfig = SandboxContextConfig()
 
     @classmethod
-    def load(cls) -> CitraConfig:
-        config_path_raw = os.environ.get(
-            "CITRA_CONFIG_PATH"
-        )
+    def _config_path(cls) -> Path:
+        config_path_raw = os.environ.get("CITRA_CONFIG_PATH")
 
         if not config_path_raw:
             raise RuntimeError(
-                "CITRA_CONFIG_PATH is not defined. Citra should be started "
-                "through start.sh or supplied a CitraConfig explicitly."
+            "CITRA_CONFIG_PATH is not defined. Citra should be started "
+            "through start.sh or supplied a CitraConfig explicitly."
             )
 
-        config_path = Path(
+        return Path(
             config_path_raw
         ).resolve()
-
+    
+    @classmethod
+    def load(cls) -> CitraConfig:
+        config_path:Path = CitraConfig._config_path()
+        
         if not config_path.is_file():
             raise FileNotFoundError(
                 f"Citra config file not found: {config_path}"
@@ -210,7 +197,6 @@ class CitraConfig:
         try:
             model_raw = raw["model"]
             web_search_raw = raw["web-search"]
-            message_context_raw = raw["message-context"]
             workspace_context_raw = raw["workspace"]
 
             retry_raw = model_raw.get(
@@ -328,51 +314,13 @@ class CitraConfig:
                     value
                 )
 
-            model = ModelConfig(
-                host=model_raw["host"],
-                api_key=model_raw["api_key"],
-                id=model_raw["id"],
-                max_tokens=model_raw["max_tokens"],
-                reasoning_effort=model_raw.get(
-                    "reasoning_effort"
-                ),
-                retry=RetryConfig(
-                    max_attempts=int(
-                        retry_raw.get(
-                            "max_attempts",
-                            12,
-                        )
-                    ),
-                    request_timeout=float(
-                        retry_raw.get(
-                            "request_timeout",
-                            120.0,
-                        )
-                    ),
-                    initial_backoff=float(
-                        retry_raw.get(
-                            "initial_backoff",
-                            1.0,
-                        )
-                    ),
-                    max_backoff=float(
-                        retry_raw.get(
-                            "max_backoff",
-                            30.0,
-                        )
-                    ),
-                ),
+            model = ModelConfigStore(
+                config_path=config_path
             )
 
             web_search = WebSearchConfig(
                 host_url=web_search_raw[
                     "host_url"
-                ],
-            )
-
-            message_context = MessageContextConfig(
-                uncompressed_messages=message_context_raw[
-                    "uncompressed_messages"
                 ],
             )
 
@@ -668,44 +616,7 @@ class CitraConfig:
             raise ValueError(
                 f"Missing required config value: {error.args[0]}"
             ) from error
-
-        if model.max_tokens <= 0:
-            raise ValueError(
-                "'model.max_tokens' must be greater than zero."
-            )
-
-        if model.retry.max_attempts < 1:
-            raise ValueError(
-                "'model.retry.max_attempts' must be at least 1."
-            )
-
-        if model.retry.request_timeout <= 0:
-            raise ValueError(
-                "'model.retry.request_timeout' must be greater than zero."
-            )
-
-        if (
-            model.retry.initial_backoff < 0
-            or model.retry.max_backoff < 0
-        ):
-            raise ValueError(
-                "Model retry backoff values cannot be negative."
-            )
-
-        if (
-            model.retry.initial_backoff
-            > model.retry.max_backoff
-        ):
-            raise ValueError(
-                "'model.retry.initial_backoff' cannot exceed 'max_backoff'."
-            )
-
-        if message_context.uncompressed_messages < 0:
-            raise ValueError(
-                "'message-context.uncompressed_messages' "
-                "must be zero or greater."
-            )
-
+            
         if min(
             lsp.startup_timeout,
             lsp.request_timeout,
@@ -757,9 +668,8 @@ class CitraConfig:
             )
 
         return cls(
-            model=model,
+            model_config_store=model,
             web_search=web_search,
-            message_context=message_context,
             workspace_context=workspace_context,
             bash=bash,
             subprocess=subprocess_config,
@@ -769,3 +679,6 @@ class CitraConfig:
             lsp=lsp,
             sandbox=sandbox,
         )
+  
+    def model(self) -> ModelConfig:
+        return self.model_config_store.get()

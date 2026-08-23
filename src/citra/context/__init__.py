@@ -5,7 +5,6 @@ from .config_loader import (
     CitraConfig,
     CurlConfig,
     LspContextConfig,
-    MessageContextConfig,
     ModelConfig,
     NotificationConfig,
     RetryConfig,
@@ -21,8 +20,10 @@ from .workspace_changes import (
     WorkspaceChanges,
     WorkspaceConflictError,
 )
+from .config import ModelConfigStore
 
 __all__ = [
+    "ModelConfigStore",
     "BashConfig",
     "BrowserConfig",
     "ExecutionContext",
@@ -30,7 +31,6 @@ __all__ = [
     "CurlConfig",
     "ModelConfig",
     "LspContextConfig",
-    "MessageContextConfig",
     "NotificationConfig",
     "RetryConfig",
     "SandboxContextConfig",

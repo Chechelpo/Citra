@@ -72,3 +72,19 @@ class Write(Tool):
             "write",
             arguments,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        path = arguments.get("path", "")
+        content = arguments.get("content", "")
+        return f"path={path} | {len(content)} chars"
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        return str(result)

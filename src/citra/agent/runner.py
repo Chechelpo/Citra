@@ -53,15 +53,19 @@ class AgentRunner:
         while True:
             self.session.flush_steering()
             tools = TOOL_REGISTRY.instantiate(self.context, self.session)
+
+            model_config = self.context.config.model()
+
             api_arguments: dict[str, Any] = {
                 "context": self.context,
-                "messages": self.session.get_last_n_messages(
-                    self.context.config.message_context.uncompressed_messages
+                "messages": self.session.get_last_messages_up_to_tokenLength(
+                    model_id=model_config.id,
+                    length=model_config.max_input_tokens
                 ),
                 "tools": tools,
             }
 
-            reasoning_effort = self.context.config.model.reasoning_effort
+            reasoning_effort = model_config.reasoning_effort
             if reasoning_effort is not None:
                 api_arguments["reasoning_effort"] = reasoning_effort
 

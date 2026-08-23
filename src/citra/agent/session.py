@@ -13,8 +13,10 @@ Only the agent worker should mutate conversation history.
 Other threads, particularly the terminal/UI thread, may submit steering
 instructions through ``steering``.
 """
-
 from __future__ import annotations
+
+import json
+from citra.utils.tokenize import tokenize
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -167,26 +169,50 @@ class AgentSession:
             for message in group.messages
         ]
 
-    def get_last_n_messages(
+    def get_last_messages_up_to_tokenLength(
         self,
-        n: int,
+        model_id: str,
+        length: int,
     ) -> list[ChatMessage]:
         """
-        Return messages from the last ``n`` protocol-safe message groups.
+        Return the most recent messages fitting within ``length`` tokens.
 
-        Tool-call groups are never split.
+        Protocol-safe message groups are never split.
         """
-        if n < 0:
+        if length < 0:
             raise ValueError(
-                "'n' must be zero or greater."
+                "'length' must be zero or greater."
             )
 
-        if n == 0:
+        if length == 0:
             return []
+
+        selected: list[MessageGroup] = []
+        used_tokens = 0
+
+        for group in reversed(self.message_groups):
+            group_text = json.dumps(
+                group.messages,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+
+            tokens = tokenize(
+                model_id,
+                group_text,
+            )
+
+            if used_tokens + tokens > length:
+                break
+
+            selected.append(group)
+            used_tokens += tokens
+
+        selected.reverse()
 
         return [
             message
-            for group in self.message_groups[-n:]
+            for group in selected
             for message in group.messages
         ]
 

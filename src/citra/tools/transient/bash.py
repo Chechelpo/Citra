@@ -9,7 +9,7 @@ from ...utils.json_schema import (
     JsonSchema,
 )
 from .prompt_user import PromptUser
-
+import re
 
 class Bash(Tool):
     """
@@ -379,6 +379,159 @@ class Bash(Tool):
             return marker
 
         return output or "(empty)"
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        cmd = arguments.get("cmd")
+        requests = arguments.get("requests")
+
+        if cmd is not None:
+            cwd = arguments.get("cwd")
+            timeout = arguments.get(
+                "timeout",
+                self.DEFAULT_TIMEOUT_SECONDS,
+            )
+            network = bool(
+                arguments.get(
+                    "network",
+                    False,
+                )
+            )
+
+            parts = [
+                f"$ {self._truncate_command(cmd)}",
+            ]
+
+            if cwd is not None:
+                parts.append(
+                    f"cwd={cwd}"
+                )
+
+            if timeout != self.DEFAULT_TIMEOUT_SECONDS:
+                parts.append(
+                    f"timeout={timeout}s"
+                )
+
+            if network:
+                parts.append(
+                    "network=true"
+                )
+
+            return " | ".join(parts)
+
+        if requests:
+            commands = [
+                self._truncate_command(
+                    str(request.get("cmd", ""))
+                )
+                for request in requests
+            ]
+
+            preview_limit = 3
+
+            preview = "; ".join(
+                f"$ {command}"
+                for command in commands[:preview_limit]
+            )
+
+            remaining = (
+                len(commands) - preview_limit
+            )
+
+            if remaining > 0:
+                preview += (
+                    f"; +{remaining} more"
+                )
+
+            return (
+                f"batch={len(requests)} | "
+                f"{preview}"
+            )
+
+        return "no command"
+
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text:
+            return "empty output"
+
+        lines = text.splitlines()
+        chars = len(text)
+
+        timed_out = (
+            "(timed out after "
+            in text
+        )
+
+        exit_codes = re.findall(
+            r"\(exit code (\d+)\)",
+            text,
+        )
+
+        batch_count = text.count(
+            "===== command "
+        )
+
+        parts: list[str] = []
+
+        if batch_count:
+            parts.append(
+                f"{batch_count} commands"
+            )
+
+        parts.append(
+            f"{len(lines)} lines"
+        )
+
+        parts.append(
+            f"{chars} chars"
+        )
+
+        if timed_out:
+            parts.append(
+                "timed-out"
+            )
+
+        if exit_codes:
+            unique_codes = sorted(
+                set(exit_codes)
+            )
+
+            parts.append(
+                "exit="
+                + ",".join(unique_codes)
+            )
+
+        return " | ".join(parts)
+
+
+    @staticmethod
+    def _truncate_command(
+        command: str,
+        limit: int = 200,
+    ) -> str:
+        command = (
+            command
+            .replace("\n", " ")
+            .strip()
+        )
+
+        if len(command) <= limit:
+            return command
+
+        return (
+            command[:limit]
+            + "..."
+        )
 
     @staticmethod
     def _safe_terminal_text(value: str) -> str:

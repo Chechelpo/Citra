@@ -134,7 +134,7 @@ permanent_workspace = "{self.source}"
             )
             session.add_user_message("old message")
             session.add_user_message("new message")
-            self.assertEqual(len(session.get_last_n_messages(1)), 1)
+            self.assertEqual(len(session.get_last_messages_up_to_tokenLength(1)), 1)
             second = TOOL_REGISTRY.instantiate(context, session)
             self.assertIs(second["todo"], todo)
             self.assertIs(second["checkpoint"], checkpoint)

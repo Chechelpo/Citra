@@ -67,3 +67,20 @@ class SkillTool(Tool):
             name,
             self.context,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        name = str(arguments.get("name", ""))
+        return f"skill={name}"
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+        lines = text.splitlines()
+        return f"{len(lines)} lines"

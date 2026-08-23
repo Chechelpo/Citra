@@ -163,6 +163,66 @@ class Subprocess(Tool):
             indent=2,
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = str(arguments.get("action", "?"))
+        parts = [f"action={action}"]
+
+        if action == "start":
+            cmd = str(arguments.get("cmd", ""))
+            parts.append(f"$ {self._truncate_cmd(cmd)}")
+
+            if arguments.get("network"):
+                parts.append("network=true")
+
+            sleep_after = arguments.get("sleep_after")
+            if sleep_after:
+                parts.append(f"sleep={sleep_after}s")
+
+            if arguments.get("poll_after"):
+                parts.append("poll_after=true")
+
+            return " | ".join(parts)
+
+        process_id = arguments.get("process_id")
+        if process_id is not None:
+            parts.append(f"pid={process_id}")
+
+        if action == "write":
+            input_text = str(arguments.get("input", ""))
+            parts.append(f"input={len(input_text)} chars")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if text == "ok":
+            return "ok"
+
+        if text.startswith("permission-denied"):
+            return "permission-denied"
+
+        if text.startswith("Started subprocess"):
+            return text
+
+        lines = text.splitlines()
+        return f"{len(lines)} lines"
+
+    @staticmethod
+    def _truncate_cmd(cmd: str) -> str:
+        cmd = cmd.replace("\n", " ").strip()
+        if len(cmd) <= 200:
+            return cmd
+        return cmd[:200] + "..."
+
     def _truncate_output(
         self,
         result: dict[str, Any],

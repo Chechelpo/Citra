@@ -9,6 +9,8 @@ from ...utils.json_schema import (
     JsonSchema,
 )
 
+_TRUNCATE_LENGTH = 120
+
 
 class Edit(Tool):
     """
@@ -102,3 +104,52 @@ class Edit(Tool):
             "edit",
             arguments,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        path = arguments.get("path", "")
+        parts = [f"path={path}"]
+
+        old = arguments.get("old")
+        new = arguments.get("new")
+        line = arguments.get("line")
+        replace_all = arguments.get("all", False)
+
+        if line is not None:
+            parts.append(f"insert@line={line}")
+        elif old is not None:
+            parts.append(
+                f"old={self._truncate(old)!r}"
+            )
+            if new is not None:
+                parts.append(
+                    f"new={self._truncate(new)!r}"
+                )
+            if replace_all:
+                parts.append("all=true")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if text == "ok":
+            return "ok"
+
+        if text.startswith("error:"):
+            return self._truncate(text)
+
+        return self._truncate(text)
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= _TRUNCATE_LENGTH:
+            return value
+        return value[:_TRUNCATE_LENGTH] + "..."

@@ -220,6 +220,65 @@ class TodoTool(MemoryTool[TodoExtract]):
             f"Unsupported TODO action: {action}"
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        parts = [f"action={action}"]
+
+        content = arguments.get("content")
+        contents = arguments.get("contents")
+        if content is not None:
+            parts.append(f"content={self._truncate(str(content))}")
+        elif contents is not None:
+            parts.append(f"batch={len(contents)}")
+
+        parent_id = arguments.get("parent_id")
+        if parent_id is not None:
+            parts.append(f"parent={parent_id}")
+
+        index = arguments.get("index")
+        if index is not None:
+            parts.append(f"index={index}")
+
+        ids = self._get_ids_raw(arguments)
+        if ids is not None:
+            parts.append(f"ids={ids}")
+
+        return " | ".join(parts)
+
+    @staticmethod
+    def _get_ids_raw(
+        arguments: dict[str, Any],
+    ) -> str | None:
+        single = arguments.get("id")
+        multiple = arguments.get("ids")
+
+        if single is not None and multiple is not None:
+            raise ValueError(
+                "Use either 'id' or 'ids', not both."
+            )
+
+        if single is not None:
+            return f"[{single}]"
+
+        if multiple is not None:
+            return (
+                "["
+                + ", ".join(str(i) for i in multiple)
+                + "]"
+            )
+
+        return None
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 80:
+            return value
+        return value[:80] + "..."
+
     def _add(
         self,
         arguments: dict[str, Any],

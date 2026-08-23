@@ -302,6 +302,54 @@ class FactTool(MemoryTool[FactExtract]):
             f"Unsupported fact action: {action}"
         )
 
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        action = arguments.get("action", "?")
+        parts = [f"action={action}"]
+
+        content = arguments.get("content")
+        facts = arguments.get("facts")
+        if content is not None:
+            parts.append(f"content={self._truncate(str(content))}")
+        elif facts is not None:
+            parts.append(f"batch={len(facts)}")
+
+        citations = arguments.get("citations")
+        if citations:
+            parts.append(f"citations={len(citations)}")
+
+        ids = self._ids_summary(arguments)
+        if ids is not None:
+            parts.append(f"ids={ids}")
+
+        return " | ".join(parts)
+
+    @staticmethod
+    def _ids_summary(arguments: dict[str, Any]) -> str | None:
+        single = arguments.get("id")
+        multiple = arguments.get("ids")
+
+        if single is not None:
+            return f"[{single}]"
+
+        if multiple is not None:
+            return (
+                "["
+                + ", ".join(str(i) for i in multiple)
+                + "]"
+            )
+
+        return None
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= 80:
+            return value
+        return value[:80] + "..."
+
     def _add(
         self,
         arguments: dict[str, Any],

@@ -141,3 +141,49 @@ class Tree(Tool):
             "tree",
             arguments,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        path = arguments.get("path", ".")
+        parts = [f"path={path}"]
+
+        max_depth = arguments.get("max_depth")
+        if max_depth is not None:
+            parts.append(f"depth={max_depth}")
+
+        if arguments.get("directories_only"):
+            parts.append("dirs-only=true")
+
+        skip = arguments.get("skip")
+        if skip:
+            parts.append(f"skip={len(skip)}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text:
+            return "empty result"
+
+        lines = text.splitlines()
+
+        # The tree worker appends a summary line after a blank line,
+        # e.g. "3 directories, 5 files" or "2 directories, 1 file, 4 skipped".
+        summary = ""
+        if len(lines) >= 2 and not lines[-1]:
+            summary = lines[-2]
+        elif len(lines) >= 1:
+            summary = lines[-1]
+
+        if summary:
+            return f"{len(lines)} lines | {summary}"
+
+        return f"{len(lines)} lines"

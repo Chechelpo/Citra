@@ -11,6 +11,8 @@ from ...utils.json_schema import (
 )
 from ..tool import Tool
 
+_TRUNCATE_LENGTH = 120
+
 
 class Read(Tool):
     """Read literal paths or globs without host-process filesystem I/O."""
@@ -106,4 +108,57 @@ class Read(Tool):
             "read",
             arguments,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        path = arguments.get("path")
+        requests = arguments.get("requests")
+
+        if path is not None:
+            parts = [f"path={self._truncate(path)}"]
+
+            offset = arguments.get("offset")
+            if offset:
+                parts.append(f"offset={offset}")
+
+            limit = arguments.get("limit")
+            if limit is not None:
+                parts.append(f"limit={limit}")
+
+            return " | ".join(parts)
+
+        if requests:
+            return f"batch={len(requests)} request(s)"
+
+        return "no path"
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text:
+            return "empty result"
+
+        file_count = text.count("===== ")
+
+        lines = text.splitlines()
+
+        parts = [f"{len(lines)} lines", f"{len(text)} chars"]
+
+        if file_count:
+            parts.insert(0, f"{file_count} file(s)")
+
+        return " | ".join(parts)
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= _TRUNCATE_LENGTH:
+            return value
+        return value[:_TRUNCATE_LENGTH] + "..."
 

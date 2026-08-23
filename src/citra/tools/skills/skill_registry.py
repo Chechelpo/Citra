@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from citra.tools.skills.translator import Translator
 from citra.tools.skills.web_app_debugging import WebAppDebugging
 from citra.tools.skills.coding_conventions import CodingConventions
 from collections.abc import Iterable
@@ -41,7 +42,8 @@ class SkillRegistry:
             TaskRecognition(),
             SandboxEnvironment(),
             CodingConventions(),
-            WebAppDebugging()
+            WebAppDebugging(),
+            Translator()
         ))
         
         self._load()

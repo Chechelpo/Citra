@@ -7,6 +7,7 @@ name = "citra"
 version = "0.1.0"
 requires-python = ">=3.12, <3.13"
 dependencies = [
+    "cryptography>=50.0.0",
     "furo>=2025.12.19",
     "jsonschema>=4.0",
     "openai>=3.3.1",
@@ -16,8 +17,13 @@ dependencies = [
     "pypdf>=6,<7",
     "pyrefly>=1.2.0",
     "pytest>=9.1.1",
+    "rich>=15.0.0",
+    "sentencepiece>=0.2.2",
     "sphinx>=9.1.0",
     "sphinx-autobuild>=2025.8.25",
+    "tiktoken>=0.14.0",
+    "tokenizers>=0.23.1",
+    "tomlkit>=0.15.1",
     "types-jsonschema>=4.26.0.20260518",
     "types-openpyxl>=3.1.5.20260807",
 ]

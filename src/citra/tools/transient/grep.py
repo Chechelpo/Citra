@@ -9,6 +9,8 @@ from ...utils.json_schema import (
     JsonSchema,
 )
 
+_TRUNCATE_LENGTH = 120
+
 
 class Grep(Tool):
     """
@@ -81,3 +83,37 @@ class Grep(Tool):
             "grep",
             arguments,
         )
+
+    @override
+    def format_call_log(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        pat = arguments.get("pat", "")
+        path = arguments.get("path")
+
+        parts = [f"pat={self._truncate(pat)}"]
+
+        if path is not None:
+            parts.append(f"path={path}")
+
+        return " | ".join(parts)
+
+    @override
+    def format_result_log(
+        self,
+        result: Any,
+    ) -> str:
+        text = str(result)
+
+        if not text or text == "none":
+            return "no matches"
+
+        lines = text.splitlines()
+        return f"{len(lines)} match(es)"
+
+    @staticmethod
+    def _truncate(value: str) -> str:
+        if len(value) <= _TRUNCATE_LENGTH:
+            return value
+        return value[:_TRUNCATE_LENGTH] + "..."
