@@ -153,7 +153,8 @@ def render_tool_call_result(
 def render_assistant_text(
     text: str,
 ) -> None:
-    console.print()
+    if not text.strip():
+        return
 
     console.print(
         Text(

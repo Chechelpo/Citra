@@ -16,7 +16,6 @@ TOOL_REGISTRY.register("git", Git)
 TOOL_REGISTRY.register("tree", Tree)
 TOOL_REGISTRY.register("materialize", Materialize)
 TOOL_REGISTRY.register("commit", Commit)
-TOOL_REGISTRY.register("repo_library", RepoLibrary)
 TOOL_REGISTRY.register("bash", Bash)
 TOOL_REGISTRY.register("subprocess", Subprocess)
 TOOL_REGISTRY.register("browser", Browser)
@@ -25,6 +24,10 @@ TOOL_REGISTRY.register("web_search", WebSearch)
 TOOL_REGISTRY.register("prompt_user", PromptUser)
 TOOL_REGISTRY.register("lsp", Lsp)
 TOOL_REGISTRY.register("skill", SkillTool)
+
+#Documentation
+TOOL_REGISTRY.register("document", Document)
+TOOL_REGISTRY.register("diagram", Diagram)
 
 # Session / memory tools
 TOOL_REGISTRY.register("todo", TodoTool)

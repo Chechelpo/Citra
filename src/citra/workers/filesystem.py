@@ -69,6 +69,11 @@ class ScopedFilesystem:
         self.config = self._required_path("XDG_CONFIG_HOME")
         self.data = self._required_path("XDG_DATA_HOME")
         self.runtime = self._required_path("XDG_RUNTIME_DIR")
+        self.library = self._required_path(
+            "CITRA_LIBRARY"
+        )
+
+        self._denied_roots = (self.library,)
 
         self._aliases: dict[str, Path] = {
             "workspace": self.workspace,
@@ -158,13 +163,38 @@ class ScopedFilesystem:
 
         return candidate.resolve()
 
-    def require_allowed_path(self, value: str | Path) -> Path:
-        resolved = Path(value).resolve()
-        if any(self._within(root, resolved) for root in self._read_roots):
+    def require_allowed_path(
+        self,
+        value: str | Path,
+    ) -> Path:
+        resolved = Path(
+            value
+        ).resolve()
+
+        if any(
+            self._within(
+                root,
+                resolved,
+            )
+            for root in self._denied_roots
+        ):
+            raise ValueError(
+                "The Citra document library is accessible only "
+                "through the Document tool."
+            )
+
+        if any(
+            self._within(
+                root,
+                resolved,
+            )
+            for root in self._read_roots
+        ):
             return resolved
+
         raise ValueError(
-            "Path is outside @source and the lifecycle-scoped agent "
-            f"filesystem: {resolved}"
+            "Path is outside the model-facing filesystem: "
+            f"{resolved}"
         )
 
     def require_writable_path(self, value: str | Path) -> Path:

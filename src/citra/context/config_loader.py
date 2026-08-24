@@ -61,6 +61,7 @@ class NotificationConfig:
 class WorkspaceContextConfig:
     temporary_workspace: str | None
     permanent_workspace: str | None
+    library: str | None
 
 
 @dataclass(frozen=True)
@@ -331,6 +332,9 @@ class CitraConfig:
                 permanent_workspace=workspace_context_raw.get(
                     "permanent_workspace"
                 ),
+                library= workspace_context_raw.get(
+                    "library"
+                )
             )
 
             lsp = LspContextConfig(

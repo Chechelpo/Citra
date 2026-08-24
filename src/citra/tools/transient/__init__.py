@@ -13,9 +13,10 @@ from .tree import Tree
 from .git import Git
 from .materialize import Materialize
 from .lsp import Lsp
-from .repo_library import RepoLibrary
 from .subprocess import Subprocess
 from .skill_tool import SkillTool
+from .diagram import Diagram
+from .document import Document
 
 __all__ = [
     "Bash",
@@ -33,7 +34,8 @@ __all__ = [
     "Materialize",
     "Lsp",
     "Tree",
-    "RepoLibrary",
     "Subprocess",
-    "SkillTool"
+    "SkillTool",
+    "Diagram",
+    "Document"
 ]

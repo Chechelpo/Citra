@@ -70,6 +70,18 @@ def build_system_prompt(
     )
 
     available_skills = context.skills.format_for_prompt()
+    initial_library = (
+        context.workspace.list_library_documents()
+    )
+
+    initial_library_text = (
+        "\n".join(
+            f"- `{document}`"
+            for document in initial_library
+        )
+        if initial_library
+        else "- No library documents available."
+    )
 
     return f"""\
 # Citra
@@ -105,6 +117,15 @@ Relative project paths resolve from the agent workspace.
 
 This is an orientation aid for the initial source state, not a permanent
 snapshot. Inspect current state whenever it matters.
+
+### Initial library documents
+
+{initial_library_text}
+
+These are persistent Citra documents available through the `document` tool.
+Use the library when existing reusable knowledge may help. This list is an
+initial orientation snapshot; use `document` listing when current library
+contents matter.
 
 ## Operating model
 
@@ -214,8 +235,7 @@ Adapt this workflow when a simpler path is sufficient.
 
 {available_skills}
 
-Skills contain task-specific operating instructions. Read and follow relevant
-skills instead of reconstructing their behavior from assumptions.
+Skills contain task-specific operating instructions. You must read skills as soon as you realize they are relevant.
 
 Task-recognition skill is a mandatory read at the start of the project.
 
@@ -230,6 +250,7 @@ Before reporting completion:
 * ensure retained facts, decisions, and constraints reflect reality;
 * clear or refresh the checkpoint as appropriate;
 * run relevant final diagnostics when available.
+* write a citra doc detailing your project.
 
 Report concisely:
 

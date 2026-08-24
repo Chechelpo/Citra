@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from citra.tools.skills.citra_documents import CitraDocsSkill
+
 from citra.tools.skills.translator import Translator
 from citra.tools.skills.web_app_debugging import WebAppDebugging
 from citra.tools.skills.coding_conventions import CodingConventions
@@ -43,7 +45,8 @@ class SkillRegistry:
             SandboxEnvironment(),
             CodingConventions(),
             WebAppDebugging(),
-            Translator()
+            Translator(),
+            CitraDocsSkill()
         ))
         
         self._load()

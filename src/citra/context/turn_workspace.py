@@ -17,12 +17,12 @@ _PATH_ALIAS_PATTERN = re.compile(
     r"^@([a-z_]+)(?:/(.*))?$"
 )
 
-
 class AvailablePathAlias(str, Enum):
     """A Citra-defined path alias, similar to ``~/`` or ``./``."""
 
     WORKSPACE = "workspace"
     SOURCE = "source"
+    LIBRARY = "library"
     HOME = "home"
     TMP = "tmp"
     CACHE = "cache"
@@ -32,7 +32,6 @@ class AvailablePathAlias(str, Enum):
 
     def as_alias(self) -> str:
         return f"@{self.value}"
-
 
 @dataclass(frozen=True)
 class WorkspaceContext:
@@ -49,6 +48,8 @@ class WorkspaceContext:
 
     source_workspace: Path
     workspace: Path
+
+    library: Path
 
     root: Path
     home: Path
@@ -77,6 +78,31 @@ class WorkspaceContext:
                 "Source workspace does not exist: "
                 f"{source_workspace}"
             )
+
+        citra_root_raw = os.environ.get(
+            "CITRA_ROOT"
+        )
+
+        if citra_root_raw is None:
+            raise RuntimeError(
+                "CITRA_ROOT is not defined. "
+                "Citra should define its persistent root before "
+                "creating a workspace context."
+            )
+
+        citra_root = Path(
+            citra_root_raw
+        ).expanduser().resolve()
+
+        library = (
+            citra_root
+            / "library"
+        ).resolve()
+
+        library.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         temp_base = config.temporary_workspace
 
@@ -151,6 +177,7 @@ class WorkspaceContext:
             )
 
             return cls(
+                library=library,
                 source_workspace=source_workspace,
                 workspace=workspace_path,
                 root=root,
@@ -187,7 +214,7 @@ class WorkspaceContext:
             self.cache,
             self.config,
             self.data,
-            self.runtime,
+            self.runtime
         )
 
     @property
@@ -211,8 +238,12 @@ class WorkspaceContext:
         Resolve aliases and relative paths within the allowed roots.
 
         Relative paths resolve from the isolated workspace. ``~/`` resolves
-        from the disposable agent home. Both ``@source/x`` and
-        ``./@source/x`` resolve from the permanent source workspace.
+        from the disposable agent home.
+
+        ``@source/...`` resolves from the permanent read-only source workspace.
+
+        ``@library/...`` resolves from Citra's persistent writable library at
+        ``$CITRA_ROOT/library``.
         """
         raw = str(path)
         alias_raw = raw
@@ -259,17 +290,31 @@ class WorkspaceContext:
         self,
         path: str | Path,
     ) -> Path:
-        resolved = Path(path).resolve()
+        resolved = Path(
+            path
+        ).resolve()
+
+        if self._is_within(
+            self.library,
+            resolved,
+        ):
+            raise ValueError(
+                "Path belongs to the Citra document library and "
+                "is not accessible through ordinary filesystem tools."
+            )
 
         if any(
-            self._is_within(root, resolved)
+            self._is_within(
+                root,
+                resolved,
+            )
             for root in self.allowed_roots
         ):
             return resolved
 
         raise ValueError(
-            "Path is outside @source and the lifecycle-scoped agent "
-            f"filesystem: {resolved}"
+            "Path is outside the model-facing filesystem: "
+            f"{resolved}"
         )
 
     def is_valid_read_path(
@@ -322,6 +367,10 @@ class WorkspaceContext:
             pass
 
         aliases = (
+            (
+                AvailablePathAlias.LIBRARY.value,
+                self.library,
+            ),
             (
                 AvailablePathAlias.SOURCE.value,
                 self.source_workspace,
@@ -412,10 +461,14 @@ class WorkspaceContext:
                 "XDG_CACHE_HOME": str(self.cache),
                 "XDG_CONFIG_HOME": str(self.config),
                 "XDG_DATA_HOME": str(self.data),
-                "XDG_STATE_HOME": str(self.data / "xdg-state"),
+                "XDG_STATE_HOME": str(
+                    self.data
+                    / "xdg-state"
+                ),
                 "XDG_RUNTIME_DIR": str(self.runtime),
                 "CITRA_WORKSPACE": str(self.workspace),
                 "CITRA_SOURCE": str(self.source_workspace),
+                "CITRA_LIBRARY": str(self.library),
                 "CITRA_AGENT_ROOT": str(self.root),
                 "CITRA_TMP": str(self.tmp),
                 "CITRA_CACHE": str(self.cache),
@@ -494,7 +547,9 @@ class WorkspaceContext:
         }
 
         try:
-            return aliases[alias]
+            return aliases[
+                alias
+            ]
         except KeyError as error:
             raise ValueError(
                 f"Unknown workspace path alias: @{alias}"
@@ -513,3 +568,119 @@ class WorkspaceContext:
             return False
 
         return True
+
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Library
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    def resolve_library_path(
+        self,
+        path: str | Path,
+    ) -> Path:
+        """
+        Resolve a Document-tool library path.
+
+        This method exists specifically for trusted semantic tools such as
+        Document. Ordinary filesystem resolution deliberately excludes the
+        library.
+        """
+        raw = str(
+            path
+        )
+
+        if raw == "@library":
+            return self.library
+
+        prefix = "@library/"
+
+        if not raw.startswith(
+            prefix
+        ):
+            raise ValueError(
+                "Library paths must begin with '@library'."
+            )
+
+        remainder = raw[
+            len(prefix):
+        ]
+
+        if not remainder:
+            return self.library
+
+        resolved = (
+            self.library
+            / remainder
+        ).resolve()
+
+        if not self._is_within(
+            self.library,
+            resolved,
+        ):
+            raise ValueError(
+                "Library path escapes @library."
+            )
+
+        return resolved
+
+    def list_library_documents(
+        self,
+        *,
+        location: str = "@library",
+        recursive: bool = True,
+    ) -> tuple[Path, ...]:
+        """
+        List authoritative Citra documents beneath a library location.
+
+        Generated HTML and other derived assets are ignored.
+        """
+        directory = self.resolve_library_path(
+            location
+        )
+
+        if not directory.exists():
+            return ()
+
+        if not directory.is_dir():
+            raise NotADirectoryError(
+                f"Library location is not a directory: "
+                f"{self.display_path(directory)}"
+            )
+
+        iterator = (
+            directory.rglob(
+                "*.citra.xml"
+            )
+            if recursive
+            else directory.glob(
+                "*.citra.xml"
+            )
+        )
+
+        documents: list[Path] = []
+
+        for path in iterator:
+            if not path.is_file():
+                continue
+
+            resolved = path.resolve()
+
+            if not self._is_within(
+                self.library,
+                resolved,
+            ):
+                continue
+
+            documents.append(
+                resolved
+            )
+
+        return tuple(
+            sorted(
+                documents,
+                key=lambda path: (
+                    self.display_path(
+                        path
+                    ).casefold()
+                ),
+            )
+        )

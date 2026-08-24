@@ -84,3 +84,40 @@ http://127.0.0.1:7000
 ```
 
 Keep OpenSERP bound to `127.0.0.1` unless it specifically needs to be reachable from another machine.
+
+## Mermaid renderer setup
+
+Citra uses Mermaid CLI (`mmdc`) to render diagrams.
+
+Install it globally:
+
+```bash
+sudo npm install -g @mermaid-js/mermaid-cli
+mmdc --version
+```
+Verify the installation:
+
+```bash
+mmdc --version
+```
+
+If you don't have a chromium headless isntall it:
+
+```bash
+npx puppeteer browsers install chrome-headless-shell
+```
+
+Test rendering:
+
+```bash
+echo 'flowchart LR; A --> B' > /tmp/test.mmd
+mmdc -i /tmp/test.mmd -o /tmp/test.svg
+```
+
+If the SVG is created successfully, Citra diagram rendering is ready.
+
+Update Mermaid CLI with:
+
+```bash
+sudo npm install -g @mermaid-js/mermaid-cli@latest
+```

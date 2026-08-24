@@ -10,7 +10,6 @@ from .agent import AgentSession, UserInteractionBroker
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
-from .context.libraries import Libraries
 from .tools.default_registry import TOOL_REGISTRY
 from .tools.lsp import LspConfig, LspManager
 from .utils.chat_completions_api import call_api
@@ -41,7 +40,6 @@ class CitraApplication:
             skills_root=None
         )
         try:
-            self.libraries = Libraries()
             self.interactions = UserInteractionBroker()
             self.lsp_manager = LspManager(
                 self.workspace,
@@ -58,7 +56,6 @@ class CitraApplication:
             )
             self.context = ExecutionContext(
                 self.workspace,
-                libraries=self.libraries,
                 skills=self.skills,
                 lsp_manager=self.lsp_manager,
                 user_interactions=self.interactions,

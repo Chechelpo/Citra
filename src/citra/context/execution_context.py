@@ -1,4 +1,3 @@
-from .libraries import Libraries
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
@@ -19,11 +18,6 @@ from .config_loader import CitraConfig
 class ExecutionContext:
     workspace: WorkspaceContext
     skills: SkillRegistry
-
-    libraries: Libraries = field(
-        default_factory=Libraries
-    )
-
 
     lsp_manager: object | None = None
     user_interactions: object | None = None

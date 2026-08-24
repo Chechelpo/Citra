@@ -10,6 +10,7 @@ dependencies = [
     "cryptography>=50.0.0",
     "furo>=2025.12.19",
     "jsonschema>=4.0",
+    "markdown>=3.10.3",
     "openai>=3.3.1",
     "openpyxl>=3.1.5",
     "playwright>=1.50",
@@ -25,6 +26,7 @@ dependencies = [
     "tokenizers>=0.23.1",
     "tomlkit>=0.15.1",
     "types-jsonschema>=4.26.0.20260518",
+    "types-markdown>=3.10.2.20260712",
     "types-openpyxl>=3.1.5.20260807",
 ]
 
