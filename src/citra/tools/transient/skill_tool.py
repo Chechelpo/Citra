@@ -11,6 +11,8 @@ from ...utils.json_schema import (
 
 
 class SkillTool(Tool):
+    INVALIDATES_TOOL_CACHE = False
+
     """
     Loads instructions for an available skill.
     """

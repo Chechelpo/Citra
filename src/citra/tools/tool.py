@@ -19,6 +19,14 @@ class InvalidToolArguments(ValueError):
 
 
 class Tool(ABC):
+    # Tool-result cache policy. Cacheable tools may reuse an identical
+    # result within the current agent turn. Tools are assumed to mutate
+    # observable state unless they explicitly opt out; stale cache hits
+    # are worse than unnecessary invalidation.
+    CACHEABLE = False
+    INVALIDATES_TOOL_CACHE = True
+    MAX_OUTPUT_TOKENS: int | None = 2_000
+
     def __init__(
         self,
         context: ExecutionContext,
@@ -52,6 +60,22 @@ class Tool(ABC):
 
     def get_as_tool(self) -> dict[str, Any]:
         return self.__definition.to_dict()
+
+    def is_cacheable(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        """Return whether an identical call may reuse a prior result."""
+        del arguments
+        return self.CACHEABLE
+
+    def invalidates_tool_cache(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        """Return whether this call may change state seen by cached tools."""
+        del arguments
+        return self.INVALIDATES_TOOL_CACHE
 
     def validate_arguments(
         self,

@@ -1,15 +1,26 @@
 """JavaScript/TypeScript language-server definition."""
 
-from .base import ServerDefinition
+from ..language import Language
+from .base import InstallCandidate, ServerDefinition
 
 
 TYPESCRIPT_LANGUAGE_SERVER = ServerDefinition(
-    id="typescript-language-server",
+    id="typescript",
     executable="typescript-language-server",
+    languages=(Language.JAVASCRIPT, Language.TYPESCRIPT),
     arguments=("--stdio",),
-    install_hint=(
-        "Install both typescript-language-server and typescript "
-        "(for example with your system npm/pnpm toolchain)."
+    requires=("node",),
+    install_candidates=(
+        InstallCandidate(
+            "pacman",
+            ("typescript-language-server", "typescript"),
+            ("sudo", "pacman", "-S", "--needed", "typescript-language-server", "typescript"),
+        ),
+        InstallCandidate(
+            "npm",
+            ("typescript-language-server", "typescript"),
+            ("npm", "install", "-g", "typescript-language-server", "typescript"),
+        ),
     ),
+    install_hint="Install typescript-language-server and TypeScript.",
 )
-

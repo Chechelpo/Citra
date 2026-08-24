@@ -19,7 +19,6 @@ from ..utils.chat_completions_api import build_memory_context
 
 console = Console(
     highlight=False,
-    soft_wrap=True,
 )
 
 

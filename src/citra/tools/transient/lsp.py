@@ -13,6 +13,14 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..lsp.diagnostics import format_diagnostics
+from ..lsp.errors import (
+    LspDiagnosticsTimeout,
+    LspError,
+    LspUnavailable,
+    LspUnsupportedCapability,
+)
+from ..lsp.language import detect_language
 from ..lsp.manager import LspManager
 from ..lsp.positions import SourcePosition
 from ..lsp.protocol import uri_to_path
@@ -20,6 +28,14 @@ from ..tool import Tool
 
 
 class Lsp(Tool):
+    INVALIDATES_TOOL_CACHE = False
+
+    def is_cacheable(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        return arguments.get("action") != "status"
+
     """Expose high-value language intelligence without raw JSON-RPC."""
 
     POSITION_ACTIONS = frozenset(
@@ -51,12 +67,12 @@ class Lsp(Tool):
             name="lsp",
             description=(
                 "Use a persistent sandboxed language server for semantic code "
-                "intelligence. Supports Python plus JavaScript/TypeScript. "
+                "intelligence across Citra's configured language catalog. "
                 "Actions include diagnostics, hover, document symbols, "
                 "references, and go-to-definition (plus declaration, type "
                 "definition, and implementation). line and character are "
-                "1-based. Use status to see whether Pyright and "
-                "typescript-language-server are installed."
+                "1-based. Use status to inspect installed and optional "
+                "language-server dependencies."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -71,8 +87,8 @@ class Lsp(Tool):
                         name="path",
                         schema=JsonSchema.string(
                             description=(
-                                "Source path in the agent workspace or @source. "
-                                "Required except for status."
+                                "Source path in any allowed Citra filesystem root "
+                                "(including @source and @tmp). Required except for status."
                             ),
                         ),
                         required=False,
@@ -111,42 +127,70 @@ class Lsp(Tool):
     def _execute(self, arguments: dict[str, Any]) -> str:
         manager = self.context.lsp_manager
         if not isinstance(manager, LspManager):
-            raise RuntimeError("LSP services are unavailable in this execution context.")
+            return "unavailable: LSP services are disabled in this execution context"
         action = arguments["action"]
         if action == "status":
-            self._reject(arguments, "path", "line", "character", "include_declaration")
+            # Status is path-independent. Treat stale/default path or position
+            # fields as harmless rather than turning an introspection request
+            # into an operational error. Model tool callers commonly retain a
+            # path from the preceding semantic action.
             return json.dumps(manager.status(), indent=2, ensure_ascii=False)
         path_raw = arguments.get("path")
         if not path_raw:
             raise ValueError("'path' is required for this LSP action.")
         path = self.context.workspace.resolve_path(path_raw)
+        language = detect_language(path)
+        if language is None:
+            return f"unsupported: no language server is configured for {path.suffix or 'this file'}"
         text = self.context.filesystem.execute("read_raw", {"path": str(path)})
-        client, language = manager.client_for(path)
-        uri = client.sync_document(path, text, language)
 
-        if action == "diagnostics":
-            self._reject(arguments, "line", "character", "include_declaration")
-            return self._format_diagnostics(client.diagnostics(uri), path)
-        if action == "document_symbols":
-            self._reject(arguments, "line", "character", "include_declaration")
-            return self._format_symbols(client.document_symbols(uri), path)
-        if action not in self.POSITION_ACTIONS:
-            raise ValueError(f"Unsupported LSP action: {action}")
-        position = self._position(arguments, text)
-        if action == "hover":
-            self._reject(arguments, "include_declaration")
-            return self._format_hover(client.hover(uri, position))
-        if action == "references":
-            return self._format_locations(
-                client.references(
-                    uri,
-                    position,
-                    include_declaration=arguments.get("include_declaration", True),
+        try:
+            if action == "diagnostics":
+                self._reject(arguments, "line", "character", "include_declaration")
+                rendered = format_diagnostics(
+                    manager.diagnostics(path, text),
+                    path=path,
+                    display_path=self.context.workspace.display_path,
                 )
-            )
-        self._reject(arguments, "include_declaration")
-        definition_kind = "definition" if action == "go_to_definition" else action
-        return self._format_locations(client.definitions(definition_kind, uri, position))
+                return rendered or "none"
+
+            handle = manager.client_for(path)
+            client = handle.client
+            uri = client.sync_document(path, text, handle.language)
+            if action == "document_symbols":
+                self._reject(arguments, "line", "character", "include_declaration")
+                return self._format_symbols(client.document_symbols(uri), path)
+            if action not in self.POSITION_ACTIONS:
+                raise ValueError(f"Unsupported LSP action: {action}")
+            position = self._position(arguments, text)
+            if action == "hover":
+                self._reject(arguments, "include_declaration")
+                return self._format_hover(client.hover(uri, position))
+            if action == "references":
+                return self._format_locations(
+                    client.references(
+                        uri,
+                        position,
+                        include_declaration=arguments.get("include_declaration", True),
+                    )
+                )
+            self._reject(arguments, "include_declaration")
+            definition_kind = "definition" if action == "go_to_definition" else action
+            return self._format_locations(client.definitions(definition_kind, uri, position))
+        except LspUnavailable as error:
+            return f"unavailable: {error}"
+        except LspUnsupportedCapability as error:
+            return f"unsupported: {error}"
+        except LspDiagnosticsTimeout as error:
+            # A diagnostics timeout is operational unavailability, not a Citra
+            # internal failure; report it concisely without a traceback.
+            return f"unavailable: {error}"
+        except LspError as error:
+            self.context.logger.exception("LSP operation failed for %s", path_raw)
+            return f"unavailable: language server operation failed: {error}"
+        except Exception as error:
+            self.context.logger.exception("Unexpected LSP failure for %s", path_raw)
+            return f"unavailable: language server operation failed: {error}"
 
     @override
     def format_call_log(
@@ -256,25 +300,6 @@ class Lsp(Tool):
             return "\n\n".join(rendered) or "none"
         return "none"
 
-    def _format_diagnostics(self, value: Any, path: Path) -> str:
-        if not isinstance(value, list) or not value:
-            return "none"
-        severities = {1: "error", 2: "warning", 3: "information", 4: "hint"}
-        lines: list[str] = []
-        for item in value[:250]:
-            if not isinstance(item, dict):
-                continue
-            range_value = item.get("range", {})
-            start = range_value.get("start", {}) if isinstance(range_value, dict) else {}
-            severity = severities.get(item["severity"], "diagnostic")
-            source = f" [{item['source']}]" if item.get("source") else ""
-            lines.append(
-                f"{self.context.workspace.display_path(path)}:"
-                f"{int(start.get('line', 0)) + 1}:"
-                f"{int(start.get('character', 0)) + 1}: "
-                f"{severity}{source}: {item.get('message', '')}"
-            )
-        return "\n".join(lines) or "none"
 
     def _format_symbols(self, value: Any, path: Path) -> str:
         if not isinstance(value, list) or not value:

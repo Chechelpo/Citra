@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
@@ -9,15 +10,21 @@ from citra.utils.sandbox import WorkspaceSandbox
 from citra.utils.sandboxed_filesystem import SandboxedFilesystem
 from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
+from citra.utils.repo_map import RepoMap
+from citra.utils.tokenize import tokenize
 from citra.tools.skills.skill_registry import SkillRegistry
 
 from .config_loader import CitraConfig
+
+
+DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
 
 
 @dataclass(frozen=True)
 class ExecutionContext:
     workspace: WorkspaceContext
     skills: SkillRegistry
+    logger = logging.getLogger(__name__)
 
     lsp_manager: object | None = None
     user_interactions: object | None = None
@@ -39,6 +46,7 @@ class ExecutionContext:
     )
     __subprocesses: ManagedSubprocesses = field(init=False)
     __browser: BrowserManager = field(init=False)
+    __repo_map: RepoMap = field(init=False)
 
     def __post_init__(
         self,
@@ -76,6 +84,7 @@ class ExecutionContext:
             self.workspace.workspace,
             request_timeout=config.browser.request_timeout,
         )
+        repo_map = RepoMap(self.workspace)
 
         object.__setattr__(
             self,
@@ -106,6 +115,11 @@ class ExecutionContext:
             subprocesses,
         )
         object.__setattr__(self, "_ExecutionContext__browser", browser)
+        object.__setattr__(
+            self,
+            "_ExecutionContext__repo_map",
+            repo_map,
+        )
 
     @property
     def os(
@@ -139,7 +153,15 @@ class ExecutionContext:
     def browser(self) -> BrowserManager:
         return self.__browser
 
+    @property
+    def repo_map(self) -> RepoMap:
+        return self.__repo_map
+
     def close(self) -> None:
+        manager = self.lsp_manager
+        close_lsp = getattr(manager, "close", None)
+        if callable(close_lsp):
+            close_lsp()
         self.__browser.close()
         self.__subprocesses.close()
 
@@ -162,3 +184,83 @@ class ExecutionContext:
         return shutil.which(
             cmd
         ) is not None
+
+    def truncate_output(
+        self,
+        text: str,
+        *,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Cap model-facing output using the active model tokenizer."""
+        if max_tokens is None:
+            max_tokens = DEFAULT_CONTEXT_TOKEN_LIMIT
+
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than zero")
+
+        model_id = self.__config.model().id
+        total_tokens = tokenize(model_id, text)
+
+        if total_tokens <= max_tokens:
+            return text
+
+        notice = f"\n... <context truncated after {max_tokens} tokens>"
+        notice_tokens = tokenize(model_id, notice)
+        content_budget = max_tokens - notice_tokens
+
+        if content_budget <= 0:
+            return notice
+
+        cut = max(1, int(len(text) * content_budget / total_tokens))
+        candidate = text[:cut]
+
+        newline = candidate.rfind("\n")
+        if newline != -1:
+            candidate = candidate[:newline]
+
+        candidate_tokens = tokenize(model_id, candidate)
+
+        while candidate and candidate_tokens > content_budget:
+            cut = max(
+                1,
+                int(
+                    len(candidate)
+                    * content_budget
+                    / candidate_tokens
+                    * 0.98
+                ),
+            )
+            candidate = candidate[:cut]
+
+            newline = candidate.rfind("\n")
+            if newline != -1:
+                candidate = candidate[:newline]
+
+            candidate_tokens = tokenize(
+                model_id,
+                candidate,
+            )
+
+        return candidate + notice
+
+    def diagnostics_for_path(
+        self,
+        path_raw: str,
+    ) -> str | None:
+        """Return advisory LSP diagnostics for a workspace path when available."""
+        manager = self.lsp_manager
+
+        if manager is None:
+            return None
+
+        try:
+            return manager.diagnostics_for_path(
+                path_raw,
+                filesystem=self.filesystem,
+            )
+        except Exception:
+            self.logger.exception(
+                "Could not collect LSP diagnostics for %s",
+                path_raw,
+            )
+            return None

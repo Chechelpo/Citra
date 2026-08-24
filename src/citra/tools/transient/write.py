@@ -48,6 +48,16 @@ class Write(Tool):
                             ),
                         ),
                     ),
+                    JsonProperty(
+                        name="diagnostics",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Run LSP diagnostics after a successful write. "
+                                "Defaults to false."
+                            ),
+                        ),
+                        required=False,
+                    ),
                 ),
                 additional_properties=False,
             ),
@@ -68,9 +78,33 @@ class Write(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        return self.context.filesystem.execute(
+        filesystem_arguments = {
+            key: value
+            for key, value in arguments.items()
+            if key != "diagnostics"
+        }
+        result = self.context.filesystem.execute(
             "write",
-            arguments,
+            filesystem_arguments,
+        )
+
+        if result != "ok":
+            return result
+
+        if not arguments.get("diagnostics", False):
+            return "ok"
+
+        diagnostics = self.context.diagnostics_for_path(
+            arguments["path"],
+        )
+
+        if diagnostics is None:
+            return "ok"
+
+        return (
+            "ok\n\n"
+            "LSP diagnostics after write:\n"
+            f"{diagnostics}"
         )
 
     @override

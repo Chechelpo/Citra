@@ -8,6 +8,7 @@ exactly like ``citra.tools.default_registry``.
 """
 
 from .model import ModelCommand
+from .lsp import LspCommand
 from .clear import ClearCommand
 from .command import CommandRegistry
 from .help import HelpCommand
@@ -22,3 +23,4 @@ COMMAND_REGISTRY.register("c", ClearCommand)
 COMMAND_REGISTRY.register("help", HelpCommand)
 COMMAND_REGISTRY.register("test", TestCommand)
 COMMAND_REGISTRY.register("model", ModelCommand)
+COMMAND_REGISTRY.register("lsp", LspCommand)

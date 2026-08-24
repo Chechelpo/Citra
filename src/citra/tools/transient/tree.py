@@ -1,40 +1,33 @@
 from typing import Any, override
 
 from ...context import ExecutionContext
-from ...utils.directory_tree import (
-    DEFAULT_LIMIT,
-    DEFAULT_MAX_DEPTH,
-    MAX_LIMIT,
-    MAX_MAX_DEPTH,
-)
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
     JsonProperty,
     JsonSchema,
 )
+from ...utils.repo_map import DEFAULT_MAP_TOKENS, MAX_MAP_TOKENS
 from ..tool import Tool
 
 
 class Tree(Tool):
-    """
-    Show the structure of a directory.
+    """Show an Aider-style structural map of the repository."""
 
-    Traversal and rendering are implemented by utils.directory_tree.
-    """
+    CACHEABLE = True
+    INVALIDATES_TOOL_CACHE = False
+    MAX_OUTPUT_TOKENS = MAX_MAP_TOKENS
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="tree",
             description=(
-                "Show the directory structure of the workspace or another "
-                "allowed path. Output is deterministic, directories are shown "
-                "before files, and traversal is bounded by max_depth and "
-                "limit. Use directories_only to inspect only folder structure. "
-                "Use skip to exclude directory names, relative paths, or glob "
-                "patterns such as 'node_modules', 'src/generated', "
-                "'**/__pycache__', or '.git*'. Common generated, dependency, "
-                "cache, and version-control directories are skipped by default."
+                "Show a compact structural repository map built from tree-sitter ASTs. "
+                "The map ranks important definitions and references across the project "
+                "and shows useful class/function/type context rather than a raw directory "
+                "listing. The active workspace overlays @source, so edited and newly "
+                "created files are reflected. Use glob when you only need file/path "
+                "discovery. Optionally focus the ranking on identifiers or paths."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -42,77 +35,30 @@ class Tree(Tool):
                         name="path",
                         schema=JsonSchema.string(
                             description=(
-                                "Directory to inspect. Relative paths resolve "
-                                "from the active workspace. Filesystem aliases "
-                                "such as @tmp are supported. Defaults to '.'."
+                                "Project-relative subtree to map. Defaults to the entire "
+                                "project. '@source' and '@source/<subtree>' are accepted "
+                                "as aliases for project-relative source paths."
                             ),
                         ),
                         required=False,
                     ),
                     JsonProperty(
-                        name="max_depth",
-                        schema=JsonSchema.integer(
-                            description=(
-                                "Maximum directory depth to descend below the "
-                                "requested root. 0 shows only the root. "
-                                f"Defaults to {DEFAULT_MAX_DEPTH} and cannot "
-                                f"exceed {MAX_MAX_DEPTH}."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="directories_only",
-                        schema=JsonSchema.boolean(
-                            description=(
-                                "If true, show directories only and omit "
-                                "files. Defaults to false."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="skip",
+                        name="focus",
                         schema=JsonSchema.array(
                             JsonSchema.string(),
                             description=(
-                                "Additional entries to skip. Each value may "
-                                "be an exact basename, a path relative to the "
-                                "tree root, or a glob pattern. Examples: "
-                                "'node_modules', 'src/generated', "
-                                "'**/__pycache__', '*.egg-info'."
+                                "Optional identifiers, filenames, or project-relative path "
+                                "fragments to boost in the repository ranking."
                             ),
                         ),
                         required=False,
                     ),
                     JsonProperty(
-                        name="hidden",
-                        schema=JsonSchema.boolean(
-                            description=(
-                                "Show dotfiles and dot-directories. Defaults "
-                                "to false. Explicit skip rules still apply."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="limit",
+                        name="max_tokens",
                         schema=JsonSchema.integer(
                             description=(
-                                "Maximum number of entries to emit, excluding "
-                                f"the root line. Defaults to {DEFAULT_LIMIT} "
-                                f"and cannot exceed {MAX_LIMIT}."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="use_default_skips",
-                        schema=JsonSchema.boolean(
-                            description=(
-                                "Apply built-in skips for common dependency, "
-                                "VCS, cache, and build directories. Defaults "
-                                "to true."
+                                "Maximum repository-map size in model tokens. Defaults to "
+                                f"{DEFAULT_MAP_TOKENS} and cannot exceed {MAX_MAP_TOKENS}."
                             ),
                         ),
                         required=False,
@@ -137,9 +83,20 @@ class Tree(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        return self.context.filesystem.execute(
-            "tree",
-            arguments,
+        model_id = self.context.config.model().id
+        focus = arguments.get("focus") or ()
+
+        if not isinstance(focus, list):
+            focus = ()
+
+        return self.context.repo_map.render(
+            model_id=model_id,
+            path=arguments.get("path", "."),
+            focus=focus,
+            max_tokens=arguments.get(
+                "max_tokens",
+                DEFAULT_MAP_TOKENS,
+            ),
         )
 
     @override
@@ -147,20 +104,13 @@ class Tree(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        path = arguments.get("path", ".")
-        parts = [f"path={path}"]
-
-        max_depth = arguments.get("max_depth")
-        if max_depth is not None:
-            parts.append(f"depth={max_depth}")
-
-        if arguments.get("directories_only"):
-            parts.append("dirs-only=true")
-
-        skip = arguments.get("skip")
-        if skip:
-            parts.append(f"skip={len(skip)}")
-
+        parts = [f"path={arguments.get('path', '.')}"]
+        focus = arguments.get("focus")
+        if focus:
+            parts.append(f"focus={len(focus)}")
+        max_tokens = arguments.get("max_tokens")
+        if max_tokens is not None:
+            parts.append(f"max_tokens={max_tokens}")
         return " | ".join(parts)
 
     @override
@@ -169,21 +119,11 @@ class Tree(Tool):
         result: Any,
     ) -> str:
         text = str(result)
-
         if not text:
-            return "empty result"
-
-        lines = text.splitlines()
-
-        # The tree worker appends a summary line after a blank line,
-        # e.g. "3 directories, 5 files" or "2 directories, 1 file, 4 skipped".
-        summary = ""
-        if len(lines) >= 2 and not lines[-1]:
-            summary = lines[-2]
-        elif len(lines) >= 1:
-            summary = lines[-1]
-
-        if summary:
-            return f"{len(lines)} lines | {summary}"
-
-        return f"{len(lines)} lines"
+            return "empty map"
+        files = sum(
+            1
+            for line in text.splitlines()
+            if line and not line.startswith((" ", "\t")) and line.endswith(":")
+        )
+        return f"{files} file(s) | {len(text.splitlines())} lines | {len(text)} chars"

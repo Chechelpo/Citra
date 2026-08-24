@@ -52,6 +52,8 @@ class CitraApplication:
                     startup_timeout=config.lsp.startup_timeout,
                     request_timeout=config.lsp.request_timeout,
                     diagnostics_timeout=config.lsp.diagnostics_timeout,
+                    cold_diagnostics_timeout=config.lsp.cold_diagnostics_timeout,
+                    json_fallback=config.lsp.json_fallback,
                 ),
             )
             self.context = ExecutionContext(

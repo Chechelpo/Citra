@@ -91,6 +91,19 @@ class Materialize(Tool):
             definition=self.DEFINITION,
         )
 
+
+    def is_cacheable(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        return arguments.get("action", "copy") == "preview"
+
+    def invalidates_tool_cache(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        return arguments.get("action", "copy") != "preview"
+
     @override
     def _execute(
         self,

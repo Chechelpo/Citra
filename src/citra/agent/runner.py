@@ -18,6 +18,7 @@ from ..cli.rendering import (
 )
 from ..context import ExecutionContext
 from ..tools.default_registry import TOOL_REGISTRY
+from ..tools.enable_tools import EnableTools
 from ..tools.session_memory import TodoTool
 from ..utils.chat_completions_api import (
     ModelRequestInterrupted,
@@ -49,10 +50,33 @@ class AgentRunner:
 
     def run_turn(self) -> None:
         self.session.begin_turn()
-        prompt:str = build_system_prompt(self.context)
+        prompt: str = build_system_prompt(self.context)
+        core_tool_ids = set(TOOL_REGISTRY.core_tool_ids)
+        enabled_tool_ids: set[str] = set()
+        deferred_catalog = TOOL_REGISTRY.deferred_catalog
+
         while True:
             self.session.flush_steering()
-            tools = TOOL_REGISTRY.instantiate(self.context, self.session)
+
+            # Keep the tool schema order monotonic for prompt-cache locality:
+            # core tools and the loader stay fixed, deferred tools append only.
+            tools = TOOL_REGISTRY.instantiate(
+                self.context,
+                self.session,
+                tool_ids=core_tool_ids,
+            )
+            tools["enable_tools"] = EnableTools(
+                context=self.context,
+                available_tools=deferred_catalog,
+                enabled_tool_ids=enabled_tool_ids,
+            )
+            tools.update(
+                TOOL_REGISTRY.instantiate(
+                    self.context,
+                    self.session,
+                    tool_ids=enabled_tool_ids,
+                )
+            )
 
             model_config = self.context.config.model()
 
@@ -125,7 +149,11 @@ class AgentRunner:
                 result = (
                     _CANCELLED_BY_STEERING
                     if cancel_remaining
-                    else execute_tool_call(tools, tool_call)
+                    else execute_tool_call(
+                        tools,
+                        tool_call,
+                        session=self.session,
+                    )
                 )
                 render_tool_call_result(result)
                 self.session.add_tool_result(call_id, result)

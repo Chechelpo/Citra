@@ -28,6 +28,7 @@ dependencies = [
     "types-jsonschema>=4.26.0.20260518",
     "types-markdown>=3.10.2.20260712",
     "types-openpyxl>=3.1.5.20260807",
+    "grep-ast>=0.8.1"
 ]
 
 [tool.setuptools.packages.find]

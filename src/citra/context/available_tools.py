@@ -6,266 +6,239 @@ from .execution_context import ExecutionContext
 
 
 @dataclass(frozen=True)
-class CommandGroup:
+class CommandCapability:
+    """One useful CLI capability with commands ordered by preference."""
+
     name: str
     commands: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class CommandGroup:
+    name: str
+    capabilities: tuple[CommandCapability, ...]
+
+
 _COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
-        name="Shell / filesystem",
-        commands=(
-            "bash",
-            "sh",
-            "zsh",
-            "fish",
-            "find",
-            "fd",
-            "xargs",
-            "tree",
-            "stat",
-            "file",
-            "realpath",
-            "readlink",
-            "dirname",
-            "basename",
-            "ls",
-            "cp",
-            "mv",
-            "mkdir",
-            "touch",
+        name="Filesystem",
+        capabilities=(
+            CommandCapability("shell", ("bash",)),
+            CommandCapability("list", ("ls",)),
+            CommandCapability("find files", ("fd", "find")),
+            CommandCapability("inspect file", ("file",)),
+            CommandCapability("metadata", ("stat",)),
+            CommandCapability("resolve path", ("realpath", "readlink")),
+            CommandCapability("copy", ("cp",)),
+            CommandCapability("move", ("mv",)),
+            CommandCapability("create directory", ("mkdir",)),
+            CommandCapability("create/update file", ("touch",)),
+            CommandCapability("batch arguments", ("xargs",)),
         ),
     ),
     CommandGroup(
-        name="Text / structured data",
-        commands=(
-            "tree",
-            "rg",
-            "grep",
-            "sed",
-            "awk",
-            "cut",
-            "sort",
-            "uniq",
-            "tr",
-            "head",
-            "tail",
-            "wc",
-            "jq",
-            "yq",
-            "xmllint",
+        name="Text / data",
+        capabilities=(
+            CommandCapability("search text", ("rg", "grep")),
+            CommandCapability("stream editing", ("sed",)),
+            CommandCapability("text processing", ("awk",)),
+            CommandCapability("columns", ("cut",)),
+            CommandCapability("sort", ("sort",)),
+            CommandCapability("deduplicate", ("uniq",)),
+            CommandCapability("translate characters", ("tr",)),
+            CommandCapability("head", ("head",)),
+            CommandCapability("tail", ("tail",)),
+            CommandCapability("count", ("wc",)),
+            CommandCapability("JSON", ("jq",)),
+            CommandCapability("YAML", ("yq",)),
+            CommandCapability("XML", ("xmllint",)),
         ),
     ),
     CommandGroup(
         name="Python",
-        commands=(
-            "python",
-            "python3",
-            "uv",
-            "pip",
-            "pip3",
-            "poetry",
-            "pdm",
-            "pytest",
-            "ruff",
-            "black",
-            "isort",
-            "mypy",
-            "pyright",
-            "tox",
-            "nox",
+        capabilities=(
+            CommandCapability("runtime", ("python", "python3")),
+            CommandCapability("packages", ("uv", "pip", "pip3")),
+            CommandCapability("project manager", ("poetry", "pdm")),
+            CommandCapability("tests", ("pytest",)),
+            CommandCapability("lint", ("ruff",)),
+            CommandCapability("format", ("ruff", "black")),
+            CommandCapability("imports", ("ruff", "isort")),
+            CommandCapability("types", ("pyright", "mypy")),
+            CommandCapability("test environments", ("tox", "nox")),
         ),
     ),
     CommandGroup(
         name="JavaScript / TypeScript",
-        commands=(
-            "node",
-            "npm",
-            "npx",
-            "pnpm",
-            "yarn",
-            "bun",
-            "deno",
-            "tsc",
-            "eslint",
-            "prettier",
-            "vitest",
-            "jest",
-        ),
-    ),
-    CommandGroup(
-        name="Language servers",
-        commands=(
-            "pyright-langserver",
-            "typescript-language-server",
-        ),
-    ),
-    CommandGroup(
-        name="Java / JVM",
-        commands=(
-            "java",
-            "javac",
-            "jar",
-            "jshell",
-            "mvn",
-            "mvnw",
-            "gradle",
-            "gradlew",
-            "kotlinc",
-            "kotlin",
+        capabilities=(
+            CommandCapability("runtime", ("node", "bun", "deno")),
+            CommandCapability("packages", ("pnpm", "npm", "yarn", "bun")),
+            CommandCapability("package execution", ("npx", "pnpm")),
+            CommandCapability("TypeScript", ("tsc",)),
+            CommandCapability("lint", ("eslint",)),
+            CommandCapability("format", ("prettier",)),
+            CommandCapability("tests", ("vitest", "jest")),
         ),
     ),
     CommandGroup(
         name="Rust",
-        commands=(
-            "rustc",
-            "cargo",
-            "rustfmt",
-            "clippy-driver",
+        capabilities=(
+            CommandCapability("toolchain", ("cargo",)),
+            CommandCapability("compiler", ("rustc",)),
+            CommandCapability("format", ("rustfmt",)),
+            CommandCapability("lint", ("clippy-driver",)),
         ),
     ),
     CommandGroup(
         name="Go",
-        commands=(
-            "go",
-            "gofmt",
-            "golangci-lint",
-            "staticcheck",
+        capabilities=(
+            CommandCapability("toolchain", ("go",)),
+            CommandCapability("format", ("gofmt",)),
+            CommandCapability("lint", ("golangci-lint", "staticcheck")),
         ),
     ),
     CommandGroup(
         name="C / C++",
-        commands=(
-            "gcc",
-            "g++",
-            "clang",
-            "clang++",
-            "cc",
-            "c++",
-            "gdb",
-            "lldb",
-            "valgrind",
+        capabilities=(
+            CommandCapability("C compiler", ("clang", "gcc", "cc")),
+            CommandCapability("C++ compiler", ("clang++", "g++", "c++")),
+            CommandCapability("debugger", ("gdb", "lldb")),
+            CommandCapability("memory analysis", ("valgrind",)),
         ),
     ),
     CommandGroup(
-        name="Build systems",
-        commands=(
-            "make",
-            "cmake",
-            "ninja",
-            "meson",
-            "bazel",
-            "buck",
-        ),
-    ),
-    CommandGroup(
-        name="Local databases",
-        commands=(
-            "sqlite3",
+        name="JVM",
+        capabilities=(
+            CommandCapability("Java runtime", ("java",)),
+            CommandCapability("Java compiler", ("javac",)),
+            CommandCapability("Java archive", ("jar",)),
+            CommandCapability("Java REPL", ("jshell",)),
+            CommandCapability("build", ("mvnw", "mvn", "gradlew", "gradle")),
+            CommandCapability("Kotlin compiler", ("kotlinc",)),
+            CommandCapability("Kotlin runtime", ("kotlin",)),
         ),
     ),
     CommandGroup(
         name=".NET",
-        commands=(
-            "dotnet",
-            "msbuild",
-            "csc",
+        capabilities=(
+            CommandCapability("toolchain", ("dotnet",)),
+            CommandCapability("build", ("msbuild",)),
+            CommandCapability("C# compiler", ("csc",)),
         ),
     ),
     CommandGroup(
         name="Ruby",
-        commands=(
-            "ruby",
-            "gem",
-            "bundle",
-            "rake",
-            "rspec",
+        capabilities=(
+            CommandCapability("runtime", ("ruby",)),
+            CommandCapability("packages", ("bundle", "gem")),
+            CommandCapability("tasks", ("rake",)),
+            CommandCapability("tests", ("rspec",)),
         ),
     ),
     CommandGroup(
         name="PHP",
-        commands=(
-            "php",
-            "composer",
-            "phpunit",
+        capabilities=(
+            CommandCapability("runtime", ("php",)),
+            CommandCapability("packages", ("composer",)),
+            CommandCapability("tests", ("phpunit",)),
         ),
     ),
     CommandGroup(
-        name="Swift / Apple",
-        commands=(
-            "swift",
-            "swiftc",
-            "swiftformat",
-            "swiftlint",
-            "xcodebuild",
+        name="Swift",
+        capabilities=(
+            CommandCapability("toolchain", ("swift",)),
+            CommandCapability("compiler", ("swiftc",)),
+            CommandCapability("format", ("swiftformat",)),
+            CommandCapability("lint", ("swiftlint",)),
+            CommandCapability("Xcode build", ("xcodebuild",)),
         ),
     ),
     CommandGroup(
-        name="Compression / archives",
-        commands=(
-            "tar",
-            "zip",
-            "unzip",
-            "gzip",
-            "gunzip",
-            "bzip2",
-            "xz",
-            "7z",
+        name="Build",
+        capabilities=(
+            CommandCapability("Make", ("make",)),
+            CommandCapability("CMake", ("cmake",)),
+            CommandCapability("Ninja", ("ninja",)),
+            CommandCapability("Meson", ("meson",)),
+            CommandCapability("large-project build", ("bazel", "buck")),
+        ),
+    ),
+    CommandGroup(
+        name="Archives",
+        capabilities=(
+            CommandCapability("tar archives", ("tar",)),
+            CommandCapability("zip archives", ("zip",)),
+            CommandCapability("unzip", ("unzip",)),
+            CommandCapability("compression", ("gzip", "xz", "bzip2", "7z")),
+        ),
+    ),
+    CommandGroup(
+        name="Database",
+        capabilities=(
+            CommandCapability("SQLite", ("sqlite3",)),
         ),
     ),
     CommandGroup(
         name="System inspection",
-        commands=(
-            "ps",
-            "top",
-            "htop",
-            "free",
-            "df",
-            "du",
-            "uname",
-            "env",
-            "printenv",
-            "which",
-            "whereis",
-            "lsof",
-            "strace",
+        capabilities=(
+            CommandCapability("processes", ("ps",)),
+            CommandCapability("process monitor", ("htop", "top")),
+            CommandCapability("memory", ("free",)),
+            CommandCapability("filesystem space", ("df",)),
+            CommandCapability("directory size", ("du",)),
+            CommandCapability("system", ("uname",)),
+            CommandCapability("environment", ("printenv", "env")),
+            CommandCapability("locate executable", ("which", "whereis")),
+            CommandCapability("open files", ("lsof",)),
+            CommandCapability("syscall tracing", ("strace",)),
         ),
     ),
 )
+
+
+def _available_command(
+    context: ExecutionContext,
+    capability: CommandCapability,
+) -> str | None:
+    for command in capability.commands:
+        if context.has_command(command):
+            return command
+    return None
 
 
 def get_available_tools(
     context: ExecutionContext,
 ) -> str:
     """
-    Return useful commands available inside the sandboxed Bash
-    execution environment.
+    Return useful command capabilities available inside the sandbox.
 
-    Network-oriented, source-control, and host-control commands are
-    intentionally omitted even if installed on the host.
+    Equivalent utilities are collapsed to the preferred available command so
+    the model is not distracted by redundant choices. Network-oriented,
+    source-control, language-server, and host-control commands are omitted.
     """
     sections: list[str] = [
         (
             "Bash runs without network access. Filesystem writes are "
             "restricted to the active workspace and lifecycle agent "
-            "filesystem. Use the dedicated git tool for Git operations."
+            "filesystem. Use dedicated Citra tools for Git and LSP operations."
         )
     ]
 
     for group in _COMMAND_GROUPS:
-        available = tuple(
-            command
-            for command in group.commands
-            if context.has_command(command)
-        )
+        available: list[str] = []
+        seen_commands: set[str] = set()
 
-        if not available:
-            continue
+        for capability in group.capabilities:
+            command = _available_command(context, capability)
+            if command is None or command in seen_commands:
+                continue
+            seen_commands.add(command)
+            available.append(f"{capability.name}: `{command}`")
 
-        sections.append(
-            f"- **{group.name}:** "
-            + ", ".join(available)
-        )
+        if available:
+            sections.append(
+                f"- **{group.name}:** " + "; ".join(available)
+            )
 
     if len(sections) == 1:
         sections.append(

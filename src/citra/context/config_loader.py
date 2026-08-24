@@ -70,6 +70,8 @@ class LspContextConfig:
     startup_timeout: float = 30.0
     request_timeout: float = 15.0
     diagnostics_timeout: float = 10.0
+    cold_diagnostics_timeout: float = 45.0
+    json_fallback: bool = True
 
 
 @dataclass(frozen=True)
@@ -362,6 +364,18 @@ class CitraConfig:
                         10.0,
                     )
                 ),
+                cold_diagnostics_timeout=float(
+                    lsp_raw.get(
+                        "cold_diagnostics_timeout",
+                        45.0,
+                    )
+                ),
+                json_fallback=bool(
+                    lsp_raw.get(
+                        "json_fallback",
+                        True,
+                    )
+                ),
             )
 
             curl = CurlConfig(
@@ -625,6 +639,7 @@ class CitraConfig:
             lsp.startup_timeout,
             lsp.request_timeout,
             lsp.diagnostics_timeout,
+            lsp.cold_diagnostics_timeout,
         ) <= 0:
             raise ValueError(
                 "All LSP timeout values must be greater than zero."

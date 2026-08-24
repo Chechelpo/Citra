@@ -235,6 +235,11 @@ class WorkspaceChanges:
     def source_is_git_repository(self) -> bool:
         return self.__source_is_git_repository
 
+    @property
+    def materialized_paths(self) -> tuple[str, ...]:
+        """Project-relative source paths currently owned by the workspace."""
+        return tuple(sorted(self.__materialized))
+
     def materialize(
         self,
         pathspecs: Sequence[str],

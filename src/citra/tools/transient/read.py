@@ -15,6 +15,9 @@ _TRUNCATE_LENGTH = 120
 
 
 class Read(Tool):
+    CACHEABLE = True
+    INVALIDATES_TOOL_CACHE = False
+
     """Read literal paths or globs without host-process filesystem I/O."""
 
     MAX_REQUESTS = 20

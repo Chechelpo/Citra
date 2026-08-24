@@ -16,7 +16,7 @@ from .errors import (
     LspServerExited,
     LspTransportError,
 )
-from .protocol import make_notification, make_request, make_response
+from .protocol import make_error_response, make_notification, make_request, make_response
 
 
 NotificationHandler = Callable[[str, Any], None]
@@ -111,15 +111,36 @@ class JsonRpcTransport:
     ) -> None:
         self._send(make_notification(method, params))
 
+    def respond(self, request_id: int | str | None, result: Any) -> None:
+        """Send a JSON-RPC success response to a server request."""
+        self._send(make_response(request_id, result))
+
+    def respond_error(
+        self,
+        request_id: int | str | None,
+        code: int,
+        message: str,
+        data: Any = None,
+    ) -> None:
+        """Send a JSON-RPC error response to a server request."""
+        self._send(make_error_response(request_id, code, message, data))
+
     def close(self) -> None:
-        if self._closed.is_set():
-            return
+        already_closed = self._closed.is_set()
         self._closed.set()
         try:
             self._stdin.close()
         except OSError:
             pass
         self._fail_pending(self._server_exited())
+        if not already_closed:
+            self._reader.join(timeout=0.5)
+            self._stderr_reader.join(timeout=0.5)
+        for stream in (self._stdout, self._stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def _send(self, message: dict[str, Any]) -> None:
         if self._closed.is_set() or self._process.poll() is not None:

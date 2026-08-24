@@ -42,6 +42,63 @@ __all__ = [
 
 ChatMessage = ChatCompletionMessageParam
 
+
+@dataclass(frozen=True)
+class CachedToolResult:
+    generation: int
+    result: str
+
+
+class ToolCallCache:
+    """Turn-local cache for deterministic model-facing tool results."""
+
+    def __init__(self) -> None:
+        self.generation = 0
+        self._entries: dict[str, CachedToolResult] = {}
+
+    def begin_turn(self) -> None:
+        self.generation = 0
+        self._entries.clear()
+
+    def invalidate(self) -> None:
+        self.generation += 1
+
+    def get(
+        self,
+        tool_id: str,
+        arguments: dict[str, object],
+    ) -> CachedToolResult | None:
+        entry = self._entries.get(
+            self._key(tool_id, arguments)
+        )
+        if entry is None or entry.generation != self.generation:
+            return None
+        return entry
+
+    def put(
+        self,
+        tool_id: str,
+        arguments: dict[str, object],
+        result: str,
+    ) -> None:
+        self._entries[self._key(tool_id, arguments)] = CachedToolResult(
+            generation=self.generation,
+            result=result,
+        )
+
+    @staticmethod
+    def _key(
+        tool_id: str,
+        arguments: dict[str, object],
+    ) -> str:
+        encoded = json.dumps(
+            arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return f"{tool_id}:{encoded}"
+
 @dataclass
 class MessageGroup:
     """
@@ -152,11 +209,35 @@ class AgentSession:
         default_factory=FileContext
     )
 
+    tool_cache: ToolCallCache = field(
+        default_factory=ToolCallCache
+    )
+
+    _turn_start_group_index: int = field(
+        default=0,
+        init=False,
+        repr=False,
+    )
+
+    _turn_cache_context_complete: bool = field(
+        default=True,
+        init=False,
+        repr=False,
+    )
+
     def begin_turn(self) -> int:
         """Advance and return the durable conversation turn number."""
         self.turn_number += 1
         self.files.newTurn(self.turn_number)
+        self.tool_cache.begin_turn()
+        self._turn_start_group_index = len(self.message_groups)
+        self._turn_cache_context_complete = True
         return self.turn_number
+
+    @property
+    def can_reuse_tool_cache(self) -> bool:
+        """Whether earlier tool results from this turn remain in model context."""
+        return self._turn_cache_context_complete
 
     def get_messages(self) -> list[ChatMessage]:
         """
@@ -185,6 +266,9 @@ class AgentSession:
             )
 
         if length == 0:
+            self._turn_cache_context_complete = (
+                len(self.message_groups) <= self._turn_start_group_index
+            )
             return []
 
         selected: list[MessageGroup] = []
@@ -209,6 +293,13 @@ class AgentSession:
             used_tokens += tokens
 
         selected.reverse()
+
+        earliest_selected_index = (
+            len(self.message_groups) - len(selected)
+        )
+        self._turn_cache_context_complete = (
+            earliest_selected_index <= self._turn_start_group_index
+        )
 
         return [
             message
@@ -414,6 +505,9 @@ class AgentSession:
         """
         self.message_groups.clear()
         self.steering.clear()
+        self.tool_cache.begin_turn()
+        self._turn_start_group_index = 0
+        self._turn_cache_context_complete = True
 
         if clear_memory:
             self.memory.clear()

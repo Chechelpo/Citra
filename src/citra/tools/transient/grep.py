@@ -13,6 +13,9 @@ _TRUNCATE_LENGTH = 120
 
 
 class Grep(Tool):
+    CACHEABLE = True
+    INVALIDATES_TOOL_CACHE = False
+
     """
     Searches text files using a regular expression.
 

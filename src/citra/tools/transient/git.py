@@ -181,6 +181,19 @@ class Git(Tool):
             definition=self.DEFINITION,
         )
 
+
+    def is_cacheable(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        return arguments.get("action") not in {"clone", "ls_remote"}
+
+    def invalidates_tool_cache(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        return arguments.get("action") == "clone"
+
     @override
     def _execute(
         self,

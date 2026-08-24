@@ -212,18 +212,15 @@ class TestCommand(Command):
             if not server.get("available")
         ]
 
-        if missing:
-            raise RuntimeError(
-                "missing: "
-                + ", ".join(missing)
-                + "; run the lsp status tool for install hints"
-            )
-
         available = [
             str(server.get("id"))
             for server in servers
+            if server.get("available")
         ]
-        return ", ".join(available) or "no adapters configured"
+        detail = f"available: {', '.join(available) or 'none'}"
+        if missing:
+            detail += f"; optional missing: {', '.join(missing)}"
+        return detail
 
     # ------------------------------------------------------------------
     # Command entry point

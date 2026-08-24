@@ -64,10 +64,17 @@ def build_system_prompt(
         else "no"
     )
 
-    initial_source_tree = context.filesystem.execute(
-        "tree",
-        {"path": "@source", "max_depth": 3, "limit": 200},
-    )
+    try:
+        initial_source_structure = context.repo_map.render(
+            model_id=context.config.model().id,
+        )
+    except RuntimeError:
+        # Keep Citra usable during dependency/bootstrap transitions. The model-
+        # facing tree tool will surface the missing grep-ast dependency directly.
+        initial_source_structure = context.filesystem.execute(
+            "tree",
+            {"path": "@source", "max_depth": 3, "limit": 200},
+        )
 
     available_skills = context.skills.format_for_prompt()
     initial_library = (
@@ -109,14 +116,15 @@ The user is a technically proficient developer. Be concise and concrete.
 
 Relative project paths resolve from the agent workspace.
 
-### Initial source structure
+### Repository map
 
 ```text
-{initial_source_tree}
+{initial_source_structure}
 ````
 
-This is an orientation aid for the initial source state, not a permanent
-snapshot. Inspect current state whenever it matters.
+This is a compact structural snapshot ranked from source definitions and
+references. The active workspace overlays the read-only source. Use `tree`
+with `focus` for a task-specific map, and `glob` for raw path discovery.
 
 ### Initial library documents
 
@@ -207,6 +215,7 @@ maintenance rules.
 * Prompt the user only when a material decision cannot reasonably be inferred.
 * Do not stop at diagnosis when the requested task can still be completed.
 * Do not finish while valid TODOs remain.
+* Always prefer specialized tools over plain bash use
 
 ## Working method
 
@@ -237,7 +246,6 @@ Adapt this workflow when a simpler path is sufficient.
 
 Skills contain task-specific operating instructions. You must read skills as soon as you realize they are relevant.
 
-Task-recognition skill is a mandatory read at the start of the project.
 
 ## Completion
 

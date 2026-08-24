@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, cast
 
 from openai.types.chat import (
@@ -10,8 +11,16 @@ from openai.types.chat import (
     ChatCompletionMessageFunctionToolCallParam,
 )
 
-from .session import ChatMessage
+from .session import AgentSession, ChatMessage
 from ..tools.tool import Tool
+
+
+logger = logging.getLogger(__name__)
+
+_CACHE_HIT_TEMPLATE = (
+    "unchanged since previous identical {tool_id} call this turn; "
+    "reuse the earlier result"
+)
 
 
 def get_assistant_message(response: dict[str, Any]) -> ChatCompletionAssistantMessageParam:
@@ -48,6 +57,8 @@ def serialize_tool_result(result: Any) -> str:
 def execute_tool_call(
     tools: dict[str, Tool],
     tool_call: ChatCompletionMessageFunctionToolCallParam,
+    *,
+    session: AgentSession | None = None,
 ) -> str:
     function = tool_call["function"]
     tool_name = function.get("name")
@@ -62,10 +73,50 @@ def execute_tool_call(
         return f"error: invalid tool arguments JSON: {error}"
     if not isinstance(arguments, dict):
         return "error: tool arguments must be a JSON object"
+
+    # Mutating/possibly-mutating tools invalidate before execution. This is
+    # deliberately conservative: a tool may partially mutate state before
+    # failing, and stale cached inspection results are worse than a miss.
+    if session is not None and tool.invalidates_tool_cache(arguments):
+        session.tool_cache.invalidate()
+
+    if session is not None and tool.is_cacheable(arguments):
+        cached = session.tool_cache.get(tool.id, arguments)
+        if cached is not None:
+            logger.info(
+                "[%s] CACHE HIT generation=%d",
+                tool.id,
+                cached.generation,
+            )
+            if session.can_reuse_tool_cache:
+                return _CACHE_HIT_TEMPLATE.format(tool_id=tool.id)
+
+            # The earlier result has fallen out of the selected model context.
+            # Reuse the cached payload rather than executing the tool again.
+            return cached.result
+
     try:
-        return serialize_tool_result(tool.execute(arguments))
+        result = serialize_tool_result(tool.execute(arguments))
+        if tool.MAX_OUTPUT_TOKENS is not None:
+            result = tool.context.truncate_output(
+                result,
+                max_tokens=tool.MAX_OUTPUT_TOKENS,
+            )
     except Exception as error:
         return f"error: {error}"
+
+    if (
+        session is not None
+        and tool.is_cacheable(arguments)
+        and not result.startswith("error:")
+    ):
+        session.tool_cache.put(
+            tool.id,
+            arguments,
+            result,
+        )
+
+    return result
 
 
 __all__ = [

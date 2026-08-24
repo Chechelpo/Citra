@@ -11,6 +11,9 @@ from ..tool import Tool
 
 
 class Glob(Tool):
+    CACHEABLE = True
+    INVALIDATES_TOOL_CACHE = False
+
     """
     Finds filesystem entries matching a glob pattern.
 

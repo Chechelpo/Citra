@@ -221,6 +221,8 @@ def conversation_memory_state(session: Any) -> ConversationMemoryState:
 
 
 class MemoryTool(SessionTool, ABC, Generic[TExtract]):
+    INVALIDATES_TOOL_CACHE = False
+
     def __init__(
         self,
         *,

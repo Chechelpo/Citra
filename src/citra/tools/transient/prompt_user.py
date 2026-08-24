@@ -54,6 +54,8 @@ USER_UNAVAILABLE_MESSAGE = (
 
 
 class PromptUser(Tool):
+    INVALIDATES_TOOL_CACHE = False
+
     """
     Prompts the terminal user for input.
 
