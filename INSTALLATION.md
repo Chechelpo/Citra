@@ -1,3 +1,34 @@
+# Citra installation
+
+## Make `start.sh` executable and add Citra to `PATH`
+
+From the Citra project root:
+
+```bash
+chmod +x start.sh
+```
+
+Create a `citra` command in a directory already on your `PATH`:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf "$(pwd)/start.sh" ~/.local/bin/citra
+```
+
+Ensure `~/.local/bin` is on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+You can then launch Citra from anywhere with:
+
+```bash
+citra
+```
+
+
 ## OpenSERP setup
 
 Create a persistent Docker Compose service:
