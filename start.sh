@@ -35,7 +35,8 @@ SCRIPT_DIR="$(
 )"
 
 CITRA_ROOT="$SCRIPT_DIR/.citra"
-CONFIG_PATH="$CITRA_ROOT/config.toml"
+CONFIG_DIR="$CITRA_ROOT/config"
+LEGACY_CONFIG_PATH="$CITRA_ROOT/config.toml"
 PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
 if [[ ! -x "$PYTHON" ]]; then
@@ -43,8 +44,22 @@ if [[ ! -x "$PYTHON" ]]; then
     exit 1
 fi
 
-if [[ ! -f "$CONFIG_PATH" ]]; then
-    echo "Citra configuration not found: $CONFIG_PATH" >&2
+if [[ -d "$CONFIG_DIR" ]]; then
+    for config_file in tools.toml models.toml; do
+        if [[ ! -f "$CONFIG_DIR/$config_file" ]]; then
+            echo "Citra configuration not found: $CONFIG_DIR/$config_file" >&2
+            exit 1
+        fi
+    done
+    CONFIG_PATH="$CONFIG_DIR"
+elif [[ -f "$LEGACY_CONFIG_PATH" ]]; then
+    # Transitional compatibility for installations that have not yet split
+    # their configuration. New installations should use .citra/config/*.toml.
+    CONFIG_PATH="$LEGACY_CONFIG_PATH"
+    echo "Warning: legacy Citra config detected at $LEGACY_CONFIG_PATH; migrate to $CONFIG_DIR/tools.toml and $CONFIG_DIR/models.toml (with optional $CONFIG_DIR/linting.toml)." >&2
+else
+    echo "Citra configuration directory not found: $CONFIG_DIR" >&2
+    echo "Expected tools.toml and models.toml; linting.toml is optional." >&2
     exit 1
 fi
 

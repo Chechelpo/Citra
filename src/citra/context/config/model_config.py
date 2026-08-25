@@ -55,8 +55,8 @@ class ModelConfig:
 class ModelConfigStore:
     """Load and persist Citra model profiles.
 
-    Canonical configuration uses one persisted active selector plus any number
-    of named profiles::
+    Canonical configuration lives in ``.citra/config/models.toml`` and uses
+    one persisted active selector plus any number of named profiles::
 
         [models]
         active = "primary"
@@ -82,11 +82,14 @@ class ModelConfigStore:
                 "was supplied."
             )
 
-        self.config_path = Path(config_path).resolve()
+        resolved = Path(config_path).resolve()
+        if resolved.is_dir():
+            resolved = resolved / "models.toml"
+        self.config_path = resolved
 
         if not self.config_path.is_file():
             raise FileNotFoundError(
-                f"Citra config file not found: {self.config_path}"
+                f"Citra model config file not found: {self.config_path}"
             )
 
     def _load(self):
@@ -94,7 +97,7 @@ class ModelConfigStore:
             return tomlkit.load(file)
 
     def _save(self, document) -> None:
-        """Atomically replace config.toml."""
+        """Atomically replace the model configuration file."""
         temp_path = self.config_path.with_suffix(
             self.config_path.suffix + ".tmp"
         )

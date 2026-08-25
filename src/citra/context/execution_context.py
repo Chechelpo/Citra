@@ -13,6 +13,7 @@ from citra.utils.managed_subprocess import ManagedSubprocesses
 from citra.utils.repo_map import RepoMap
 from citra.utils.model_tokenizer import tokenize
 from citra.tools.skills.skill_registry import SkillRegistry
+from citra.tools.linting import LintRunner
 
 from .config_loader import CitraConfig
 
@@ -47,6 +48,7 @@ class ExecutionContext:
     __subprocesses: ManagedSubprocesses = field(init=False)
     __browser: BrowserManager = field(init=False)
     __repo_map: RepoMap = field(init=False)
+    __lint_runner: LintRunner = field(init=False)
 
     def __post_init__(
         self,
@@ -85,6 +87,11 @@ class ExecutionContext:
             request_timeout=config.browser.request_timeout,
         )
         repo_map = RepoMap(self.workspace)
+        lint_runner = LintRunner(
+            self.workspace,
+            sandbox,
+            config.lint,
+        )
 
         object.__setattr__(
             self,
@@ -119,6 +126,11 @@ class ExecutionContext:
             self,
             "_ExecutionContext__repo_map",
             repo_map,
+        )
+        object.__setattr__(
+            self,
+            "_ExecutionContext__lint_runner",
+            lint_runner,
         )
 
     @property
@@ -253,14 +265,39 @@ class ExecutionContext:
         if manager is None:
             return None
 
+        collect = getattr(
+            manager,
+            "diagnostics_for_path",
+            None,
+        )
+        if not callable(collect):
+            return None
+
         try:
-            return manager.diagnostics_for_path(
+            result = collect(
                 path_raw,
                 filesystem=self.filesystem,
             )
+            return result if isinstance(result, str) else None
         except Exception:
             self.logger.exception(
                 "Could not collect LSP diagnostics for %s",
+                path_raw,
+            )
+            return None
+
+    def lint_for_path(
+        self,
+        path_raw: str,
+    ) -> str | None:
+        """Return configured lint failures for a modified project path."""
+        try:
+            return self.__lint_runner.lint_for_path(
+                path_raw
+            )
+        except Exception:
+            self.logger.exception(
+                "Could not run configured lint checks for %s",
                 path_raw,
             )
             return None

@@ -154,10 +154,17 @@ as narrow as practical.
 
 ## Diagnostics and verification
 
-After modifying source code, run relevant diagnostics when available.
+After modifying source code, treat the automatic post-edit verification as a
+required feedback loop. `edit` and `write` run available language-server
+diagnostics and every configured project lint rule automatically.
 
 Treat new errors and warnings as evidence to investigate rather than suppressing
 them without understanding the cause.
+
+When a configured lint rule reports a violation caused by your change, fix the
+violation before considering the edit complete unless the user's task explicitly
+requires behavior that conflicts with that repository rule. Do not disable,
+weaken, or bypass project lint configuration merely to make a change pass.
 
 Diagnostics complement execution; they do not replace tests, builds,
 type-checkers, compilers, or runtime verification when those materially verify

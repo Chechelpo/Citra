@@ -6,8 +6,14 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import tomllib
+from typing import Any
 
 from .config import ModelConfigStore
+
+
+TOOLS_CONFIG_FILE = "tools.toml"
+MODELS_CONFIG_FILE = "models.toml"
+LINTING_CONFIG_FILE = "linting.toml"
 
 @dataclass(frozen=True)
 class RetryConfig:
@@ -72,6 +78,23 @@ class LspContextConfig:
     diagnostics_timeout: float = 10.0
     cold_diagnostics_timeout: float = 45.0
     json_fallback: bool = True
+
+
+@dataclass(frozen=True)
+class LintRuleConfig:
+    name: str
+    command: tuple[str, ...]
+    include: tuple[str, ...] = ("**/*",)
+    exclude: tuple[str, ...] = ()
+    cwd: str = "."
+
+
+@dataclass(frozen=True)
+class LintContextConfig:
+    enabled: bool = True
+    timeout: int = 30
+    max_output_length: int = 20_000
+    rules: tuple[LintRuleConfig, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -153,10 +176,15 @@ class SandboxContextConfig:
 
 @dataclass(frozen=True)
 class CitraConfig:
-    """
-    Loads the config.toml file wherever it is
-    (default: .citra/config.toml). Expects config-template.toml format,
-    declared at root.
+    """Load Citra configuration.
+
+    Canonical configuration is split beneath ``.citra/config`` into
+    required ``tools.toml`` and ``models.toml`` files, plus optional
+    ``linting.toml`` global lint fallback policy.
+    ``CITRA_CONFIG_PATH`` therefore normally points at that directory.
+
+    A path to the historical single-file configuration remains supported for
+    backwards compatibility.
     """
 
     model_config_store: ModelConfigStore
@@ -169,6 +197,7 @@ class CitraConfig:
     notifications: NotificationConfig = NotificationConfig()
     curl: CurlConfig = CurlConfig()
     lsp: LspContextConfig = LspContextConfig()
+    lint: LintContextConfig = LintContextConfig()
     sandbox: SandboxContextConfig = SandboxContextConfig()
 
     @classmethod
@@ -185,17 +214,98 @@ class CitraConfig:
             config_path_raw
         ).resolve()
     
+    @staticmethod
+    def _read_toml(path: Path) -> dict[str, Any]:
+        with path.open("rb") as file:
+            raw = tomllib.load(file)
+        if not isinstance(raw, dict):
+            raise ValueError(f"Citra config must be a TOML table: {path}")
+        return raw
+
     @classmethod
-    def load(cls) -> CitraConfig:
-        config_path:Path = CitraConfig._config_path()
-        
-        if not config_path.is_file():
+    def _load_raw_config(
+        cls,
+        config_path: Path,
+    ) -> tuple[dict[str, Any], Path]:
+        """Return the effective config and the file owned by model storage."""
+        if config_path.is_file():
+            # Historical one-file layout. Keep this readable so callers that
+            # explicitly provide a legacy path do not regress.
+            return cls._read_toml(config_path), config_path
+
+        if not config_path.exists():
             raise FileNotFoundError(
-                f"Citra config file not found: {config_path}"
+                f"Citra config path not found: {config_path}"
+            )
+        if not config_path.is_dir():
+            raise NotADirectoryError(
+                f"Citra config path is neither a file nor directory: {config_path}"
             )
 
-        with config_path.open("rb") as file:
-            raw = tomllib.load(file)
+        tools_path = config_path / TOOLS_CONFIG_FILE
+        models_path = config_path / MODELS_CONFIG_FILE
+        linting_path = config_path / LINTING_CONFIG_FILE
+        for required in (tools_path, models_path):
+            if not required.is_file():
+                raise FileNotFoundError(
+                    f"Citra config file not found: {required}"
+                )
+
+        tools_raw = cls._read_toml(tools_path)
+        models_raw = cls._read_toml(models_path)
+        linting_raw = (
+            cls._read_toml(linting_path)
+            if linting_path.is_file()
+            else {}
+        )
+
+        misplaced_tools = {"model", "models", "lint"}.intersection(tools_raw)
+        if misplaced_tools:
+            raise ValueError(
+                f"{TOOLS_CONFIG_FILE} contains section(s) that belong in "
+                f"another config file: {', '.join(sorted(misplaced_tools))}"
+            )
+
+        model_keys = set(models_raw)
+        if not model_keys or not model_keys.issubset({"model", "models"}):
+            unexpected = sorted(model_keys - {"model", "models"})
+            detail = (
+                f" Unexpected root section(s): {', '.join(unexpected)}."
+                if unexpected
+                else ""
+            )
+            raise ValueError(
+                f"{MODELS_CONFIG_FILE} must contain only [models] "
+                f"(or legacy [model]).{detail}"
+            )
+
+        linting_keys = set(linting_raw)
+        if not linting_keys.issubset({"lint"}):
+            unexpected = sorted(linting_keys - {"lint"})
+            raise ValueError(
+                f"{LINTING_CONFIG_FILE} must contain only [lint]. "
+                f"Unexpected root section(s): {', '.join(unexpected)}"
+            )
+
+        merged = dict(tools_raw)
+        for source_name, source in (
+            (MODELS_CONFIG_FILE, models_raw),
+            (LINTING_CONFIG_FILE, linting_raw),
+        ):
+            duplicate = set(merged).intersection(source)
+            if duplicate:
+                raise ValueError(
+                    f"Duplicate Citra config section(s) while loading "
+                    f"{source_name}: {', '.join(sorted(duplicate))}"
+                )
+            merged.update(source)
+
+        return merged, models_path
+
+    @classmethod
+    def load(cls) -> CitraConfig:
+        config_path: Path = CitraConfig._config_path()
+        raw, models_config_path = cls._load_raw_config(config_path)
 
         try:
             if "model" not in raw and "models" not in raw:
@@ -210,6 +320,11 @@ class CitraConfig:
 
             lsp_raw = raw.get(
                 "lsp",
+                {},
+            )
+
+            lint_raw = raw.get(
+                "lint",
                 {},
             )
 
@@ -246,6 +361,11 @@ class CitraConfig:
             if not isinstance(lsp_raw, dict):
                 raise ValueError(
                     "'lsp' must be a TOML table."
+                )
+
+            if not isinstance(lint_raw, dict):
+                raise ValueError(
+                    "'lint' must be a TOML table."
                 )
 
             if not isinstance(curl_raw, dict):
@@ -314,7 +434,7 @@ class CitraConfig:
                 )
 
             model = ModelConfigStore(
-                config_path=config_path
+                config_path=models_config_path
             )
             # Validate the active profile at load time so malformed model
             # configuration fails before the application starts.
@@ -375,6 +495,130 @@ class CitraConfig:
                         True,
                     )
                 ),
+            )
+
+            lint_rules_raw = lint_raw.get(
+                "rules",
+                [],
+            )
+            if not isinstance(lint_rules_raw, list):
+                raise ValueError(
+                    "'lint.rules' must be an array of tables."
+                )
+
+            lint_rules: list[LintRuleConfig] = []
+            lint_rule_names: set[str] = set()
+            for index, lint_rule_raw in enumerate(lint_rules_raw):
+                section = f"lint.rules[{index}]"
+                if not isinstance(lint_rule_raw, dict):
+                    raise ValueError(
+                        f"'{section}' must be a TOML table."
+                    )
+
+                name = lint_rule_raw.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(
+                        f"'{section}.name' must be a non-empty string."
+                    )
+                name = name.strip()
+                if name in lint_rule_names:
+                    raise ValueError(
+                        f"Duplicate lint rule name: {name}"
+                    )
+                lint_rule_names.add(name)
+
+                command_raw = lint_rule_raw.get("command")
+                if (
+                    not isinstance(command_raw, list)
+                    or not command_raw
+                    or not all(
+                        isinstance(argument, str) and argument
+                        for argument in command_raw
+                    )
+                ):
+                    raise ValueError(
+                        f"'{section}.command' must be a non-empty array of non-empty strings."
+                    )
+
+                include = string_tuple(
+                    lint_rule_raw,
+                    section=section,
+                    name="include",
+                    default=("**/*",),
+                )
+                if not include:
+                    raise ValueError(
+                        f"'{section}.include' must contain at least one pattern."
+                    )
+                if not all(pattern.strip() for pattern in include):
+                    raise ValueError(
+                        f"'{section}.include' cannot contain empty patterns."
+                    )
+
+                exclude = string_tuple(
+                    lint_rule_raw,
+                    section=section,
+                    name="exclude",
+                    default=(),
+                )
+                if not all(pattern.strip() for pattern in exclude):
+                    raise ValueError(
+                        f"'{section}.exclude' cannot contain empty patterns."
+                    )
+                cwd = lint_rule_raw.get("cwd", ".")
+                if not isinstance(cwd, str) or not cwd.strip():
+                    raise ValueError(
+                        f"'{section}.cwd' must be a non-empty string."
+                    )
+
+                lint_rules.append(
+                    LintRuleConfig(
+                        name=name,
+                        command=tuple(command_raw),
+                        include=include,
+                        exclude=exclude,
+                        cwd=cwd,
+                    )
+                )
+
+            lint_enabled_raw = lint_raw.get(
+                "enabled",
+                True,
+            )
+            if not isinstance(lint_enabled_raw, bool):
+                raise ValueError(
+                    "'lint.enabled' must be a boolean."
+                )
+
+            lint_timeout_raw = lint_raw.get(
+                "timeout",
+                30,
+            )
+            if (
+                not isinstance(lint_timeout_raw, int)
+                or isinstance(lint_timeout_raw, bool)
+            ):
+                raise ValueError(
+                    "'lint.timeout' must be an integer."
+                )
+
+            lint_output_limit_raw = lint_raw.get(
+                "max_output_length",
+                20_000,
+            )
+            if (
+                not isinstance(lint_output_limit_raw, int)
+                or isinstance(lint_output_limit_raw, bool)
+            ):
+                raise ValueError(
+                    "'lint.max_output_length' must be an integer."
+                )
+
+            lint = LintContextConfig(
+                enabled=lint_enabled_raw,
+                timeout=lint_timeout_raw,
+                max_output_length=lint_output_limit_raw,
+                rules=tuple(lint_rules),
             )
 
             curl = CurlConfig(
@@ -645,6 +889,14 @@ class CitraConfig:
             )
 
         if min(
+            lint.timeout,
+            lint.max_output_length,
+        ) <= 0:
+            raise ValueError(
+                "All lint limits must be greater than zero."
+            )
+
+        if min(
             curl.permission_timeout,
             curl.default_timeout,
             curl.max_timeout,
@@ -695,6 +947,7 @@ class CitraConfig:
             notifications=notifications,
             curl=curl,
             lsp=lsp,
+            lint=lint,
             sandbox=sandbox,
         )
   

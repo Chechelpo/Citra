@@ -8,6 +8,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ._post_edit import post_edit_result
 
 _TRUNCATE_LENGTH = 120
 
@@ -27,7 +28,9 @@ class Edit(Tool):
                 "Files may only be modified inside the active workspace "
                 "or temporary agent filesystem. By default the old text "
                 "must occur exactly once, preventing ambiguous edits. "
-                "Set all=true only when every occurrence should be replaced."
+                "Set all=true only when every occurrence should be replaced. "
+                "After a successful edit, Citra automatically runs available "
+                "LSP diagnostics and configured project lint checks."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -84,8 +87,9 @@ class Edit(Tool):
                         name="diagnostics",
                         schema=JsonSchema.boolean(
                             description=(
-                                "Run LSP diagnostics after a successful edit. "
-                                "Defaults to true."
+                                "Deprecated compatibility flag. LSP diagnostics "
+                                "and configured lint checks run automatically "
+                                "after every successful edit."
                             ),
                         ),
                         required=False,
@@ -122,22 +126,10 @@ class Edit(Tool):
 
         if result != "ok":
             return result
-        diagnose:bool | None = arguments.get("diagnostics")
 
-        if diagnose is False:
-            return "ok"
-
-        diagnostics = self.context.diagnostics_for_path(
+        return post_edit_result(
+            self.context,
             arguments["path"],
-        )
-
-        if diagnostics is None:
-            return "ok"
-
-        return (
-            "ok\n\n"
-            "LSP diagnostics after edit:\n"
-            f"{diagnostics}"
         )
 
     @override

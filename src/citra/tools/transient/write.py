@@ -8,6 +8,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ._post_edit import post_edit_result
 
 
 class Write(Tool):
@@ -27,7 +28,9 @@ class Write(Tool):
                 "to the isolated agent workspace and lifecycle agent "
                 "filesystem. @source is read-only. "
                 "Use edit instead when only a specific existing fragment "
-                "should be changed."
+                "should be changed. After a successful write, Citra "
+                "automatically runs available LSP diagnostics and configured "
+                "project lint checks."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -52,8 +55,9 @@ class Write(Tool):
                         name="diagnostics",
                         schema=JsonSchema.boolean(
                             description=(
-                                "Run LSP diagnostics after a successful write. "
-                                "Defaults to true."
+                                "Deprecated compatibility flag. LSP diagnostics "
+                                "and configured lint checks run automatically "
+                                "after every successful write."
                             ),
                         ),
                         required=False,
@@ -91,21 +95,9 @@ class Write(Tool):
         if result != "ok":
             return result
 
-        diagnose: bool | None = arguments.get("diagnostics")
-        if diagnose is False:
-            return "ok"
-
-        diagnostics = self.context.diagnostics_for_path(
+        return post_edit_result(
+            self.context,
             arguments["path"],
-        )
-
-        if diagnostics is None:
-            return "ok"
-
-        return (
-            "ok\n\n"
-            "LSP diagnostics after write:\n"
-            f"{diagnostics}"
         )
 
     @override

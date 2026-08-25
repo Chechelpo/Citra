@@ -426,7 +426,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                     self.assertEqual(edited, "ok", definition.id)
                     self.assertEqual(path.read_text(encoding="utf-8"), "after\n")
 
-    def test_edit_and_write_diagnostics_remain_opt_in(self):
+    def test_edit_and_write_diagnostics_run_automatically(self):
         EditTool = _load_transient_tool("edit", "Edit")
         WriteTool = _load_transient_tool("write", "Write")
         with tempfile.TemporaryDirectory() as td:
@@ -434,7 +434,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             filesystem = _MutatingFilesystem()
             calls: list[str] = []
             context = SimpleNamespace(filesystem=filesystem)
-            context.diagnostics_for_path = lambda raw: calls.append(raw) or "diag"
+            context.diagnostics_for_path = lambda raw: calls.append(raw) or None
             edit_tool = EditTool(context)
             write_tool = WriteTool(context)
             path = workspace.workspace / "sample.py"
@@ -447,7 +447,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                 write_tool._execute({"path": str(path), "content": "after\n"}),
                 "ok",
             )
-            self.assertEqual(calls, [])
+            self.assertEqual(calls, [str(path), str(path)])
 
     def test_manager_close_terminates_language_server_processes(self):
         with tempfile.TemporaryDirectory() as td:

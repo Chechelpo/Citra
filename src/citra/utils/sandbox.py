@@ -83,7 +83,8 @@ EXTRA_DEVICE_BINDS: tuple[str, ...] = ()
 # mount after /home is masked. Mounting src, .venv, and support directories
 # independently proved fragile. The operator configuration is masked again
 # after the installation mount.
-CITRA_PRIVATE_CONFIG_FILE = "config.toml"
+CITRA_CONFIG_DIRECTORY = "config"
+CITRA_LEGACY_PRIVATE_CONFIG_FILE = "config.toml"
 
 # If PATH contains executable directories beneath a masked host tree (for
 # example ~/.local/bin or ~/.cargo/bin), expose exactly those PATH directories
@@ -1135,16 +1136,33 @@ class WorkspaceSandbox:
 
     @staticmethod
     def _citra_private_config_files() -> tuple[Path, ...]:
+        """Return every operator config file that must be hidden in sandboxes."""
         configured = os.environ.get("CITRA_CONFIG_PATH")
         if configured:
-            return (Path(configured).expanduser().resolve(),)
+            configured_path = Path(configured).expanduser().resolve()
+            if configured_path.is_dir():
+                return tuple(
+                    sorted(
+                        path.resolve()
+                        for path in configured_path.glob("*.toml")
+                        if path.is_file()
+                    )
+                )
+            return (configured_path,)
 
         state_root = os.environ.get("CITRA_ROOT")
         if state_root:
-            return (
-                Path(state_root).expanduser().resolve()
-                / CITRA_PRIVATE_CONFIG_FILE,
-            )
+            root = Path(state_root).expanduser().resolve()
+            config_dir = root / CITRA_CONFIG_DIRECTORY
+            if config_dir.is_dir():
+                return tuple(
+                    sorted(
+                        path.resolve()
+                        for path in config_dir.glob("*.toml")
+                        if path.is_file()
+                    )
+                )
+            return (root / CITRA_LEGACY_PRIVATE_CONFIG_FILE,)
 
         raise RuntimeError(
             "CITRA_CONFIG_PATH and CITRA_ROOT are not defined. "
