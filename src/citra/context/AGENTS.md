@@ -36,10 +36,13 @@ prohibit normal assignment.
 
 Configuration uses frozen dataclasses, including:
 
-- **`ModelConfig` / `ModelConfigStore`** — model identity, limits, reasoning,
-  and retry policy. `ModelConfigStore` (from `config/model_config.py`) loads
-  and persists the active model section; `CitraConfig.model()` returns the
-  resolved `ModelConfig`.
+- **`ModelConfig` / `ModelConfigStore`** — named model profiles containing
+  provider identity, limits, reasoning, credentials, and retry policy. The
+  canonical TOML layout is `[models]` with one persisted `active` profile and
+  any number of `[models.<name>]` tables. `CitraConfig.model()` resolves the
+  active profile, while `CitraConfig.model(name)` resolves an explicit profile.
+  Legacy single `[model]` files remain readable and migrate when a multi-profile
+  operation requires the canonical layout.
 - **`RetryConfig`** — attempts, request timeout, and backoff bounds.
 - **`WebSearchConfig`** — `host_url`.
 - **`WorkspaceContextConfig`** — source and temporary-root selection.

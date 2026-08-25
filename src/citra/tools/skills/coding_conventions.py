@@ -23,10 +23,10 @@ class CodingConventions(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
-        return __PROMPT
+        return _PROMPT
 
 
-__PROMPT: str = """
+_PROMPT: str = """
 # Coding conventions
 
 These conventions apply across languages unless the project already establishes

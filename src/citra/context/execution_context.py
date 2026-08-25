@@ -11,7 +11,7 @@ from citra.utils.sandboxed_filesystem import SandboxedFilesystem
 from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
 from citra.utils.repo_map import RepoMap
-from citra.utils.tokenize import tokenize
+from citra.utils.model_tokenizer import tokenize
 from citra.tools.skills.skill_registry import SkillRegistry
 
 from .config_loader import CitraConfig

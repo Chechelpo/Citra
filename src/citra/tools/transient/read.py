@@ -56,14 +56,8 @@ class Read(Tool):
         function=FunctionDefinition(
             name="read",
             description=(
-                "Read one or more files visible inside Citra's filesystem sandbox and "
-                "return line-numbered text. Literal paths and recursive glob "
-                "patterns are supported. Relative paths resolve from the "
-                "persistent agent workspace; @source addresses the original "
-                "read-only project and @tmp addresses disposable storage. "
-                "Use requests for a batch with independent offsets/limits. "
-                "At most 20 concrete files are returned per call. PDF and "
-                "notebook conversion also occurs inside the sandbox."
+                "Read exact file contents and implementations. "
+                "Use tree for discovery and structure."
             ),
             parameters=JsonSchema.object(
                 properties=(

@@ -11,6 +11,7 @@ from .model import ModelCommand
 from .lsp import LspCommand
 from .clear import ClearCommand
 from .command import CommandRegistry
+from .debug import DebugCommand
 from .help import HelpCommand
 from .quit import QuitCommand
 from .test import TestCommand
@@ -24,3 +25,4 @@ COMMAND_REGISTRY.register("help", HelpCommand)
 COMMAND_REGISTRY.register("test", TestCommand)
 COMMAND_REGISTRY.register("model", ModelCommand)
 COMMAND_REGISTRY.register("lsp", LspCommand)
+COMMAND_REGISTRY.register("debug", DebugCommand)

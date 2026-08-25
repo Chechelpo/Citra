@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any, Iterable
 
-from citra.utils.tokenize import tokenize
+from citra.utils.model_tokenizer import tokenize
 
 if TYPE_CHECKING:
     from citra.context.turn_workspace import WorkspaceContext
@@ -149,8 +149,12 @@ class RepoMap:
                 f"max_tokens cannot exceed {MAX_MAP_TOKENS}"
             )
 
-        subtree = self._normalize_subtree(path)
-        effective_files = self._effective_files(subtree)
+        tmp_subtree = self._normalize_tmp_subtree(path)
+        if tmp_subtree is not None:
+            effective_files = self._tmp_files(tmp_subtree)
+        else:
+            subtree = self._normalize_subtree(path)
+            effective_files = self._effective_files(subtree)
 
         if not effective_files:
             return "No source files found. Use glob for raw path discovery."
@@ -192,6 +196,25 @@ class RepoMap:
             max_tokens=max_tokens,
         )
 
+    def _normalize_tmp_subtree(
+        self,
+        raw: str,
+    ) -> PurePosixPath | None:
+        value = raw.strip() or "."
+        if value == "@tmp":
+            return PurePosixPath(".")
+        if not value.startswith("@tmp/"):
+            return None
+
+        candidate = PurePosixPath(
+            value[len("@tmp/"):] or "."
+        )
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError(
+                "tree @tmp path must stay within @tmp"
+            )
+        return candidate
+
     def _normalize_subtree(self, raw: str) -> PurePosixPath:
         value = raw.strip() or "."
         if value.startswith("@source/"):
@@ -205,6 +228,53 @@ class RepoMap:
                 "tree path must be a project-relative subtree"
             )
         return candidate
+
+    def _tmp_files(
+        self,
+        subtree: PurePosixPath,
+    ) -> dict[str, Path]:
+        root = self.workspace.tmp
+        target = (root / subtree.as_posix()).resolve()
+
+        try:
+            target.relative_to(root.resolve())
+        except (OSError, ValueError):
+            raise ValueError(
+                "tree @tmp path must stay within @tmp"
+            ) from None
+
+        if target.is_file():
+            if not self._safe_regular_file(target, root):
+                return {}
+            relative = target.relative_to(root.resolve()).as_posix()
+            if self._skip_relative(relative):
+                return {}
+            return {f"@tmp/{relative}": target}
+
+        if not target.is_dir():
+            return {}
+
+        files: dict[str, Path] = {}
+        for directory, dirnames, filenames in os.walk(target):
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name not in _SKIP_DIRECTORIES
+            ]
+            base = Path(directory)
+            for filename in filenames:
+                physical = base / filename
+                if not self._safe_regular_file(physical, root):
+                    continue
+                try:
+                    relative = physical.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                if self._skip_relative(relative):
+                    continue
+                files[f"@tmp/{relative}"] = physical
+
+        return dict(sorted(files.items()))
 
     def _effective_files(
         self,

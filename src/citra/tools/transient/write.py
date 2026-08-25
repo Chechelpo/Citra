@@ -53,7 +53,7 @@ class Write(Tool):
                         schema=JsonSchema.boolean(
                             description=(
                                 "Run LSP diagnostics after a successful write. "
-                                "Defaults to false."
+                                "Defaults to true."
                             ),
                         ),
                         required=False,
@@ -91,7 +91,8 @@ class Write(Tool):
         if result != "ok":
             return result
 
-        if not arguments.get("diagnostics", False):
+        diagnose: bool | None = arguments.get("diagnostics")
+        if diagnose is False:
             return "ok"
 
         diagnostics = self.context.diagnostics_for_path(

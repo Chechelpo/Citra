@@ -386,6 +386,8 @@ Choose a concise logical filename and a descriptive title, then establish a
 useful section structure early instead of writing the entire document into one
 section.
 
+Prefer using sections within existing documents over creating new ones
+
 ## Removing content
 
 Removing a section can also remove its indexed descendant subtree.

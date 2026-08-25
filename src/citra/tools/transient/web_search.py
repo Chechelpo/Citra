@@ -75,7 +75,6 @@ class WebSearch(Tool):
     """
 
     DEFAULT_ENGINES = (
-        "bing",
         "duckduckgo",
         "google",
     )
@@ -1754,7 +1753,6 @@ class WebSearch(Tool):
     ) -> str | None:
         try:
             raw = error.read()
-
         except Exception:
             return (
                 str(error.reason)
@@ -1770,10 +1768,7 @@ class WebSearch(Tool):
             )
 
         try:
-            payload = json.loads(
-                raw
-            )
-
+            payload = json.loads(raw)
         except (
             json.JSONDecodeError,
             UnicodeDecodeError,
@@ -1782,7 +1777,6 @@ class WebSearch(Tool):
                 "utf-8",
                 errors="replace",
             ).strip()
-
             return (
                 WebSearch._truncate(
                     text,
@@ -1801,28 +1795,48 @@ class WebSearch(Tool):
                 500,
             )
 
-        reason = payload.get(
-            "reason"
-        )
+        parts: list[str] = []
 
+        reason = payload.get("reason")
         message = (
             payload.get("message")
             or payload.get("error")
         )
 
-        if reason and message:
-            return (
-                f"{reason}: {message}"
-            )
-
         if reason:
-            return str(
-                reason
+            parts.append(
+                str(reason)
             )
 
-        if message:
-            return str(
-                message
+        if (
+            message
+            and str(message) != str(reason)
+        ):
+            parts.append(
+                str(message)
+            )
+
+        meta = payload.get("meta")
+        if isinstance(
+            meta,
+            dict,
+        ):
+            engine_errors = meta.get(
+                "engine_errors"
+            )
+            if engine_errors:
+                parts.append(
+                    "engine_errors="
+                    + json.dumps(
+                        engine_errors,
+                        ensure_ascii=False,
+                    )
+                )
+
+        if parts:
+            return WebSearch._truncate(
+                ": ".join(parts),
+                2000,
             )
 
         return WebSearch._truncate(
@@ -1832,7 +1846,6 @@ class WebSearch(Tool):
             ),
             500,
         )
-
     @staticmethod
     def _display_query(
         query: str,

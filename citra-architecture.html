@@ -1,0 +1,2161 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Citra Document">
+    <title>Citra: Architecture and Codebase Guide</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --background: #ffffff;
+            --sidebar-background: #f6f8fa;
+            --text: #1f2328;
+            --muted: #656d76;
+            --border: #d0d7de;
+            --accent: #0969da;
+            --accent-soft: #ddf4ff;
+            --code-background: #f6f8fa;
+        }
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --background: #0d1117;
+            --sidebar-background: #161b22;
+            --text: #e6edf3;
+            --muted: #8b949e;
+            --border: #30363d;
+            --accent: #58a6ff;
+            --accent-soft: #13233a;
+            --code-background: #161b22;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                color-scheme: dark;
+                --background: #0d1117;
+                --sidebar-background: #161b22;
+                --text: #e6edf3;
+                --muted: #8b949e;
+                --border: #30363d;
+                --accent: #58a6ff;
+                --accent-soft: #13233a;
+                --code-background: #161b22;
+            }
+        }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; background: var(--background); }
+        body {
+            margin: 0;
+            color: var(--text);
+            background: var(--background);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+                BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-size: 16px;
+            line-height: 1.65;
+        }
+        a { color: var(--accent); }
+        .page {
+            display: grid;
+            grid-template-columns: minmax(230px, 300px) minmax(0, 920px);
+            gap: 56px;
+            width: min(1320px, 100%);
+            margin: 0 auto;
+            padding: 44px 32px 72px;
+        }
+        .sidebar {
+            position: sticky;
+            top: 24px;
+            align-self: start;
+            max-height: calc(100vh - 48px);
+            overflow-y: auto;
+            padding: 22px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--sidebar-background);
+        }
+        .document-title { margin: 0 0 8px; font-size: 1.45rem; }
+        .versioning {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 26px;
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+        .versioning-label { font-weight: 650; }
+        .versioning-empty { font-style: italic; }
+        .contents-title {
+            margin: 0 0 10px;
+            color: var(--muted);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+        }
+        .document-index, .document-index ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .document-index ul {
+            margin: 5px 0 5px 12px;
+            padding-left: 12px;
+            border-left: 1px solid var(--border);
+        }
+        .document-index a {
+            display: block;
+            padding: 5px 7px;
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.9rem;
+            text-decoration: none;
+            overflow-wrap: anywhere;
+        }
+        .document-index a:hover,
+        .document-index a.active {
+            background: var(--accent-soft);
+            color: var(--accent);
+        }
+        main { min-width: 0; padding-top: 4px; }
+        .document-section {
+            scroll-margin-top: 24px;
+            margin: 0 0 58px;
+            padding: 0 0 52px;
+            border-bottom: 1px solid var(--border);
+        }
+        .section-header { margin-bottom: 20px; }
+        .section-heading-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .section-heading-row-single { gap: 0; }
+        .section-toggle {
+            flex: none;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--sidebar-background);
+            color: var(--muted);
+            font-size: 1rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+        .section-toggle:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .document-section.descendant-hidden,
+        .document-section.search-hidden,
+        .document-index li.nav-hidden {
+            display: none;
+        }
+        .search-box {
+            display: block;
+            margin-bottom: 8px;
+        }
+        .search-label {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--muted);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--background);
+            color: var(--text);
+            font-size: 0.88rem;
+        }
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .search-status {
+            margin-bottom: 10px;
+            color: var(--accent);
+            font-size: 0.8rem;
+        }
+        .breadcrumb {
+            margin-bottom: 7px;
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+        pre {
+            max-width: 100%;
+            overflow-x: auto;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--code-background);
+        }
+        code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
+                Consolas, "Liberation Mono", monospace;
+            font-size: 0.9em;
+        }
+        table {
+            display: block;
+            width: max-content;
+            max-width: 100%;
+            overflow-x: auto;
+            border-spacing: 0;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            text-align: left;
+            vertical-align: top;
+        }
+        img { max-width: 100%; height: auto; }
+        .sidebar-heading-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        #theme-toggle {
+            flex: none;
+            margin-top: 4px;
+            padding: 4px 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--background);
+            color: var(--muted);
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+        #theme-toggle:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        /* Mermaid SVGs are rendered with a fixed light theme; recolor them
+           in dark mode so black strokes stay visible. */
+        :root[data-theme="dark"] .section-body img[src$=".svg"] {
+            filter: invert(0.92) hue-rotate(180deg);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) .section-body img[src$=".svg"] {
+                filter: invert(0.92) hue-rotate(180deg);
+            }
+        }
+        .back-to-top {
+            display: inline-block;
+            margin-top: 28px;
+            color: var(--muted);
+            font-size: 0.8rem;
+            text-decoration: none;
+        }
+        @media (max-width: 820px) {
+            .page { display: block; padding: 22px 18px 48px; }
+            .sidebar { position: static; max-height: none; margin-bottom: 42px; }
+        }
+        @media print {
+            .page { display: block; width: 100%; padding: 0; }
+            .sidebar { position: static; max-height: none; border: 0; padding: 0; }
+            .back-to-top { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page" id="document-top">
+        <aside class="sidebar" aria-label="Document contents">
+            <div class="sidebar-heading-row">
+                <h1 class="document-title">Citra: Architecture and Codebase Guide</h1>
+                <button
+                    type="button"
+                    id="theme-toggle"
+                    aria-label="Color theme: Auto"
+                >Theme: Auto</button>
+            </div>
+            <div class="versioning"><span class="versioning-label">Version</span><span class="versioning-value">repo snapshot 2026-08-24</span></div>
+            <label class="search-box">
+                <span class="search-label">Search</span>
+                <input
+                    type="search"
+                    id="document-search"
+                    placeholder="Titles and content…"
+                    autocomplete="off"
+                >
+            </label>
+            <div class="search-status" id="search-status" hidden></div>
+            <div class="contents-title">Contents</div>
+            <ul class="document-index"><li data-depth="0"><a href="#section-overview-bd445c462b">overview</a></li><li data-depth="0"><a href="#section-getting-started-0a895d7866">getting-started</a></li><li data-depth="0"><a href="#section-process-lifecycle-a2a567d59e">process-lifecycle</a></li><li data-depth="0"><a href="#section-agent-loop-27223aa478">agent-loop</a></li><li data-depth="0"><a href="#section-session-state-edb4517fc7">session-state</a></li><li data-depth="0"><a href="#section-conversation-memory-a041768813">conversation-memory</a></li><li data-depth="0"><a href="#section-tool-system-eedef13352">tool-system</a><ul><li data-depth="1"><a href="#section-tool-read-ec9f79dc9e">tool-read</a></li><li data-depth="1"><a href="#section-tool-write-3978b72f5d">tool-write</a></li><li data-depth="1"><a href="#section-tool-edit-b9123f7413">tool-edit</a></li><li data-depth="1"><a href="#section-tool-glob-78e72b5cf0">tool-glob</a></li><li data-depth="1"><a href="#section-tool-grep-0aa70468b6">tool-grep</a></li><li data-depth="1"><a href="#section-tool-tree-28c66bbc4e">tool-tree</a></li><li data-depth="1"><a href="#section-tool-git-6d5e68b688">tool-git</a></li><li data-depth="1"><a href="#section-tool-materialize-9a06c4be8c">tool-materialize</a></li><li data-depth="1"><a href="#section-tool-commit-2b9453609c">tool-commit</a></li><li data-depth="1"><a href="#section-tool-bash-4c4ec8dd8c">tool-bash</a></li><li data-depth="1"><a href="#section-tool-prompt-user-3619d7f6e7">tool-prompt-user</a></li><li data-depth="1"><a href="#section-tool-lsp-b21bfd2fd5">tool-lsp</a></li><li data-depth="1"><a href="#section-tool-skill-43ecd6941e">tool-skill</a></li><li data-depth="1"><a href="#section-tool-subprocess-01c4d90921">tool-subprocess</a></li><li data-depth="1"><a href="#section-tool-browser-97f0b9840f">tool-browser</a></li><li data-depth="1"><a href="#section-tool-curl-80b9c782a4">tool-curl</a></li><li data-depth="1"><a href="#section-tool-web-search-6a7677ecdb">tool-web-search</a></li><li data-depth="1"><a href="#section-tool-document-f14cc3002b">tool-document</a></li><li data-depth="1"><a href="#section-tool-diagram-19b2f1c7de">tool-diagram</a></li><li data-depth="1"><a href="#section-tool-enable-tools-d62c89f11c">tool-enable-tools</a></li><li data-depth="1"><a href="#section-memory-tools-e78cdc4e3d">memory-tools</a><ul><li data-depth="2"><a href="#section-memory-working-state-e6e67bebdf">memory-working-state</a></li><li data-depth="2"><a href="#section-memory-todo-eae807faa0">memory-todo</a></li><li data-depth="2"><a href="#section-memory-fact-620b5242aa">memory-fact</a></li><li data-depth="2"><a href="#section-memory-decision-7c75cd58e2">memory-decision</a></li><li data-depth="2"><a href="#section-memory-constraint-fa3ca67dbe">memory-constraint</a></li><li data-depth="2"><a href="#section-memory-checkpoint-ab5790dff4">memory-checkpoint</a></li></ul></li></ul></li><li data-depth="0"><a href="#section-context-layer-dd3f106fd7">context-layer</a></li><li data-depth="0"><a href="#section-lsp-subsystem-ab5d88f4b0">lsp-subsystem</a></li><li data-depth="0"><a href="#section-skills-32c1cf49a2">skills</a></li><li data-depth="0"><a href="#section-sandbox-and-workers-65d389e511">sandbox-and-workers</a></li><li data-depth="0"><a href="#section-slash-commands-5c9e1b5242">slash-commands</a><ul><li data-depth="1"><a href="#section-command-q-65714f7a35">command-q</a></li><li data-depth="1"><a href="#section-command-c-4f2401f52d">command-c</a></li><li data-depth="1"><a href="#section-command-help-ee9d666a3f">command-help</a></li><li data-depth="1"><a href="#section-command-test-5a6bde1cf5">command-test</a></li><li data-depth="1"><a href="#section-command-model-41c9cb5016">command-model</a></li><li data-depth="1"><a href="#section-command-lsp-64f9e583b1">command-lsp</a></li><li data-depth="1"><a href="#section-command-debug-e6fac25eb8">command-debug</a></li></ul></li><li data-depth="0"><a href="#section-supporting-utilities-30d6316128">supporting-utilities</a></li><li data-depth="0"><a href="#section-testing-cf80cd8aed">testing</a></li></ul>
+        </aside>
+        <main>
+            <article class="document-section" id="section-overview-bd445c462b" data-depth="0" data-search-text="overview
+citra is a terminal-based autonomous coding agent written in python 3.12. it connects to an openai-compatible chat-completions api, runs a model/tool loop against a sandboxed copy of a user&#x27;s project, and applies verified changes back to the read-only source repository through a git-backed staging workflow.
+
+## what makes citra distinctive
+
+- **lifecycle-scoped filesystem.** every citra process gets an initially empty working directory plus cache/config/data/home mounts that survive all turns and are destroyed only when the application lifecycle closes (`src/citra/context/turn_workspace.py:37`).
+- **read-only source with staged write-back.** the user&#x27;s project (`@source`) is never modified by general tools; only the `workspacechanges` service may apply staged updates back to it (`src/citra/context/workspace_changes.py:137`, `src/citra/context/turn_workspace.py:63`).
+- **bubblewrap sandbox.** shell commands run under `bwrap` with the host visible read-only, sensitive trees masked, and only citra-owned directories rebound writable (`src/citra/utils/sandbox.py:12`).
+- **foreground steering.** while an agent turn runs in a background thread, the terminal stays interactive: queued steering messages cancel remaining tool calls and redirect the model mid-turn (`src/citra/cli/repl.py:65`, `src/citra/agent/runner.py:140`).
+- **structured conversation memory.** typed memory services (todos, facts, decisions, constraints, checkpoints, working state) are owned by the session rather than by individual tool calls (`src/citra/agent/conversation_memory.py:1`, `src/citra/tools/session_memory/memory_tool.py:31`).
+- **deferred tool catalog.** specialized tools (browser, curl, web search, subprocess, documents, diagrams) stay out of the prompt until explicitly enabled for the turn (`src/citra/tools/tool_registry.py:37`, `src/citra/tools/default_registry.py:25`).
+- **lsp integration.** pyright and typescript language servers are started lazily per project root and reused for semantic code intelligence (`src/citra/tools/lsp/manager.py:58`).
+
+## package layout
+
+```text
+src/citra/
+├── main.py            # thin executable facade
+├── application.py     # process lifecycle and long-lived service ownership
+├── cli/               # repl loop, steering input, terminal rendering
+├── agent/             # agent loop, session state, steering inbox, memory owner
+├── commands/          # slash-command registry (/help, /model, /lsp, ...)
+├── context/           # execution context, workspaces, config, change control
+├── tools/             # tool base classes, registry, transient tools,
+│   ├── lsp/           #   lsp client stack
+│   ├── session_memory/#   typed memory tools
+│   └── skills/        # conditionally loaded instruction packs
+├── utils/             # api client, prompts, sandbox, repo map, mermaid,
+│                      # converters, browser/subprocess managers
+└── workers/           # sandbox-side filesystem worker process
+```
+
+the dependency direction is strictly layered: `cli` → `application` → `agent` → `context` → `tools`/`utils`; `utils` and `workers` depend on nothing above them.
+
+## runtime component map
+
+![citra runtime components and their ownership boundaries](citra-architecture.citra.assets/diagrams/runtime-components.svg)">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>overview</h2>
+</div>
+</header>
+<div class="section-body">
+<p>Citra is a terminal-based autonomous coding agent written in Python 3.12. It connects to an OpenAI-compatible chat-completions API, runs a model/tool loop against a sandboxed copy of a user's project, and applies verified changes back to the read-only source repository through a Git-backed staging workflow.</p>
+<h2>What makes Citra distinctive</h2>
+<ul>
+<li><strong>Lifecycle-scoped filesystem.</strong> Every Citra process gets an initially empty working directory plus cache/config/data/home mounts that survive all turns and are destroyed only when the application lifecycle closes (<code>src/citra/context/turn_workspace.py:37</code>).</li>
+<li><strong>Read-only source with staged write-back.</strong> The user's project (<code>@source</code>) is never modified by general tools; only the <code>WorkspaceChanges</code> service may apply staged updates back to it (<code>src/citra/context/workspace_changes.py:137</code>, <code>src/citra/context/turn_workspace.py:63</code>).</li>
+<li><strong>Bubblewrap sandbox.</strong> Shell commands run under <code>bwrap</code> with the host visible read-only, sensitive trees masked, and only Citra-owned directories rebound writable (<code>src/citra/utils/sandbox.py:12</code>).</li>
+<li><strong>Foreground steering.</strong> While an agent turn runs in a background thread, the terminal stays interactive: queued steering messages cancel remaining tool calls and redirect the model mid-turn (<code>src/citra/cli/repl.py:65</code>, <code>src/citra/agent/runner.py:140</code>).</li>
+<li><strong>Structured conversation memory.</strong> Typed memory services (TODOs, facts, decisions, constraints, checkpoints, working state) are owned by the session rather than by individual tool calls (<code>src/citra/agent/conversation_memory.py:1</code>, <code>src/citra/tools/session_memory/memory_tool.py:31</code>).</li>
+<li><strong>Deferred tool catalog.</strong> Specialized tools (browser, curl, web search, subprocess, documents, diagrams) stay out of the prompt until explicitly enabled for the turn (<code>src/citra/tools/tool_registry.py:37</code>, <code>src/citra/tools/default_registry.py:25</code>).</li>
+<li><strong>LSP integration.</strong> Pyright and TypeScript language servers are started lazily per project root and reused for semantic code intelligence (<code>src/citra/tools/lsp/manager.py:58</code>).</li>
+</ul>
+<h2>Package layout</h2>
+<pre><code class="language-text">src/citra/
+├── main.py            # Thin executable facade
+├── application.py     # Process lifecycle and long-lived service ownership
+├── cli/               # REPL loop, steering input, terminal rendering
+├── agent/             # Agent loop, session state, steering inbox, memory owner
+├── commands/          # Slash-command registry (/help, /model, /lsp, ...)
+├── context/           # Execution context, workspaces, config, change control
+├── tools/             # Tool base classes, registry, transient tools,
+│   ├── lsp/           #   LSP client stack
+│   ├── session_memory/#   typed memory tools
+│   └── skills/        # conditionally loaded instruction packs
+├── utils/             # API client, prompts, sandbox, repo map, mermaid,
+│                      # converters, browser/subprocess managers
+└── workers/           # Sandbox-side filesystem worker process
+</code></pre>
+<p>The dependency direction is strictly layered: <code>cli</code> → <code>application</code> → <code>agent</code> → <code>context</code> → <code>tools</code>/<code>utils</code>; <code>utils</code> and <code>workers</code> depend on nothing above them.</p>
+<h2>Runtime component map</h2>
+<p><img alt="Citra runtime components and their ownership boundaries" src="citra-architecture.citra.assets/diagrams/runtime-components.svg"></p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-getting-started-0a895d7866" data-depth="0" data-search-text="getting-started
+## requirements
+
+python 3.12.x only (`pyproject.toml:8`). key dependencies: `openai` sdk types, `cryptography` (api-key encryption), `prompt-toolkit` (repl), `playwright` (browser), `rich`, `tiktoken`/`tokenizers`/`sentencepiece` (token counting), `grep-ast` + tree-sitter (repository maps), `tomlkit`, `pypdf`, and `openpyxl` (`pyproject.toml:10`).
+
+## launching
+
+`start.sh` is the supported entrypoint; installation.md recommends symlinking it as `citra` on `path` (`installation.md:5`). the launcher sets environment such as `citra_config_path` and `citra_install_root`, then starts the python package. when an `executioncontext` is built without an explicit config object it requires `citra_config_path` to be defined and fails otherwise (`src/citra/context/execution_context.py:61`).
+
+`python -m citra.main` resolves to the facade in `src/citra/main.py`: its `main()` simply forwards to the repl&#x27;s `main()` while passing `call_api` and `terminal_input` as patch seams for embedders and tests (`src/citra/main.py:26`).
+
+## configuration
+
+configuration lives in `config-template.toml` format; `citraconfig.load()` reads it wherever it is, defaulting to `.citra/config.toml` (`src/citra/context/config_loader.py:155`, loader at `src/citra/context/config_loader.py:189`).
+
+- `[model]` — provider host, model id, token budgets, optional `reasoning_effort`, and retry policy (`config-template.toml:2`). api keys are stored encrypted via `fernet` and decrypted on demand (`src/citra/context/config/model_config.py:21`, `src/citra/context/config/model_config.py:31`). the `modelconfigstore` writes config atomically through a temp-file rename so an interrupted save cannot corrupt it (`src/citra/context/config/model_config.py:38`, `_save` at `src/citra/context/config/model_config.py:72`).
+- network permissions — `[curl]`, `[bash]`, `[subprocess]`, and `[browser]` each expose `always_allow_network`; when false, network-capable invocations require explicit terminal approval (`config-template.toml:16`, `src/citra/context/config_loader.py:25`).
+- `[browser]` additionally gates unsafe actions such as `evaluate` (arbitrary js) and `upload` behind per-call approval unless allow-listed (`config-template.toml:38`, `src/citra/context/config_loader.py:47`).
+- `[web-search]` points at a searxng host (`config-template.toml:14`).
+
+loaded config surfaces as frozen dataclasses — `retryconfig`, `websearchconfig`, `curlconfig`, `bashconfig`, `subprocessconfig`, `browserconfig`, `notificationconfig`, plus workspace-context, lsp, and sandbox sections (`src/citra/context/config_loader.py:12`).">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>getting-started</h2>
+</div>
+</header>
+<div class="section-body">
+<h2>Requirements</h2>
+<p>Python 3.12.x only (<code>pyproject.toml:8</code>). Key dependencies: <code>openai</code> SDK types, <code>cryptography</code> (API-key encryption), <code>prompt-toolkit</code> (REPL), <code>playwright</code> (browser), <code>rich</code>, <code>tiktoken</code>/<code>tokenizers</code>/<code>sentencepiece</code> (token counting), <code>grep-ast</code> + tree-sitter (repository maps), <code>tomlkit</code>, <code>pypdf</code>, and <code>openpyxl</code> (<code>pyproject.toml:10</code>).</p>
+<h2>Launching</h2>
+<p><code>start.sh</code> is the supported entrypoint; INSTALLATION.md recommends symlinking it as <code>citra</code> on <code>PATH</code> (<code>INSTALLATION.md:5</code>). The launcher sets environment such as <code>CITRA_CONFIG_PATH</code> and <code>CITRA_INSTALL_ROOT</code>, then starts the Python package. When an <code>ExecutionContext</code> is built without an explicit config object it requires <code>CITRA_CONFIG_PATH</code> to be defined and fails otherwise (<code>src/citra/context/execution_context.py:61</code>).</p>
+<p><code>python -m citra.main</code> resolves to the facade in <code>src/citra/main.py</code>: its <code>main()</code> simply forwards to the REPL's <code>main()</code> while passing <code>call_api</code> and <code>terminal_input</code> as patch seams for embedders and tests (<code>src/citra/main.py:26</code>).</p>
+<h2>Configuration</h2>
+<p>Configuration lives in <code>config-template.toml</code> format; <code>CitraConfig.load()</code> reads it wherever it is, defaulting to <code>.citra/config.toml</code> (<code>src/citra/context/config_loader.py:155</code>, loader at <code>src/citra/context/config_loader.py:189</code>).</p>
+<ul>
+<li><code>[model]</code> — provider host, model id, token budgets, optional <code>reasoning_effort</code>, and retry policy (<code>config-template.toml:2</code>). API keys are stored encrypted via <code>Fernet</code> and decrypted on demand (<code>src/citra/context/config/model_config.py:21</code>, <code>src/citra/context/config/model_config.py:31</code>). The <code>ModelConfigStore</code> writes config atomically through a temp-file rename so an interrupted save cannot corrupt it (<code>src/citra/context/config/model_config.py:38</code>, <code>_save</code> at <code>src/citra/context/config/model_config.py:72</code>).</li>
+<li>Network permissions — <code>[curl]</code>, <code>[bash]</code>, <code>[subprocess]</code>, and <code>[browser]</code> each expose <code>always_allow_network</code>; when false, network-capable invocations require explicit terminal approval (<code>config-template.toml:16</code>, <code>src/citra/context/config_loader.py:25</code>).</li>
+<li><code>[browser]</code> additionally gates unsafe actions such as <code>evaluate</code> (arbitrary JS) and <code>upload</code> behind per-call approval unless allow-listed (<code>config-template.toml:38</code>, <code>src/citra/context/config_loader.py:47</code>).</li>
+<li><code>[web-search]</code> points at a SearXNG host (<code>config-template.toml:14</code>).</li>
+</ul>
+<p>Loaded config surfaces as frozen dataclasses — <code>RetryConfig</code>, <code>WebSearchConfig</code>, <code>CurlConfig</code>, <code>BashConfig</code>, <code>SubprocessConfig</code>, <code>BrowserConfig</code>, <code>NotificationConfig</code>, plus workspace-context, LSP, and sandbox sections (<code>src/citra/context/config_loader.py:12</code>).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-process-lifecycle-a2a567d59e" data-depth="0" data-search-text="process-lifecycle
+## citraapplication
+
+`citraapplication` owns everything that must survive individual agent turns (`src/citra/application.py:21`). construction wires the whole runtime:
+
+1. creates the `agentsession` (conversation + memory owner) (`src/citra/application.py:33`).
+2. creates `workspacecontext.create(...)` for the resolved source workspace (`src/citra/application.py:34`).
+3. builds the `skillregistry`, `userinteractionbroker`, and `lspmanager` (`src/citra/application.py:38`).
+4. assembles the `executioncontext` that tools receive, then the `agentrunner` with an injectable `api_call` (`src/citra/application.py:59`).
+5. registers `close()` with `atexit`; on failure during construction the workspace is cleaned up immediately (`src/citra/application.py:71`).
+
+teardown is strictly ordered: interactions → lsp manager → execution context (browser + subprocesses) → session release → workspace cleanup (`src/citra/application.py:117`). the class supports both context-manager usage and `citraapplication.create(config=..., source_workspace=..., api_call=...)` (`src/citra/application.py:77`).
+
+slash commands route through `handle_command`, which instantiates from `command_registry`, prints output, honors `clear_messages` (full history + memory reset), and returns `false` to exit (`src/citra/application.py:96`).
+
+## repl loop
+
+the interactive loop in `cli/repl.py` (`src/citra/cli/repl.py:145`):
+
+- reads input via `prompt_toolkit`; lines starting with `/` are commands (`src/citra/cli/repl.py:32`), everything else becomes a user message on the session.
+- on a tty, each turn runs under `run_turn_with_steering`; piped/headless invocations call `application.run_agent_turn()` directly but keep identical lifecycle semantics (`src/citra/cli/repl.py:165`).
+
+## foreground steering
+
+`run_turn_with_steering` runs the agent turn on a daemon thread while the main thread remains a steering channel (`src/citra/cli/repl.py:65`):
+
+- model-initiated `userpromptrequest`s are answered on the foreground thread, honoring idle timeouts; a timeout responds `none` (&quot;user-unavailable&quot;) (`src/citra/cli/repl.py:36`).
+- free-form typing while the agent works queues steering into `session.queue_steering` (`src/citra/cli/repl.py:137`).
+- ctrl-c during a prompt or steering queue injects a canned stop instruction (&quot;stop the current work safely...&quot;) (`src/citra/cli/repl.py:101`); eof closes the input channel with a graceful &quot;finish the current safe boundary&quot; instruction (`src/citra/cli/repl.py:107`).
+
+## terminal rendering
+
+`cli/rendering.py` provides the `⏺`-style output: header, markdown rendering of assistant text, tool-call start/result previews, argument previews, and memory-change rendering used by the runner (`src/citra/main.py:13` re-exports these helpers).
+">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>process-lifecycle</h2>
+</div>
+</header>
+<div class="section-body">
+<h2>CitraApplication</h2>
+<p><code>CitraApplication</code> owns everything that must survive individual agent turns (<code>src/citra/application.py:21</code>). Construction wires the whole runtime:</p>
+<ol>
+<li>Creates the <code>AgentSession</code> (conversation + memory owner) (<code>src/citra/application.py:33</code>).</li>
+<li>Creates <code>WorkspaceContext.create(...)</code> for the resolved source workspace (<code>src/citra/application.py:34</code>).</li>
+<li>Builds the <code>SkillRegistry</code>, <code>UserInteractionBroker</code>, and <code>LspManager</code> (<code>src/citra/application.py:38</code>).</li>
+<li>Assembles the <code>ExecutionContext</code> that tools receive, then the <code>AgentRunner</code> with an injectable <code>api_call</code> (<code>src/citra/application.py:59</code>).</li>
+<li>Registers <code>close()</code> with <code>atexit</code>; on failure during construction the workspace is cleaned up immediately (<code>src/citra/application.py:71</code>).</li>
+</ol>
+<p>Teardown is strictly ordered: interactions → LSP manager → execution context (browser + subprocesses) → session release → workspace cleanup (<code>src/citra/application.py:117</code>). The class supports both context-manager usage and <code>CitraApplication.create(config=..., source_workspace=..., api_call=...)</code> (<code>src/citra/application.py:77</code>).</p>
+<p>Slash commands route through <code>handle_command</code>, which instantiates from <code>COMMAND_REGISTRY</code>, prints output, honors <code>clear_messages</code> (full history + memory reset), and returns <code>False</code> to exit (<code>src/citra/application.py:96</code>).</p>
+<h2>REPL loop</h2>
+<p>The interactive loop in <code>cli/repl.py</code> (<code>src/citra/cli/repl.py:145</code>):</p>
+<ul>
+<li>Reads input via <code>prompt_toolkit</code>; lines starting with <code>/</code> are commands (<code>src/citra/cli/repl.py:32</code>), everything else becomes a user message on the session.</li>
+<li>On a TTY, each turn runs under <code>run_turn_with_steering</code>; piped/headless invocations call <code>application.run_agent_turn()</code> directly but keep identical lifecycle semantics (<code>src/citra/cli/repl.py:165</code>).</li>
+</ul>
+<h2>Foreground steering</h2>
+<p><code>run_turn_with_steering</code> runs the agent turn on a daemon thread while the main thread remains a steering channel (<code>src/citra/cli/repl.py:65</code>):</p>
+<ul>
+<li>Model-initiated <code>UserPromptRequest</code>s are answered on the foreground thread, honoring idle timeouts; a timeout responds <code>None</code> ("user-unavailable") (<code>src/citra/cli/repl.py:36</code>).</li>
+<li>Free-form typing while the agent works queues steering into <code>session.queue_steering</code> (<code>src/citra/cli/repl.py:137</code>).</li>
+<li>Ctrl-C during a prompt or steering queue injects a canned stop instruction ("Stop the current work safely...") (<code>src/citra/cli/repl.py:101</code>); EOF closes the input channel with a graceful "finish the current safe boundary" instruction (<code>src/citra/cli/repl.py:107</code>).</li>
+</ul>
+<h2>Terminal rendering</h2>
+<p><code>cli/rendering.py</code> provides the <code>⏺</code>-style output: header, Markdown rendering of assistant text, tool-call start/result previews, argument previews, and memory-change rendering used by the runner (<code>src/citra/main.py:13</code> re-exports these helpers).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-agent-loop-27223aa478" data-depth="0" data-search-text="agent-loop
+`agentrunner.run_turn()` implements the model/tool cycle, kept protocol-safe and independent of workspace/repl lifecycle (`src/citra/agent/runner.py:1`).
+
+## turn structure
+
+1. `session.begin_turn()` advances the turn counter and resets the turn-local tool cache (`src/citra/agent/session.py:171`).
+2. the system prompt is rebuilt per turn by `build_system_prompt(context)` so dynamic environment facts stay current (`src/citra/utils/prompt.py:42`).
+3. tool schemas stay **monotonic for prompt-cache locality**: core tools plus `enable_tools` keep a fixed order and deferred tools only append (`src/citra/agent/runner.py:61`).
+4. messages sent to the api are trimmed to the model&#x27;s token budget with `get_last_messages_up_to_tokenlength`, which never splits protocol-safe message groups (`src/citra/agent/session.py:195`).
+5. if steering arrived mid-request, the api layer may raise `modelrequestinterrupted`; the runner simply flushes steering and rebuilds the request (`src/citra/agent/runner.py:100`).
+
+## response handling
+
+assistant text renders immediately; the assistant message is appended before any tool executes. when there are no tool calls the turn normally ends — *unless* pending steering exists (the response is demoted to intermediate) or outstanding todos exist, in which case the runner injects a continuation user message (`src/citra/agent/runner.py:117`).
+
+## tool-call execution
+
+for each requested tool call (`src/citra/agent/runner.py:136`):
+
+- the first pending steering message cancels all remaining calls; cancelled calls get the deterministic result text `&quot;cancelled: user steering instructions...&quot;` (`src/citra/agent/runner.py:140`, constant at `src/citra/agent/runner.py:32`).
+- memory tools are wrapped with a before/after diff rendered as a memory change (`src/citra/agent/runner.py:147`).
+- results go through `execute_tool_call` and are attached as protocol-safe `role=&quot;tool&quot;` messages (`src/citra/agent/response.py`).
+
+a module-level convenience `run_agent_turn(session, context, api_call=...)` wraps the class for compatibility (`src/citra/agent/runner.py:164`).
+
+## turn sequence with steering
+
+![sequence of one agent turn including mid-turn steering cancellation](citra-architecture.citra.assets/diagrams/turn-sequence.svg)
+
+## api client
+
+`utils/chat_completions_api.py` implements the transport: openai-compatible chat-completions over urllib with retry/backoff, honoring 429 rate limits with up to 12 total attempts by default (`src/citra/utils/chat_completions_api.py:37`, `src/citra/utils/chat_completions_api.py:41`). retryable statuses include temporary conditions such as 408/409/423/424/425 (`src/citra/utils/chat_completions_api.py:48`). a pending retry can be superseded by newly queued steering, raising `modelrequestinterrupted` (`src/citra/utils/chat_completions_api.py:44`).">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>agent-loop</h2>
+</div>
+</header>
+<div class="section-body">
+<p><code>AgentRunner.run_turn()</code> implements the model/tool cycle, kept protocol-safe and independent of workspace/REPL lifecycle (<code>src/citra/agent/runner.py:1</code>).</p>
+<h2>Turn structure</h2>
+<ol>
+<li><code>session.begin_turn()</code> advances the turn counter and resets the turn-local tool cache (<code>src/citra/agent/session.py:171</code>).</li>
+<li>The system prompt is rebuilt per turn by <code>build_system_prompt(context)</code> so dynamic environment facts stay current (<code>src/citra/utils/prompt.py:42</code>).</li>
+<li>Tool schemas stay <strong>monotonic for prompt-cache locality</strong>: core tools plus <code>enable_tools</code> keep a fixed order and deferred tools only append (<code>src/citra/agent/runner.py:61</code>).</li>
+<li>Messages sent to the API are trimmed to the model's token budget with <code>get_last_messages_up_to_tokenLength</code>, which never splits protocol-safe message groups (<code>src/citra/agent/session.py:195</code>).</li>
+<li>If steering arrived mid-request, the API layer may raise <code>ModelRequestInterrupted</code>; the runner simply flushes steering and rebuilds the request (<code>src/citra/agent/runner.py:100</code>).</li>
+</ol>
+<h2>Response handling</h2>
+<p>Assistant text renders immediately; the assistant message is appended before any tool executes. When there are no tool calls the turn normally ends — <em>unless</em> pending steering exists (the response is demoted to intermediate) or outstanding TODOs exist, in which case the runner injects a continuation user message (<code>src/citra/agent/runner.py:117</code>).</p>
+<h2>Tool-call execution</h2>
+<p>For each requested tool call (<code>src/citra/agent/runner.py:136</code>):</p>
+<ul>
+<li>The first pending steering message cancels all remaining calls; cancelled calls get the deterministic result text <code>"cancelled: user steering instructions..."</code> (<code>src/citra/agent/runner.py:140</code>, constant at <code>src/citra/agent/runner.py:32</code>).</li>
+<li>Memory tools are wrapped with a before/after diff rendered as a memory change (<code>src/citra/agent/runner.py:147</code>).</li>
+<li>Results go through <code>execute_tool_call</code> and are attached as protocol-safe <code>role="tool"</code> messages (<code>src/citra/agent/response.py</code>).</li>
+</ul>
+<p>A module-level convenience <code>run_agent_turn(session, context, api_call=...)</code> wraps the class for compatibility (<code>src/citra/agent/runner.py:164</code>).</p>
+<h2>Turn sequence with steering</h2>
+<p><img alt="Sequence of one agent turn including mid-turn steering cancellation" src="citra-architecture.citra.assets/diagrams/turn-sequence.svg"></p>
+<h2>API client</h2>
+<p><code>utils/chat_completions_api.py</code> implements the transport: OpenAI-compatible chat-completions over urllib with retry/backoff, honoring 429 rate limits with up to 12 total attempts by default (<code>src/citra/utils/chat_completions_api.py:37</code>, <code>src/citra/utils/chat_completions_api.py:41</code>). Retryable statuses include temporary conditions such as 408/409/423/424/425 (<code>src/citra/utils/chat_completions_api.py:48</code>). A pending retry can be superseded by newly queued steering, raising <code>ModelRequestInterrupted</code> (<code>src/citra/utils/chat_completions_api.py:44</code>).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-session-state-edb4517fc7" data-depth="0" data-search-text="session-state
+`agentsession` is the persistent state for one citra conversation (`src/citra/agent/session.py:123`). only the agent worker mutates conversation history; other threads communicate through the steering inbox (`src/citra/agent/session.py:1`).
+
+## protocol-safe message groups
+
+history is stored as `messagegroup` objects, each containing one logical openai message unit — a plain user/assistant message, or an assistant tool-call message plus *all* corresponding `role=&quot;tool&quot;` results (`src/citra/agent/session.py:102`). groups are never split when trimming context (`src/citra/agent/session.py:195`), which keeps requests valid under aggressive history truncation.
+
+## turn-local tool-result cache
+
+`toolcallcache` caches deterministic model-facing tool results keyed by `(tool_id, canonical json arguments)` with a generation counter (`src/citra/agent/session.py:52`). a new turn resets the cache; a state-changing tool call bumps the generation, invalidating stale entries. reuse is only allowed while the earlier results are still present in model context (`can_reuse_tool_cache`, `src/citra/agent/session.py:179`). the `tool` base class exposes opt-in flags — tools are assumed state-mutating unless they set `cacheable = true` / `invalidates_tool_cache = false` (`src/citra/tools/tool.py:32`).
+
+## history compaction hooks
+
+`tool.compact_history_arguments` lets tools replace large argument payloads in retained history after successful execution (e.g. digesting big strings past a 128-token threshold) so subsequent requests never replay them (`src/citra/tools/tool.py:86`). failed calls keep exact inputs so the model can reason about the failure.
+
+## steering inbox
+
+`steeringinbox` is a thread-safe fifo of user steering messages; fifo order guarantees corrections reach the model in submission order (`src/citra/agent/steering.py:22`).">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>session-state</h2>
+</div>
+</header>
+<div class="section-body">
+<p><code>AgentSession</code> is the persistent state for one Citra conversation (<code>src/citra/agent/session.py:123</code>). Only the agent worker mutates conversation history; other threads communicate through the steering inbox (<code>src/citra/agent/session.py:1</code>).</p>
+<h2>Protocol-safe message groups</h2>
+<p>History is stored as <code>MessageGroup</code> objects, each containing one logical OpenAI message unit — a plain user/assistant message, or an assistant tool-call message plus <em>all</em> corresponding <code>role="tool"</code> results (<code>src/citra/agent/session.py:102</code>). Groups are never split when trimming context (<code>src/citra/agent/session.py:195</code>), which keeps requests valid under aggressive history truncation.</p>
+<h2>Turn-local tool-result cache</h2>
+<p><code>ToolCallCache</code> caches deterministic model-facing tool results keyed by <code>(tool_id, canonical JSON arguments)</code> with a generation counter (<code>src/citra/agent/session.py:52</code>). A new turn resets the cache; a state-changing tool call bumps the generation, invalidating stale entries. Reuse is only allowed while the earlier results are still present in model context (<code>can_reuse_tool_cache</code>, <code>src/citra/agent/session.py:179</code>). The <code>Tool</code> base class exposes opt-in flags — tools are assumed state-mutating unless they set <code>CACHEABLE = True</code> / <code>INVALIDATES_TOOL_CACHE = False</code> (<code>src/citra/tools/tool.py:32</code>).</p>
+<h2>History compaction hooks</h2>
+<p><code>Tool.compact_history_arguments</code> lets tools replace large argument payloads in retained history after successful execution (e.g. digesting big strings past a 128-token threshold) so subsequent requests never replay them (<code>src/citra/tools/tool.py:86</code>). Failed calls keep exact inputs so the model can reason about the failure.</p>
+<h2>Steering inbox</h2>
+<p><code>SteeringInbox</code> is a thread-safe FIFO of user steering messages; FIFO order guarantees corrections reach the model in submission order (<code>src/citra/agent/steering.py:22</code>).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-conversation-memory-a041768813" data-depth="0" data-search-text="conversation-memory
+citra separates *provisional* reasoning from *durable* memory. all memory services live on `conversationmemory`, owned by the `agentsession`, so a registry refresh or dropped chat message cannot silently discard working state (`src/citra/agent/conversation_memory.py:12`). the shared backing store is `conversationmemorystate` in `tools/session_memory/memory_tool.py:35`.
+
+## memory kinds
+
+| tool | purpose |
+|------|---------|
+| `todo` | hierarchical eager todo list for required work |
+| `fact` | verified facts with file/url citations |
+| `decision` | durable implementation/architecture choices |
+| `constraint` | active requirements and invariants |
+| `checkpoint` | compact handoff summary + next step |
+| `working_state` | provisional hypotheses/investigations that must survive context trimming |
+
+all six register as **core** tools so persisted memory always stays visible to the model (`src/citra/tools/default_registry.py:62`). each supports direct creation and promotion from working state, preserving provenance.
+
+## working-state lifecycle
+
+working states move through statuses (`active` → `resolved`/`discarded`) recorded on `_workingstaterecord` (`src/citra/tools/session_memory/memory_tool.py:30`). promotion links a working state to one or more durable entries via `promotionref(kind, memory_id)` (`src/citra/tools/session_memory/memory_tool.py:15`); promoted or resolved states can no longer be mutated (`memory_tool.py:64`).
+
+## ownership rules
+
+- memory tools are `memorytool` subclasses instantiated once per session and reused across turns, even when older messages fall out of model context (`src/citra/tools/tool_registry.py:33`, instantiation at `tool_registry.py:112`).
+- the runner renders a before/after diff around every memory-tool call so changes stay visible in the terminal (`src/citra/agent/runner.py:147`).
+- tests covering direct vs. promoted memory live in `tests/test_direct_and_promoted_memory.py` and `tests/test_working_state_memory.py`.">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>conversation-memory</h2>
+</div>
+</header>
+<div class="section-body">
+<p>Citra separates <em>provisional</em> reasoning from <em>durable</em> memory. All memory services live on <code>ConversationMemory</code>, owned by the <code>AgentSession</code>, so a registry refresh or dropped chat message cannot silently discard working state (<code>src/citra/agent/conversation_memory.py:12</code>). The shared backing store is <code>ConversationMemoryState</code> in <code>tools/session_memory/memory_tool.py:35</code>.</p>
+<h2>Memory kinds</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>todo</code></td>
+<td>Hierarchical eager TODO list for required work</td>
+</tr>
+<tr>
+<td><code>fact</code></td>
+<td>Verified facts with file/URL citations</td>
+</tr>
+<tr>
+<td><code>decision</code></td>
+<td>Durable implementation/architecture choices</td>
+</tr>
+<tr>
+<td><code>constraint</code></td>
+<td>Active requirements and invariants</td>
+</tr>
+<tr>
+<td><code>checkpoint</code></td>
+<td>Compact handoff summary + next step</td>
+</tr>
+<tr>
+<td><code>working_state</code></td>
+<td>Provisional hypotheses/investigations that must survive context trimming</td>
+</tr>
+</tbody>
+</table>
+<p>All six register as <strong>core</strong> tools so persisted memory always stays visible to the model (<code>src/citra/tools/default_registry.py:62</code>). Each supports direct creation and promotion from working state, preserving provenance.</p>
+<h2>Working-state lifecycle</h2>
+<p>Working states move through statuses (<code>active</code> → <code>resolved</code>/<code>discarded</code>) recorded on <code>_WorkingStateRecord</code> (<code>src/citra/tools/session_memory/memory_tool.py:30</code>). Promotion links a working state to one or more durable entries via <code>PromotionRef(kind, memory_id)</code> (<code>src/citra/tools/session_memory/memory_tool.py:15</code>); promoted or resolved states can no longer be mutated (<code>memory_tool.py:64</code>).</p>
+<h2>Ownership rules</h2>
+<ul>
+<li>Memory tools are <code>MemoryTool</code> subclasses instantiated once per session and reused across turns, even when older messages fall out of model context (<code>src/citra/tools/tool_registry.py:33</code>, instantiation at <code>tool_registry.py:112</code>).</li>
+<li>The runner renders a before/after diff around every memory-tool call so changes stay visible in the terminal (<code>src/citra/agent/runner.py:147</code>).</li>
+<li>Tests covering direct vs. promoted memory live in <code>tests/test_direct_and_promoted_memory.py</code> and <code>tests/test_working_state_memory.py</code>.</li>
+</ul>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-system-eedef13352" data-depth="0" data-search-text="tool-system
+## tool base class
+
+`tool` (abc) validates its json schema at construction with `draft202012validator` and exposes `id`, `description`, and `get_as_tool()` for the api payload (`src/citra/tools/tool.py:24`). policy knobs on the class:
+
+- `cacheable = false` / `invalidates_tool_cache = true` — opt-in result caching within a turn; tools are assumed to mutate state unless declared otherwise (`tool.py:32`).
+- `max_output_tokens = 2_000` — default cap on model-facing output (`tool.py:34`).
+- `compact_history_arguments` + `_compact_history_string_arguments` — post-execution history compaction hooks; large string arguments are compacted only past a 128-token threshold (`tool.py:25`, `tool.py:86`).
+
+tool execution, argument validation, logging, and serialization live in `agent/response.py` (`execute_tool_call`, `get_assistant_message`, `serialize_tool_result` — re-exported from the facade at `src/citra/main.py:6`).
+
+## toolregistry
+
+the registry distinguishes three lifetimes (`src/citra/tools/tool_registry.py:24`):
+
+1. **tool** — fresh instance per model call;
+2. **sessiontool** — fresh per call but receives the current `agentsession`;
+3. **memorytool** — owned by the session, reused across calls and turns.
+
+deferred registrations require a summary and stay out of model calls until enabled (`tool_registry.py:57`). `core_tool_ids`, `deferred_tool_ids`, and `deferred_catalog` feed the runner&#x27;s fixed-order schema assembly (`tool_registry.py:153`).
+
+## default registrations
+
+core: `read`, `write`, `edit`, `glob`, `grep`, `git`, `tree`, `materialize`, `commit`, `bash`, `prompt_user`, `lsp`, `skill`, plus the six memory tools (`src/citra/tools/default_registry.py:10`).
+
+deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram` (`default_registry.py:25`). the `enabletools` tool itself is constructed by the runner with the deferred catalog and an `enabled_tool_ids` set scoped to the turn (`src/citra/tools/enable_tools.py:14`).
+
+## notable transient tools
+
+- `bash` runs commands inside the bubblewrap sandbox; network access must be requested per call with a reason and is subject to config approval (`config-template.toml:22`).
+- `git` offers status/diff/log/show/blame plus clone/ls_remote against allowed remotes; it cannot mutate history or index.
+- `materialize` and `commit` are thin wrappers over `workspacechanges.materialize/stage/apply` (`src/citra/tools/transient/materialize.py:13`, `src/citra/tools/transient/commit.py:13`), implementing citra&#x27;s read-only-source → staged → applied workflow.
+- `prompt_user` surfaces open-ended or option-list questions through the foreground interaction broker.
+
+per-tool usage reference: see the subsections below. memory tools are detailed under *memory-tools*.">
+<header class="section-header">
+
+<div class="section-heading-row">
+<button type="button" class="section-toggle" data-target="section-tool-system-eedef13352" aria-expanded="true" aria-label="Collapse section">&minus;</button>
+<h2>tool-system</h2>
+</div>
+</header>
+<div class="section-body">
+<h2>Tool base class</h2>
+<p><code>Tool</code> (ABC) validates its JSON Schema at construction with <code>Draft202012Validator</code> and exposes <code>id</code>, <code>description</code>, and <code>get_as_tool()</code> for the API payload (<code>src/citra/tools/tool.py:24</code>). Policy knobs on the class:</p>
+<ul>
+<li><code>CACHEABLE = False</code> / <code>INVALIDATES_TOOL_CACHE = True</code> — opt-in result caching within a turn; tools are assumed to mutate state unless declared otherwise (<code>tool.py:32</code>).</li>
+<li><code>MAX_OUTPUT_TOKENS = 2_000</code> — default cap on model-facing output (<code>tool.py:34</code>).</li>
+<li><code>compact_history_arguments</code> + <code>_compact_history_string_arguments</code> — post-execution history compaction hooks; large string arguments are compacted only past a 128-token threshold (<code>tool.py:25</code>, <code>tool.py:86</code>).</li>
+</ul>
+<p>Tool execution, argument validation, logging, and serialization live in <code>agent/response.py</code> (<code>execute_tool_call</code>, <code>get_assistant_message</code>, <code>serialize_tool_result</code> — re-exported from the facade at <code>src/citra/main.py:6</code>).</p>
+<h2>ToolRegistry</h2>
+<p>The registry distinguishes three lifetimes (<code>src/citra/tools/tool_registry.py:24</code>):</p>
+<ol>
+<li><strong>Tool</strong> — fresh instance per model call;</li>
+<li><strong>SessionTool</strong> — fresh per call but receives the current <code>AgentSession</code>;</li>
+<li><strong>MemoryTool</strong> — owned by the session, reused across calls and turns.</li>
+</ol>
+<p>Deferred registrations require a summary and stay out of model calls until enabled (<code>tool_registry.py:57</code>). <code>core_tool_ids</code>, <code>deferred_tool_ids</code>, and <code>deferred_catalog</code> feed the runner's fixed-order schema assembly (<code>tool_registry.py:153</code>).</p>
+<h2>Default registrations</h2>
+<p>Core: <code>read</code>, <code>write</code>, <code>edit</code>, <code>glob</code>, <code>grep</code>, <code>git</code>, <code>tree</code>, <code>materialize</code>, <code>commit</code>, <code>bash</code>, <code>prompt_user</code>, <code>lsp</code>, <code>skill</code>, plus the six memory tools (<code>src/citra/tools/default_registry.py:10</code>).</p>
+<p>Deferred (enabled via <code>enable_tools</code>): <code>subprocess</code>, <code>browser</code>, <code>curl</code>, <code>web_search</code>, <code>document</code>, <code>diagram</code> (<code>default_registry.py:25</code>). The <code>EnableTools</code> tool itself is constructed by the runner with the deferred catalog and an <code>enabled_tool_ids</code> set scoped to the turn (<code>src/citra/tools/enable_tools.py:14</code>).</p>
+<h2>Notable transient tools</h2>
+<ul>
+<li><code>bash</code> runs commands inside the Bubblewrap sandbox; network access must be requested per call with a reason and is subject to config approval (<code>config-template.toml:22</code>).</li>
+<li><code>git</code> offers status/diff/log/show/blame plus clone/ls_remote against allowed remotes; it cannot mutate history or index.</li>
+<li><code>materialize</code> and <code>commit</code> are thin wrappers over <code>WorkspaceChanges.materialize/stage/apply</code> (<code>src/citra/tools/transient/materialize.py:13</code>, <code>src/citra/tools/transient/commit.py:13</code>), implementing Citra's read-only-source → staged → applied workflow.</li>
+<li><code>prompt_user</code> surfaces open-ended or option-list questions through the foreground interaction broker.</li>
+</ul>
+<p>Per-tool usage reference: see the subsections below. Memory tools are detailed under <em>memory-tools</em>.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-read-ec9f79dc9e" data-depth="1" data-search-text="tool-read
+**purpose:** read exact file contents and implementations; use `tree` for discovery and structure.
+
+**key arguments:** `path` (file path or glob, supports `@source`/`@tmp` prefixes), `offset`/`limit` for a bounded top-level read, or `requests` (batch of up to 20 independent read requests, 20 files per call). bounded reads are preferred for large files (`src/citra/tools/transient/read.py`).
+
+cacheable; does not invalidate the turn&#x27;s tool-result cache.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-read</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-read</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Read exact file contents and implementations; use <code>tree</code> for discovery and structure.</p>
+<p><strong>Key arguments:</strong> <code>path</code> (file path or glob, supports <code>@source</code>/<code>@tmp</code> prefixes), <code>offset</code>/<code>limit</code> for a bounded top-level read, or <code>requests</code> (batch of up to 20 independent read requests, 20 files per call). Bounded reads are preferred for large files (<code>src/citra/tools/transient/read.py</code>).</p>
+<p>Cacheable; does not invalidate the turn's tool-result cache.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-write-3978b72f5d" data-depth="1" data-search-text="tool-write
+**purpose:** write complete text content to a file. creates the file if missing and completely overwrites it otherwise.
+
+**key arguments:** `path` (resolved against the active workspace), `content` (complete replacement text), optional `diagnostics` (run lsp diagnostics after the write).
+
+writes are restricted to the isolated agent workspace and lifecycle agent filesystem; `@source` is read-only. use `edit` instead when only a specific fragment should change. mutating; invalidates the tool-result cache.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-write</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-write</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Write complete text content to a file. Creates the file if missing and completely overwrites it otherwise.</p>
+<p><strong>Key arguments:</strong> <code>path</code> (resolved against the active workspace), <code>content</code> (complete replacement text), optional <code>diagnostics</code> (run LSP diagnostics after the write).</p>
+<p>Writes are restricted to the isolated agent workspace and lifecycle agent filesystem; <code>@source</code> is read-only. Use <code>edit</code> instead when only a specific fragment should change. Mutating; invalidates the tool-result cache.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-edit-b9123f7413" data-depth="1" data-search-text="tool-edit
+**purpose:** replace an exact text fragment in an existing file — the preferred tool for targeted changes.
+
+**key arguments:** `path`, `old` (exact text to replace; must match whitespace and line breaks), `new` (replacement; may be empty to delete). by default `old` must occur exactly once, preventing ambiguous edits; `all=true` replaces every occurrence. `line` inserts `new` before a 1-based line without deleting text (cannot be combined with `old`; use `len(file)+1` to append). optional `diagnostics` runs lsp diagnostics afterwards.
+
+files may only be modified inside the active workspace or temporary agent filesystem. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-edit</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-edit</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Replace an exact text fragment in an existing file — the preferred tool for targeted changes.</p>
+<p><strong>Key arguments:</strong> <code>path</code>, <code>old</code> (exact text to replace; must match whitespace and line breaks), <code>new</code> (replacement; may be empty to delete). By default <code>old</code> must occur exactly once, preventing ambiguous edits; <code>all=true</code> replaces every occurrence. <code>line</code> inserts <code>new</code> before a 1-based line without deleting text (cannot be combined with <code>old</code>; use <code>len(file)+1</code> to append). Optional <code>diagnostics</code> runs LSP diagnostics afterwards.</p>
+<p>Files may only be modified inside the active workspace or temporary agent filesystem. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-glob-78e72b5cf0" data-depth="1" data-search-text="tool-glob
+**purpose:** find files and directories by glob pattern (e.g. `*.py`, `src/**/*.py`, `**/*.py`).
+
+**key arguments:** `pat` (glob), optional `path` root directory (workspace-relative or `@tmp`). results are sorted by modification time, most recently modified first. directory/glob expansion respects ignore files and built-in cache/build exclusions.
+
+cacheable.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-glob</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-glob</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Find files and directories by glob pattern (e.g. <code>*.py</code>, <code>src/**/*.py</code>, <code>**/*.py</code>).</p>
+<p><strong>Key arguments:</strong> <code>pat</code> (glob), optional <code>path</code> root directory (workspace-relative or <code>@tmp</code>). Results are sorted by modification time, most recently modified first. Directory/glob expansion respects ignore files and built-in cache/build exclusions.</p>
+<p>Cacheable.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-grep-0aa70468b6" data-depth="1" data-search-text="tool-grep
+**purpose:** search files for lines matching a python regular expression.
+
+**key arguments:** `pat` (python regex matched against individual lines), `path` (file → single-file search; directory → recursive; defaults to the workspace). returns matching file paths, line numbers, and line contents — at most 50 matches.
+
+prefer semantic tools when symbol identity matters; use grep for literal or broad matches. cacheable.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-grep</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-grep</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Search files for lines matching a Python regular expression.</p>
+<p><strong>Key arguments:</strong> <code>pat</code> (Python regex matched against individual lines), <code>path</code> (file → single-file search; directory → recursive; defaults to the workspace). Returns matching file paths, line numbers, and line contents — at most 50 matches.</p>
+<p>Prefer semantic tools when symbol identity matters; use grep for literal or broad matches. Cacheable.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-tree-28c66bbc4e" data-depth="1" data-search-text="tool-tree
+**purpose:** discover repository structure, definitions, signatures, and code locations as a compact token-budgeted map. use `read` when the implementation itself is needed.
+
+**key arguments:** `path` (subtree to map; `@source` aliases accepted), optional `focus` (identifiers/filename fragments to boost in ranking), `max_tokens` (default 1500, hard cap 2000).
+
+the map ranks definitions and references so a task-specific view stays small. cacheable.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-tree</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-tree</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Discover repository structure, definitions, signatures, and code locations as a compact token-budgeted map. Use <code>read</code> when the implementation itself is needed.</p>
+<p><strong>Key arguments:</strong> <code>path</code> (subtree to map; <code>@source</code> aliases accepted), optional <code>focus</code> (identifiers/filename fragments to boost in ranking), <code>max_tokens</code> (default 1500, hard cap 2000).</p>
+<p>The map ranks definitions and references so a task-specific view stays small. Cacheable.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-git-6d5e68b688" data-depth="1" data-search-text="tool-git
+**purpose:** inspect git repositories and clone repositories for exploration — read-only by design.
+
+**actions:** `status`, `diff`, `log`, `show`, `blame`, `branches`, `remotes`, `root`, `rev_parse`, `clone`, `ls_remote`. it cannot stage, commit, push, pull, fetch, checkout, reset, merge, rebase, clean, stash, or otherwise modify history or the index.
+
+**key arguments:** `action` (required); `path` (repository; defaults to `@source`), `ref`/`file` for log/show/blame/diff targets, `staged` to diff the index without touching it, `limit` for logs (default 30, max 200). `clone` takes a https `url` (network access), shallow `depth` (default 1), and an optional `destination` under `@tmp/repos`; it defaults to an ephemeral directory. `timeout` caps execution (default 30s).
+
+mutating classification is conservative (invalidates the tool cache) even though repository state is never changed.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-git</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-git</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Inspect Git repositories and clone repositories for exploration — read-only by design.</p>
+<p><strong>Actions:</strong> <code>status</code>, <code>diff</code>, <code>log</code>, <code>show</code>, <code>blame</code>, <code>branches</code>, <code>remotes</code>, <code>root</code>, <code>rev_parse</code>, <code>clone</code>, <code>ls_remote</code>. It cannot stage, commit, push, pull, fetch, checkout, reset, merge, rebase, clean, stash, or otherwise modify history or the index.</p>
+<p><strong>Key arguments:</strong> <code>action</code> (required); <code>path</code> (repository; defaults to <code>@source</code>), <code>ref</code>/<code>file</code> for log/show/blame/diff targets, <code>staged</code> to diff the index without touching it, <code>limit</code> for logs (default 30, max 200). <code>clone</code> takes a HTTPS <code>url</code> (network access), shallow <code>depth</code> (default 1), and an optional <code>destination</code> under <code>@tmp/repos</code>; it defaults to an ephemeral directory. <code>timeout</code> caps execution (default 30s).</p>
+<p>Mutating classification is conservative (invalidates the tool cache) even though repository state is never changed.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-materialize-9a06c4be8c" data-depth="1" data-search-text="tool-materialize
+**purpose:** preview or copy selected files from read-only `@source` into the lifecycle agent workspace. git is not required: tracked, untracked, and non-repository files are all eligible.
+
+**actions:** `preview` (report eligible scope without copying) and `copy` (default; additive — never overwrites files already copied or edited by the agent).
+
+**key arguments:** `paths` (source-relative files, directories, or globs; `&#x27;.&#x27;` copies the complete project), `include_ignored` to include soft-ignored files, `allow_large` to permit copies above the normal file/byte limits.
+
+directory and glob expansion obey ignore files by default; an exact file path overrides soft ignores. vcs internals are always excluded. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-materialize</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-materialize</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Preview or copy selected files from read-only <code>@source</code> into the lifecycle agent workspace. Git is not required: tracked, untracked, and non-repository files are all eligible.</p>
+<p><strong>Actions:</strong> <code>preview</code> (report eligible scope without copying) and <code>copy</code> (default; additive — never overwrites files already copied or edited by the agent).</p>
+<p><strong>Key arguments:</strong> <code>paths</code> (source-relative files, directories, or globs; <code>'.'</code> copies the complete project), <code>include_ignored</code> to include soft-ignored files, <code>allow_large</code> to permit copies above the normal file/byte limits.</p>
+<p>Directory and glob expansion obey ignore files by default; an exact file path overrides soft ignores. VCS internals are always excluded. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-commit-2b9453609c" data-depth="1" data-search-text="tool-commit
+**purpose:** inspect and stage changes in the agent workspace, then apply only staged file updates to `@source`. this is the sole path for verified changes to reach the read-only source repository.
+
+**actions:** `status` (staged + unstaged overview), `diff` (unstaged, or staged with `staged=true`), `stage` (stage workspace paths/pathspecs), `stage_patch` (add part of a unified diff to the private staging index), `unstage`, and `apply` (conflict-check against content originally materialized this process, then write back to `@source`).
+
+the private git repository lives outside the model-visible working directory; this tool never creates commits or touches the source repository&#x27;s index. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-commit</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-commit</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Inspect and stage changes in the agent workspace, then apply only staged file updates to <code>@source</code>. This is the sole path for verified changes to reach the read-only source repository.</p>
+<p><strong>Actions:</strong> <code>status</code> (staged + unstaged overview), <code>diff</code> (unstaged, or staged with <code>staged=true</code>), <code>stage</code> (stage workspace paths/pathspecs), <code>stage_patch</code> (add part of a unified diff to the private staging index), <code>unstage</code>, and <code>apply</code> (conflict-check against content originally materialized this process, then write back to <code>@source</code>).</p>
+<p>The private Git repository lives outside the model-visible working directory; this tool never creates commits or touches the source repository's index. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-bash-4c4ec8dd8c" data-depth="1" data-search-text="tool-bash
+**purpose:** execute one or more bash commands inside the local sandbox.
+
+**key arguments:** `cmd` (single command), `requests` (up to 20 independent commands, each with its own `cwd`, `timeout`, and network flag), `cwd` (defaults to the workspace; `@tmp`-style filesystem aliases supported), `timeout` (default 30s).
+
+**network:** disabled by default. a command may request it with `network=true` plus a required `reason`; unless globally allowed, the exact command is shown to the user for approval.
+
+filesystem writes are restricted to the active workspace and lifecycle agent filesystem; the rest of the host is read-only. environment variables such as `$citra_workspace`, `$citra_tmp`, and `$citra_cache` are available inside commands. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-bash</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-bash</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Execute one or more Bash commands inside the local sandbox.</p>
+<p><strong>Key arguments:</strong> <code>cmd</code> (single command), <code>requests</code> (up to 20 independent commands, each with its own <code>cwd</code>, <code>timeout</code>, and network flag), <code>cwd</code> (defaults to the workspace; <code>@tmp</code>-style filesystem aliases supported), <code>timeout</code> (default 30s).</p>
+<p><strong>Network:</strong> disabled by default. A command may request it with <code>network=true</code> plus a required <code>reason</code>; unless globally allowed, the exact command is shown to the user for approval.</p>
+<p>Filesystem writes are restricted to the active workspace and lifecycle agent filesystem; the rest of the host is read-only. Environment variables such as <code>$CITRA_WORKSPACE</code>, <code>$CITRA_TMP</code>, and <code>$CITRA_CACHE</code> are available inside commands. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-prompt-user-3619d7f6e7" data-depth="1" data-search-text="tool-prompt-user
+**purpose:** prompt the terminal user for input when a material decision cannot be inferred autonomously.
+
+**modes:** `plain-text` (open-ended `question`, no options) and option-list (`options` provided; the user picks a number or types free-form text).
+
+the timeout is an *inactivity* timeout (default 30s) reset by every keystroke. if the user stays idle the full interval, a `user-unavailable` result is returned and the model should pick the best answer itself. mutating (consumes user attention).">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-prompt-user</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-prompt-user</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Prompt the terminal user for input when a material decision cannot be inferred autonomously.</p>
+<p><strong>Modes:</strong> <code>plain-text</code> (open-ended <code>question</code>, no options) and option-list (<code>options</code> provided; the user picks a number or types free-form text).</p>
+<p>The timeout is an <em>inactivity</em> timeout (default 30s) reset by every keystroke. If the user stays idle the full interval, a <code>user-unavailable</code> result is returned and the model should pick the best answer itself. Mutating (consumes user attention).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-lsp-b21bfd2fd5" data-depth="1" data-search-text="tool-lsp
+**purpose:** semantic code intelligence through a persistent sandboxed language server.
+
+**actions:** `status` (installed/optional language-server dependencies), `diagnostics`, `hover`, `document_symbols`, and position-based queries: `definition`, `go_to_definition`, `declaration`, `type_definition`, `implementation`, `references` (`include_declaration` optional).
+
+position arguments `line` and `character` are 1-based. paths may live in any allowed citra filesystem root, including `@source` and `@tmp`. cacheable.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-lsp</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-lsp</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Semantic code intelligence through a persistent sandboxed language server.</p>
+<p><strong>Actions:</strong> <code>status</code> (installed/optional language-server dependencies), <code>diagnostics</code>, <code>hover</code>, <code>document_symbols</code>, and position-based queries: <code>definition</code>, <code>go_to_definition</code>, <code>declaration</code>, <code>type_definition</code>, <code>implementation</code>, <code>references</code> (<code>include_declaration</code> optional).</p>
+<p>Position arguments <code>line</code> and <code>character</code> are 1-based. Paths may live in any allowed Citra filesystem root, including <code>@source</code> and <code>@tmp</code>. Cacheable.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-skill-43ecd6941e" data-depth="1" data-search-text="tool-skill
+**purpose:** load the full instructions for one skill before performing the workflow it describes. skills contain task-specific operating instructions (memory semantics, sandbox rules, coding conventions, debugging workflows, etc.).
+
+**key arguments:** `name` — exactly as listed in the system prompt&#x27;s available-skills section. the registry and built-in skills are described in the *skills* section. mutating (changes model context).">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-skill</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-skill</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Load the full instructions for one skill before performing the workflow it describes. Skills contain task-specific operating instructions (memory semantics, sandbox rules, coding conventions, debugging workflows, etc.).</p>
+<p><strong>Key arguments:</strong> <code>name</code> — exactly as listed in the system prompt's available-skills section. The registry and built-in skills are described in the <em>skills</em> section. Mutating (changes model context).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-subprocess-01c4d90921" data-depth="1" data-search-text="tool-subprocess
+**purpose:** run or manage longer-lived subprocesses that outlive a single tool call.
+
+**key arguments:** `action` (`start`, `send_input`, `read_output`, `stop`, `list`), the command/`args`, `cwd`, and `timeout`. output is read incrementally so long-running servers and builds can be observed without blocking.
+
+enabled per turn via `enable_tools`; pairs with the `browser` tool for web-application debugging. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-subprocess</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-subprocess</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Run or manage longer-lived subprocesses that outlive a single tool call.</p>
+<p><strong>Key arguments:</strong> <code>action</code> (<code>start</code>, <code>send_input</code>, <code>read_output</code>, <code>stop</code>, <code>list</code>), the command/<code>args</code>, <code>cwd</code>, and <code>timeout</code>. Output is read incrementally so long-running servers and builds can be observed without blocking.</p>
+<p>Enabled per turn via <code>enable_tools</code>; pairs with the <code>browser</code> tool for web-application debugging. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-browser-97f0b9840f" data-depth="1" data-search-text="tool-browser
+**purpose:** interact with websites in a real browser — navigate, click, type, and read rendered pages.
+
+**key arguments:** `action` (`navigate`, `click`, `type`, `read_page`, `find`, `scroll`, `screenshot`), `url`, `selector`/css or text targets, and text to enter. backed by `browsermanager`/playwright chromium (`src/citra/utils/browser_manager.py`).
+
+enabled per turn via `enable_tools`. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-browser</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-browser</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Interact with websites in a real browser — navigate, click, type, and read rendered pages.</p>
+<p><strong>Key arguments:</strong> <code>action</code> (<code>navigate</code>, <code>click</code>, <code>type</code>, <code>read_page</code>, <code>find</code>, <code>scroll</code>, <code>screenshot</code>), <code>url</code>, <code>selector</code>/CSS or text targets, and text to enter. Backed by <code>BrowserManager</code>/Playwright Chromium (<code>src/citra/utils/browser_manager.py</code>).</p>
+<p>Enabled per turn via <code>enable_tools</code>. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-curl-80b9c782a4" data-depth="1" data-search-text="tool-curl
+**purpose:** make direct http requests without a browser — useful for apis, health checks, and debugging endpoints.
+
+**key arguments:** `action` (`request`), `url`, `method`, `headers`, `body`/json payload, and `timeout`. responses are returned with status, headers, and body.
+
+requires network access like any networked tool. enabled per turn via `enable_tools`; classified as mutating (conservative cache policy).">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-curl</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-curl</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Make direct HTTP requests without a browser — useful for APIs, health checks, and debugging endpoints.</p>
+<p><strong>Key arguments:</strong> <code>action</code> (<code>request</code>), <code>url</code>, <code>method</code>, <code>headers</code>, <code>body</code>/JSON payload, and <code>timeout</code>. Responses are returned with status, headers, and body.</p>
+<p>Requires network access like any networked tool. Enabled per turn via <code>enable_tools</code>; classified as mutating (conservative cache policy).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-web-search-6a7677ecdb" data-depth="1" data-search-text="tool-web-search
+**purpose:** search the public web through the configured searxng instance.
+
+**key arguments:** `query` (search terms), optional result-count/`timeout`. returns ranked results with titles, urls, and snippets.
+
+enabled per turn via `enable_tools`; requires network access. cacheable-classified conservative behavior applies as for other networked tools.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-web-search</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-web-search</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Search the public web through the configured SearXNG instance.</p>
+<p><strong>Key arguments:</strong> <code>query</code> (search terms), optional result-count/<code>timeout</code>. Returns ranked results with titles, URLs, and snippets.</p>
+<p>Enabled per turn via <code>enable_tools</code>; requires network access. Cacheable-classified conservative behavior applies as for other networked tools.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-document-f14cc3002b" data-depth="1" data-search-text="tool-document
+**purpose:** create, list, inspect, read, and edit structured citra documents (`&lt;name&gt;.citra.xml` with a derived `.html` view).
+
+**operations:** `create`, `list`, `inspect`, `validate`, `read`, `create_section`, `update_section`, `remove_section`, `update_title`, `update_versioning`, `render_html`. locations default to `@workspace`; `@library` holds persistent cross-project documents.
+
+**reading discipline:** use `inspect` for the index, then bounded section reads — the format is designed to keep large documents out of model context. section bodies are markdown; never hand-edit the xml when the tool can perform the operation.
+
+enabled per turn via `enable_tools`. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-document</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-document</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Create, list, inspect, read, and edit structured Citra documents (<code>&lt;name&gt;.citra.xml</code> with a derived <code>.html</code> view).</p>
+<p><strong>Operations:</strong> <code>create</code>, <code>list</code>, <code>inspect</code>, <code>validate</code>, <code>read</code>, <code>create_section</code>, <code>update_section</code>, <code>remove_section</code>, <code>update_title</code>, <code>update_versioning</code>, <code>render_html</code>. Locations default to <code>@workspace</code>; <code>@library</code> holds persistent cross-project documents.</p>
+<p><strong>Reading discipline:</strong> use <code>inspect</code> for the index, then bounded section reads — the format is designed to keep large documents out of model context. Section bodies are Markdown; never hand-edit the XML when the tool can perform the operation.</p>
+<p>Enabled per turn via <code>enable_tools</code>. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-diagram-19b2f1c7de" data-depth="1" data-search-text="tool-diagram
+**purpose:** create and maintain mermaid diagrams associated with a citra document. the tool stores the `.mmd` source (authoritative) and renders the derived `.svg` used by document html.
+
+**workflow:** create/update the mermaid source through this tool, let it validate and render, then insert the markdown image reference it returns into the document via the `document` tool. never edit generated svgs or hand-write asset paths.
+
+enabled per turn via `enable_tools`. mutating.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-diagram</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-diagram</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Create and maintain Mermaid diagrams associated with a Citra document. The tool stores the <code>.mmd</code> source (authoritative) and renders the derived <code>.svg</code> used by document HTML.</p>
+<p><strong>Workflow:</strong> create/update the Mermaid source through this tool, let it validate and render, then insert the Markdown image reference it returns into the document via the <code>document</code> tool. Never edit generated SVGs or hand-write asset paths.</p>
+<p>Enabled per turn via <code>enable_tools</code>. Mutating.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-tool-enable-tools-d62c89f11c" data-depth="1" data-search-text="tool-enable-tools
+**purpose:** enable one or more deferred tools for the remainder of the current agent turn. deferred tools stay registered but out of model calls until explicitly enabled (`src/citra/tools/enable_tools.py`).
+
+**key arguments:** `tools` — array of deferred tool ids from the fixed catalog: `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`.
+
+enable a tool only when its capability is actually needed; the enabled set is scoped to the current turn. mutating (changes the visible tool surface).">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-enable-tools</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-enable-tools</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Enable one or more deferred tools for the remainder of the current agent turn. Deferred tools stay registered but out of model calls until explicitly enabled (<code>src/citra/tools/enable_tools.py</code>).</p>
+<p><strong>Key arguments:</strong> <code>tools</code> — array of deferred tool ids from the fixed catalog: <code>subprocess</code>, <code>browser</code>, <code>curl</code>, <code>web_search</code>, <code>document</code>, <code>diagram</code>.</p>
+<p>Enable a tool only when its capability is actually needed; the enabled set is scoped to the current turn. Mutating (changes the visible tool surface).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-tools-e78cdc4e3d" data-depth="1" data-search-text="memory-tools
+six session-owned memory tools persist structured state for the lifetime of a conversation (`src/citra/tools/session_memory/`). they extend the `memorytool` → `sessiontool` → `tool` hierarchy and are registered as **core** tools so retained memory always stays visible to the model. state lives in a shared `conversationmemorystate` owned by the `agentsession`; it survives turn boundaries and history compaction but is process-local — nothing is written to disk automatically.
+
+**promotion model:** durable memory (todo/fact/decision/constraint) is created by *promoting* a provisional `working_state`, preserving provenance via `promotionref(kind, memory_id)`. a single working state may produce several durable entries. the one exception is `checkpoint`, which is set directly because it is derived handoff state, not a belief.
+
+per-tool actions and rules: see the subsections below. architecture-level discussion of ownership and context injection lives in *conversation-memory*.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools</div>
+<div class="section-heading-row">
+<button type="button" class="section-toggle" data-target="section-memory-tools-e78cdc4e3d" aria-expanded="true" aria-label="Collapse section">&minus;</button>
+<h3>memory-tools</h3>
+</div>
+</header>
+<div class="section-body">
+<p>Six session-owned memory tools persist structured state for the lifetime of a conversation (<code>src/citra/tools/session_memory/</code>). They extend the <code>MemoryTool</code> → <code>SessionTool</code> → <code>Tool</code> hierarchy and are registered as <strong>core</strong> tools so retained memory always stays visible to the model. State lives in a shared <code>ConversationMemoryState</code> owned by the <code>AgentSession</code>; it survives turn boundaries and history compaction but is process-local — nothing is written to disk automatically.</p>
+<p><strong>Promotion model:</strong> durable memory (todo/fact/decision/constraint) is created by <em>promoting</em> a provisional <code>working_state</code>, preserving provenance via <code>PromotionRef(kind, memory_id)</code>. A single working state may produce several durable entries. The one exception is <code>checkpoint</code>, which is set directly because it is derived handoff state, not a belief.</p>
+<p>Per-tool actions and rules: see the subsections below. Architecture-level discussion of ownership and context injection lives in <em>conversation-memory</em>.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-working-state-e6e67bebdf" data-depth="2" data-search-text="memory-working-state
+**purpose:** provisional reasoning that must survive context trimming: hypotheses, tentative interpretations, investigation plans. the seed for all durable memory; not authoritative.
+
+**actions:** `create` (`content` or `contents` batch), `update` (exactly one `id` + `content`), `resolve` (requires at least one durable promotion per id), `discard` (allowed only with no promotions — promoted states must be resolved instead).
+
+records track created/updated turn numbers and their promotions; promoted or resolved states can no longer be mutated. renders as `[w1] …` entries with a `promoted:` line when applicable.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools<span class="breadcrumb-separator"> / </span>memory-working-state</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h4>memory-working-state</h4>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Provisional reasoning that must survive context trimming: hypotheses, tentative interpretations, investigation plans. The seed for all durable memory; not authoritative.</p>
+<p><strong>Actions:</strong> <code>create</code> (<code>content</code> or <code>contents</code> batch), <code>update</code> (exactly one <code>id</code> + <code>content</code>), <code>resolve</code> (requires at least one durable promotion per id), <code>discard</code> (allowed only with no promotions — promoted states must be resolved instead).</p>
+<p>Records track created/updated turn numbers and their promotions; promoted or resolved states can no longer be mutated. Renders as <code>[W1] …</code> entries with a <code>promoted:</code> line when applicable.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-todo-eae807faa0" data-depth="2" data-search-text="memory-todo
+**purpose:** hierarchical eager todo list of required work. always promoted from working state (or added directly when the requirement is already established).
+
+**actions:**
+- `add` / `insert` — direct entries (`content`/`contents`, optional `parent_id` for sub-steps, `index` for sibling position; `insert` places one entry at a position).
+- `promote` — create todos from working state ids, optionally overriding content.
+- `check` — mark completed. a todo cannot be checked while descendants are incomplete; checking a todo whose ancestor was completed reopens that ancestor.
+- `remove` — delete stale/invalid entries *including descendants*. removal is **not** completion.
+
+storage is pre-order so subtrees stay contiguous; indentation derives from ancestry depth. outstanding todos should block agent completion — enforced by the runtime, not the tool.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools<span class="breadcrumb-separator"> / </span>memory-todo</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h4>memory-todo</h4>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Hierarchical eager TODO list of required work. Always promoted from working state (or added directly when the requirement is already established).</p>
+<p><strong>Actions:</strong>
+- <code>add</code> / <code>insert</code> — direct entries (<code>content</code>/<code>contents</code>, optional <code>parent_id</code> for sub-steps, <code>index</code> for sibling position; <code>insert</code> places one entry at a position).
+- <code>promote</code> — create TODOs from working state ids, optionally overriding content.
+- <code>check</code> — mark completed. A TODO cannot be checked while descendants are incomplete; checking a TODO whose ancestor was completed reopens that ancestor.
+- <code>remove</code> — delete stale/invalid entries <em>including descendants</em>. Removal is <strong>not</strong> completion.</p>
+<p>Storage is pre-order so subtrees stay contiguous; indentation derives from ancestry depth. Outstanding TODOs should block agent completion — enforced by the runtime, not the tool.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-fact-620b5242aa" data-depth="2" data-search-text="memory-fact
+**purpose:** verified information with optional file/url citations. promoted from working state when provenance matters, or added directly for established facts.
+
+**actions:** `add` (single `content`, or batch via `facts`; citations attach to promoted entries), `promote` (from one or more working states), `remove` (stale/incorrect facts).
+
+**citations:** `{type, source, line?, end_line?, reference?}` —
+- `file`: workspace-relative path plus optional 1-based `line`/`end_line` (`end_line` requires `line` and must not precede it; `reference` is invalid here).
+- `url`: url in `source` plus optional `reference`; line fields are invalid.
+
+renders as `[id] content` with origin/citation lines beneath.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools<span class="breadcrumb-separator"> / </span>memory-fact</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h4>memory-fact</h4>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Verified information with optional file/URL citations. Promoted from working state when provenance matters, or added directly for established facts.</p>
+<p><strong>Actions:</strong> <code>add</code> (single <code>content</code>, or batch via <code>facts</code>; citations attach to promoted entries), <code>promote</code> (from one or more working states), <code>remove</code> (stale/incorrect facts).</p>
+<p><strong>Citations:</strong> <code>{type, source, line?, end_line?, reference?}</code> —
+- <code>file</code>: workspace-relative path plus optional 1-based <code>line</code>/<code>end_line</code> (<code>end_line</code> requires <code>line</code> and must not precede it; <code>reference</code> is invalid here).
+- <code>url</code>: URL in <code>source</code> plus optional <code>reference</code>; line fields are invalid.</p>
+<p>Renders as <code>[id] content</code> with origin/citation lines beneath.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-decision-7c75cd58e2" data-depth="2" data-search-text="memory-decision
+**purpose:** implementation, architecture, behavioral, or design choices that later work must stay consistent with.
+
+**actions:** `add` (direct, batch via `contents`), `promote` (from working states; a batch of promotions turns each into a decision), `remove` (stale or superseded decisions).
+
+decisions are strong candidates for end-of-run documentation: the tool signals `should_offer_documentation() = true` when any exist (advisory only — nothing is written automatically).">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools<span class="breadcrumb-separator"> / </span>memory-decision</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h4>memory-decision</h4>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Implementation, architecture, behavioral, or design choices that later work must stay consistent with.</p>
+<p><strong>Actions:</strong> <code>add</code> (direct, batch via <code>contents</code>), <code>promote</code> (from working states; a batch of promotions turns each into a decision), <code>remove</code> (stale or superseded decisions).</p>
+<p>Decisions are strong candidates for end-of-run documentation: the tool signals <code>should_offer_documentation() = True</code> when any exist (advisory only — nothing is written automatically).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-constraint-fa3ca67dbe" data-depth="2" data-search-text="memory-constraint
+**purpose:** active requirements and invariants that must remain true for the rest of the run (e.g. compatibility boundaries, verification obligations).
+
+**actions:** `add` (direct, batch via `contents`), `promote` (from working states), `remove` (stale or inapplicable constraints).
+
+constraints are reintroduced into model context on subsequent iterations so the agent cannot forget them; like decisions, they flag documentation candidacy when present.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools<span class="breadcrumb-separator"> / </span>memory-constraint</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h4>memory-constraint</h4>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Active requirements and invariants that must remain true for the rest of the run (e.g. compatibility boundaries, verification obligations).</p>
+<p><strong>Actions:</strong> <code>add</code> (direct, batch via <code>contents</code>), <code>promote</code> (from working states), <code>remove</code> (stale or inapplicable constraints).</p>
+<p>Constraints are reintroduced into model context on subsequent iterations so the agent cannot forget them; like decisions, they flag documentation candidacy when present.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-memory-checkpoint-ab5790dff4" data-depth="2" data-search-text="memory-checkpoint
+**purpose:** one authoritative compact resume point for the conversation: current state plus a concrete next action. independent handoff state — never promoted from working state.
+
+**actions:** `set` (`content` required, `next_step` optional), `clear`. setting again replaces the previous checkpoint; there is at most one at any time.
+
+use it when unfinished work may continue after context loss or a later turn.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>memory-tools<span class="breadcrumb-separator"> / </span>memory-checkpoint</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h4>memory-checkpoint</h4>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> One authoritative compact resume point for the conversation: current state plus a concrete next action. Independent handoff state — never promoted from working state.</p>
+<p><strong>Actions:</strong> <code>set</code> (<code>content</code> required, <code>next_step</code> optional), <code>clear</code>. Setting again replaces the previous checkpoint; there is at most one at any time.</p>
+<p>Use it when unfinished work may continue after context loss or a later turn.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-context-layer-dd3f106fd7" data-depth="0" data-search-text="context-layer
+## executioncontext
+
+`executioncontext` is the frozen service locator handed to every tool (`src/citra/context/execution_context.py:24`). `__post_init__` normalizes the os name (darwin → macos), loads config if not provided, and constructs the long-lived services: `workspacesandbox`, `sandboxedfilesystem`, `managedsubprocesses`, `browsermanager`, and `repomap` (`execution_context.py:51`). because the dataclass is frozen, services are attached via `object.__setattr__`.
+
+useful capabilities:
+
+- `os`, `config`, `sandbox`, `filesystem`, `subprocesses`, `browser`, `repo_map` properties (`execution_context.py:124`).
+- `close()` shuts down lsp, browser, and subprocesses in order (`execution_context.py:160`).
+- `truncate_output()` caps model-facing text using the *active model&#x27;s tokenizer*, cutting at a newline boundary and appending an explicit truncation notice (default limit 2 000 tokens, `execution_context.py:20`, method at `execution_context.py:188`).
+
+## workspacecontext
+
+`workspacecontext` describes one running process&#x27;s filesystem (`src/citra/context/turn_workspace.py:37`). it exposes path aliases similar to `~/` — `@workspace`, `@source`, `@library`, `@home`, `@tmp`, `@cache`, `@config`, `@data`, `@runtime` (`turn_workspace.py:20`). invariants from its docstring: `source_workspace` is permanent and read-only to general tools; `workspace` starts empty inside the lifecycle root; only `changes` may write back to source (`turn_workspace.py:63`); everything is removed when the lifecycle closes. `resolve_path`/`display_path` enforce alias resolution and safe display strings.
+
+## workspacechanges
+
+`workspacechanges` owns the private baseline + staging index for one lifecycle, stored *outside* the model-visible working directory; it never writes the source repository&#x27;s index or history (`src/citra/context/workspace_changes.py:137`). key operations:
+
+- `materialize(...)` copies selected source files into the workspace, respecting ignore files, hard exclusions, byte limits, and preview mode; results are reported as a `materializationresult` with per-category counts (`workspace_changes.py:22`, method at `workspace_changes.py:243`).
+- `stage(...)`, `stage_patch(...)`, and `apply(...)` implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (`workspace_changes.py:718`, `workspace_changes.py:738`, `workspace_changes.py:800`).
+- conflicts surface as `workspaceconflicterror`; internal git failures as `gitcommanderror` (`workspace_changes.py:13`). a `sourcesnapshot` records the baseline state for conflict detection (`workspace_changes.py:102`).">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>context-layer</h2>
+</div>
+</header>
+<div class="section-body">
+<h2>ExecutionContext</h2>
+<p><code>ExecutionContext</code> is the frozen service locator handed to every tool (<code>src/citra/context/execution_context.py:24</code>). <code>__post_init__</code> normalizes the OS name (darwin → macos), loads config if not provided, and constructs the long-lived services: <code>WorkspaceSandbox</code>, <code>SandboxedFilesystem</code>, <code>ManagedSubprocesses</code>, <code>BrowserManager</code>, and <code>RepoMap</code> (<code>execution_context.py:51</code>). Because the dataclass is frozen, services are attached via <code>object.__setattr__</code>.</p>
+<p>Useful capabilities:</p>
+<ul>
+<li><code>os</code>, <code>config</code>, <code>sandbox</code>, <code>filesystem</code>, <code>subprocesses</code>, <code>browser</code>, <code>repo_map</code> properties (<code>execution_context.py:124</code>).</li>
+<li><code>close()</code> shuts down LSP, browser, and subprocesses in order (<code>execution_context.py:160</code>).</li>
+<li><code>truncate_output()</code> caps model-facing text using the <em>active model's tokenizer</em>, cutting at a newline boundary and appending an explicit truncation notice (default limit 2 000 tokens, <code>execution_context.py:20</code>, method at <code>execution_context.py:188</code>).</li>
+</ul>
+<h2>WorkspaceContext</h2>
+<p><code>WorkspaceContext</code> describes one running process's filesystem (<code>src/citra/context/turn_workspace.py:37</code>). It exposes path aliases similar to <code>~/</code> — <code>@workspace</code>, <code>@source</code>, <code>@library</code>, <code>@home</code>, <code>@tmp</code>, <code>@cache</code>, <code>@config</code>, <code>@data</code>, <code>@runtime</code> (<code>turn_workspace.py:20</code>). Invariants from its docstring: <code>source_workspace</code> is permanent and read-only to general tools; <code>workspace</code> starts empty inside the lifecycle root; only <code>changes</code> may write back to source (<code>turn_workspace.py:63</code>); everything is removed when the lifecycle closes. <code>resolve_path</code>/<code>display_path</code> enforce alias resolution and safe display strings.</p>
+<h2>WorkspaceChanges</h2>
+<p><code>WorkspaceChanges</code> owns the private baseline + staging index for one lifecycle, stored <em>outside</em> the model-visible working directory; it never writes the source repository's index or history (<code>src/citra/context/workspace_changes.py:137</code>). Key operations:</p>
+<ul>
+<li><code>materialize(...)</code> copies selected source files into the workspace, respecting ignore files, hard exclusions, byte limits, and preview mode; results are reported as a <code>MaterializationResult</code> with per-category counts (<code>workspace_changes.py:22</code>, method at <code>workspace_changes.py:243</code>).</li>
+<li><code>stage(...)</code>, <code>stage_patch(...)</code>, and <code>apply(...)</code> implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (<code>workspace_changes.py:718</code>, <code>workspace_changes.py:738</code>, <code>workspace_changes.py:800</code>).</li>
+<li>Conflicts surface as <code>WorkspaceConflictError</code>; internal git failures as <code>GitCommandError</code> (<code>workspace_changes.py:13</code>). A <code>SourceSnapshot</code> records the baseline state for conflict detection (<code>workspace_changes.py:102</code>).</li>
+</ul>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-lsp-subsystem-ab5d88f4b0" data-depth="0" data-search-text="lsp-subsystem
+the lsp stack lives under `src/citra/tools/lsp/` and is exposed to the model as the single `lsp` tool plus managed by `/lsp` commands.
+
+## components
+
+- **lspmanager** — &quot;keep one healthy server per server identity/project root for the process&quot; (`src/citra/tools/lsp/manager.py:58`). handles discovery, startup, reuse, shutdown, install candidates, and diagnostics timeouts configured through `lspconfig` (`enabled`, startup/request/diagnostics timeouts, json fallback) built from config at application construction (`src/citra/application.py:44`).
+- **jsonrpctransport** — owns framing, request correlation, reader threads, and server callbacks; keeps a `stderr_tail` for error reporting (`src/citra/tools/lsp/transport.py`).
+- **lspclient** — high-level lifecycle and semantic operations (hover, definition, references, diagnostics) for one server, tracking document versions/generations and both push and pull diagnostics (`src/citra/tools/lsp/client.py:1`).
+- **language support** — `language` enum with `detect_language(path)` (`lsp/language.py`); server definitions for pyright and typescript live in `lsp/servers/pyright.py` and `lsp/servers/typescript.py` behind `servers` / `server_aliases`.
+- **installer** — resolves `installcandidate`s and executes installs when a needed server binary is missing (`lsp/installer.py`).
+
+errors are typed: `lsperror` → `lspprotocolerror`, `lspstartuperror`, `lspdiagnosticstimeout`, `lspunavailable` (`lsp/errors.py`). the manager tolerates being absent (`executioncontext.lsp_manager` is optional and closed reflectively, `src/citra/context/execution_context.py:160`).
+
+## testing
+
+the lsp subsystem has dedicated suites: unit tests against a fake server (`tests/fake_lsp_server.py`, `tests/test_lsp.py`), a matrix suite (`tests/test_lsp_matrix.py`), real-server matrix tests (`tests/test_lsp_real_matrix.py`), and reliability/restart tests (`tests/test_lsp_reliability.py`).
+">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>lsp-subsystem</h2>
+</div>
+</header>
+<div class="section-body">
+<p>The LSP stack lives under <code>src/citra/tools/lsp/</code> and is exposed to the model as the single <code>lsp</code> tool plus managed by <code>/lsp</code> commands.</p>
+<h2>Components</h2>
+<ul>
+<li><strong>LspManager</strong> — "keep one healthy server per server identity/project root for the process" (<code>src/citra/tools/lsp/manager.py:58</code>). Handles discovery, startup, reuse, shutdown, install candidates, and diagnostics timeouts configured through <code>LspConfig</code> (<code>enabled</code>, startup/request/diagnostics timeouts, JSON fallback) built from config at application construction (<code>src/citra/application.py:44</code>).</li>
+<li><strong>JsonRpcTransport</strong> — owns framing, request correlation, reader threads, and server callbacks; keeps a <code>stderr_tail</code> for error reporting (<code>src/citra/tools/lsp/transport.py</code>).</li>
+<li><strong>LspClient</strong> — high-level lifecycle and semantic operations (hover, definition, references, diagnostics) for one server, tracking document versions/generations and both push and pull diagnostics (<code>src/citra/tools/lsp/client.py:1</code>).</li>
+<li><strong>Language support</strong> — <code>Language</code> enum with <code>detect_language(path)</code> (<code>lsp/language.py</code>); server definitions for pyright and TypeScript live in <code>lsp/servers/pyright.py</code> and <code>lsp/servers/typescript.py</code> behind <code>SERVERS</code> / <code>SERVER_ALIASES</code>.</li>
+<li><strong>Installer</strong> — resolves <code>InstallCandidate</code>s and executes installs when a needed server binary is missing (<code>lsp/installer.py</code>).</li>
+</ul>
+<p>Errors are typed: <code>LspError</code> → <code>LspProtocolError</code>, <code>LspStartupError</code>, <code>LspDiagnosticsTimeout</code>, <code>LspUnavailable</code> (<code>lsp/errors.py</code>). The manager tolerates being absent (<code>ExecutionContext.lsp_manager</code> is optional and closed reflectively, <code>src/citra/context/execution_context.py:160</code>).</p>
+<h2>Testing</h2>
+<p>The LSP subsystem has dedicated suites: unit tests against a fake server (<code>tests/fake_lsp_server.py</code>, <code>tests/test_lsp.py</code>), a matrix suite (<code>tests/test_lsp_matrix.py</code>), real-server matrix tests (<code>tests/test_lsp_real_matrix.py</code>), and reliability/restart tests (<code>tests/test_lsp_reliability.py</code>).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-skills-32c1cf49a2" data-depth="0" data-search-text="skills
+skills are conditionally loaded instruction packs. the data model is deliberately small: a `skill` is a name, description, and optional directory containing `skill.toml` + `skill.md`; `get_md()` returns the full instructions from disk (`src/citra/tools/skills/skill.py:14`).
+
+`skillregistry` registers the built-in set and resolves the skills root from `citra_install_root/skills` when no explicit root is given (`src/citra/tools/skills/skill_registry.py:25`). built-in skills:
+
+- `taskrecognition` — citra memory-system semantics (todo/fact/decision/constraint/working state usage).
+- `sandboxenvironment` — filesystem, process, network, and host-boundary rules.
+- `codingconventions` — correct patterns for code projects.
+- `webappdebugging` — running/reproducing web apps with subprocess + browser tools.
+- `translator` — game localization reverse-engineering workflow.
+- `citradocsskill` — how to author structured citra documents.
+
+the `skill` tool (core, `src/citra/tools/default_registry.py:22`) lets the model load a skill&#x27;s instructions on demand; the system prompt advertises available skill names (`src/citra/utils/prompt.py`).
+
+## citra documents
+
+the document format itself is implemented in `utils/citra_doc.py`: an xml file (`&lt;name&gt;.citra.xml`) with `&lt;title&gt;`, `&lt;versioning&gt;`, a hierarchical `&lt;index&gt;` of globally unique `&lt;entry&gt;` names, and flat markdown `&lt;section&gt;` bodies (`src/citra/utils/citra_doc.py:14`). malformed files raise `citradocformaterror` (`citra_doc.py:24`). the `document` tool wraps this format with inspect/read/edit operations; the `diagram` tool pairs documents with mermaid assets rendered via `utils/mermaid.py`.
+
+the generated `.html` view (built by `document._build_html`, `src/citra/tools/transient/document.py`) is a self-contained static page with client-side interactivity:
+
+- **collapsible sections** — sections with children render a `−/+` toggle; collapsing hides the section body *and* all descendant sections on both the page and the sidebar contents tree. opening an anchor link automatically expands collapsed ancestors.
+- **search** — the sidebar search box filters sections by title *and* body content (each section embeds its raw markdown as a `data-search-text` attribute), hides non-matching sections and nav entries, and reports the match count.
+- **light/dark theme** — follows `prefers-color-scheme` by default; a `theme: auto/light/dark` sidebar button overrides it and persists via `localstorage`. because mermaid svgs are rendered with a fixed light theme, dark mode applies an invert filter (`invert(0.92) hue-rotate(180deg)` to `img[src$=&quot;.svg&quot;]`) so black strokes stay visible.">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>skills</h2>
+</div>
+</header>
+<div class="section-body">
+<p>Skills are conditionally loaded instruction packs. The data model is deliberately small: a <code>Skill</code> is a name, description, and optional directory containing <code>skill.toml</code> + <code>SKILL.md</code>; <code>get_md()</code> returns the full instructions from disk (<code>src/citra/tools/skills/skill.py:14</code>).</p>
+<p><code>SkillRegistry</code> registers the built-in set and resolves the skills root from <code>CITRA_INSTALL_ROOT/skills</code> when no explicit root is given (<code>src/citra/tools/skills/skill_registry.py:25</code>). Built-in skills:</p>
+<ul>
+<li><code>TaskRecognition</code> — Citra memory-system semantics (todo/fact/decision/constraint/working state usage).</li>
+<li><code>SandboxEnvironment</code> — filesystem, process, network, and host-boundary rules.</li>
+<li><code>CodingConventions</code> — correct patterns for code projects.</li>
+<li><code>WebAppDebugging</code> — running/reproducing web apps with subprocess + browser tools.</li>
+<li><code>Translator</code> — game localization reverse-engineering workflow.</li>
+<li><code>CitraDocsSkill</code> — how to author structured Citra documents.</li>
+</ul>
+<p>The <code>skill</code> tool (core, <code>src/citra/tools/default_registry.py:22</code>) lets the model load a skill's instructions on demand; the system prompt advertises available skill names (<code>src/citra/utils/prompt.py</code>).</p>
+<h2>Citra documents</h2>
+<p>The document format itself is implemented in <code>utils/citra_doc.py</code>: an XML file (<code>&lt;name&gt;.citra.xml</code>) with <code>&lt;title&gt;</code>, <code>&lt;versioning&gt;</code>, a hierarchical <code>&lt;index&gt;</code> of globally unique <code>&lt;entry&gt;</code> names, and flat Markdown <code>&lt;section&gt;</code> bodies (<code>src/citra/utils/citra_doc.py:14</code>). Malformed files raise <code>CitraDocFormatError</code> (<code>citra_doc.py:24</code>). The <code>document</code> tool wraps this format with inspect/read/edit operations; the <code>diagram</code> tool pairs documents with Mermaid assets rendered via <code>utils/mermaid.py</code>.</p>
+<p>The generated <code>.html</code> view (built by <code>Document._build_html</code>, <code>src/citra/tools/transient/document.py</code>) is a self-contained static page with client-side interactivity:</p>
+<ul>
+<li><strong>Collapsible sections</strong> — sections with children render a <code>−/+</code> toggle; collapsing hides the section body <em>and</em> all descendant sections on both the page and the sidebar contents tree. Opening an anchor link automatically expands collapsed ancestors.</li>
+<li><strong>Search</strong> — the sidebar search box filters sections by title <em>and</em> body content (each section embeds its raw Markdown as a <code>data-search-text</code> attribute), hides non-matching sections and nav entries, and reports the match count.</li>
+<li><strong>Light/dark theme</strong> — follows <code>prefers-color-scheme</code> by default; a <code>Theme: Auto/Light/Dark</code> sidebar button overrides it and persists via <code>localStorage</code>. Because Mermaid SVGs are rendered with a fixed light theme, dark mode applies an invert filter (<code>invert(0.92) hue-rotate(180deg)</code> to <code>img[src$=".svg"]</code>) so black strokes stay visible.</li>
+</ul>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-sandbox-and-workers-65d389e511" data-depth="0" data-search-text="sandbox-and-workers
+## bubblewrap policy
+
+`workspacesandbox` builds `bwrap` command lines under an explicit policy (`src/citra/utils/sandbox.py:12`):
+
+1. host root `/` binds read-only as a compatibility baseline (distro layouts, linkers, ca stores) (`sandbox.py:37`).
+2. sensitive host trees — `/home`, `/root`, `/run`, `/tmp`, `/var/tmp`, `/mnt`, `/media`, `/srv`, `/boot` — are masked with empty tmpfs (`sandbox.py:45`).
+3. only citra lifecycle directories rebind writable: `workspace`, `cache`, `config`, `data`, `home`; **`state` is excluded** so control-plane bookkeeping (baseline/index/git) is never exposed to arbitrary commands (`sandbox.py:65`).
+4. the source workspace is rebound read-only both at its original absolute path and at `&lt;workspace&gt;/@source`.
+
+because bubblewrap applies mounts in order, later binds intentionally override earlier ones.
+
+## filesystem worker
+
+filesystem tools do not traverse the host directly. `workers/filesystem.py` runs as a sandbox-side helper: it reads one json request on stdin, performs traversal/read/write *after* bwrap installed the mount policy, and answers with one json response on stdout. no model-supplied code is evaluated (`src/citra/workers/filesystem.py:1`). it enforces hard limits — 16 mib requests, 2m output chars, 20 files per read batch, 50 grep results, tree depth ≤ 20 / entries ≤ 5000 — and skips vcs/cache directories by default (`filesystem.py:19`).
+
+`sandboxedfilesystem` (`utils/sandboxed_filesystem.py`) is the controller-side authority that validates paths against sandbox mounts and delegates to the worker; `scopedfilesystem` in workers mirrors the same resolution rules inside the sandbox (`src/citra/workers/filesystem.py:9`).
+
+## process and browser ownership
+
+- `managedsubprocesses` owns long-lived commands until stopped or citra exits, listing their status for the `subprocess` tool (`src/citra/utils/managed_subprocess.py`).
+- `browsermanager` owns json-rpc communication with the browser worker (`src/citra/utils/browser_manager.py:1`, worker in `utils/browser_worker.py`) backed by playwright chromium; navigation runs in a network-capable sandbox with request interception blocking unapproved origins, and unsafe actions (`evaluate`, `upload`) require per-call approval unless allow-listed in config (`config-template.toml:30`).">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>sandbox-and-workers</h2>
+</div>
+</header>
+<div class="section-body">
+<h2>Bubblewrap policy</h2>
+<p><code>WorkspaceSandbox</code> builds <code>bwrap</code> command lines under an explicit policy (<code>src/citra/utils/sandbox.py:12</code>):</p>
+<ol>
+<li>Host root <code>/</code> binds read-only as a compatibility baseline (distro layouts, linkers, CA stores) (<code>sandbox.py:37</code>).</li>
+<li>Sensitive host trees — <code>/home</code>, <code>/root</code>, <code>/run</code>, <code>/tmp</code>, <code>/var/tmp</code>, <code>/mnt</code>, <code>/media</code>, <code>/srv</code>, <code>/boot</code> — are masked with empty tmpfs (<code>sandbox.py:45</code>).</li>
+<li>Only Citra lifecycle directories rebind writable: <code>workspace</code>, <code>cache</code>, <code>config</code>, <code>data</code>, <code>home</code>; <strong><code>state</code> is excluded</strong> so control-plane bookkeeping (baseline/index/git) is never exposed to arbitrary commands (<code>sandbox.py:65</code>).</li>
+<li>The source workspace is rebound read-only both at its original absolute path and at <code>&lt;workspace&gt;/@source</code>.</li>
+</ol>
+<p>Because bubblewrap applies mounts in order, later binds intentionally override earlier ones.</p>
+<h2>Filesystem worker</h2>
+<p>Filesystem tools do not traverse the host directly. <code>workers/filesystem.py</code> runs as a sandbox-side helper: it reads one JSON request on stdin, performs traversal/read/write <em>after</em> bwrap installed the mount policy, and answers with one JSON response on stdout. No model-supplied code is evaluated (<code>src/citra/workers/filesystem.py:1</code>). It enforces hard limits — 16 MiB requests, 2M output chars, 20 files per read batch, 50 grep results, tree depth ≤ 20 / entries ≤ 5000 — and skips VCS/cache directories by default (<code>filesystem.py:19</code>).</p>
+<p><code>SandboxedFilesystem</code> (<code>utils/sandboxed_filesystem.py</code>) is the controller-side authority that validates paths against sandbox mounts and delegates to the worker; <code>ScopedFilesystem</code> in workers mirrors the same resolution rules inside the sandbox (<code>src/citra/workers/filesystem.py:9</code>).</p>
+<h2>Process and browser ownership</h2>
+<ul>
+<li><code>ManagedSubprocesses</code> owns long-lived commands until stopped or Citra exits, listing their status for the <code>subprocess</code> tool (<code>src/citra/utils/managed_subprocess.py</code>).</li>
+<li><code>BrowserManager</code> owns JSON-RPC communication with the browser worker (<code>src/citra/utils/browser_manager.py:1</code>, worker in <code>utils/browser_worker.py</code>) backed by Playwright Chromium; navigation runs in a network-capable sandbox with request interception blocking unapproved origins, and unsafe actions (<code>evaluate</code>, <code>upload</code>) require per-call approval unless allow-listed in config (<code>config-template.toml:30</code>).</li>
+</ul>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-slash-commands-5c9e1b5242" data-depth="0" data-search-text="slash-commands
+slash commands are lightweight, synchronous operations executed on the foreground thread — unlike tools, they never touch the model directly.
+
+`commandresult` is a frozen record of output text, whether history should be cleared, and whether the repl should exit (`src/citra/commands/command.py`). commands instantiate from `command_registry` via `citraapplication.handle_command` (`src/citra/application.py:96`). each command receives the raw argument text typed *after* the command name (already stripped).
+
+registered commands (`src/citra/commands/default_registry.py:15`):
+
+| id | class | behavior |
+|----|-------|----------|
+| `/q` | `quitcommand` | exits (also accepts `/exit`, normalized in `application.py:101`) |
+| `/c` | `clearcommand` | clears conversation history + memory |
+| `/help` | `helpcommand` | lists commands |
+| `/test` | `testcommand` | runs setup diagnostic checks |
+| `/model` | `modelcommand` | views/updates `[model]` config via `modelconfigstore` |
+| `/lsp` | `lspcommand` | inspects/manages language servers |
+| `/debug` | `debugcommand` | toggles grey model-request debug output |
+
+new commands register exactly like new tools: import the class and add it to the registry (`src/citra/commands/default_registry.py:5`). per-command usage is documented in the subsections below.">
+<header class="section-header">
+
+<div class="section-heading-row">
+<button type="button" class="section-toggle" data-target="section-slash-commands-5c9e1b5242" aria-expanded="true" aria-label="Collapse section">&minus;</button>
+<h2>slash-commands</h2>
+</div>
+</header>
+<div class="section-body">
+<p>Slash commands are lightweight, synchronous operations executed on the foreground thread — unlike tools, they never touch the model directly.</p>
+<p><code>CommandResult</code> is a frozen record of output text, whether history should be cleared, and whether the REPL should exit (<code>src/citra/commands/command.py</code>). Commands instantiate from <code>COMMAND_REGISTRY</code> via <code>CitraApplication.handle_command</code> (<code>src/citra/application.py:96</code>). Each command receives the raw argument text typed <em>after</em> the command name (already stripped).</p>
+<p>Registered commands (<code>src/citra/commands/default_registry.py:15</code>):</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Class</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/q</code></td>
+<td><code>QuitCommand</code></td>
+<td>exits (also accepts <code>/exit</code>, normalized in <code>application.py:101</code>)</td>
+</tr>
+<tr>
+<td><code>/c</code></td>
+<td><code>ClearCommand</code></td>
+<td>clears conversation history + memory</td>
+</tr>
+<tr>
+<td><code>/help</code></td>
+<td><code>HelpCommand</code></td>
+<td>lists commands</td>
+</tr>
+<tr>
+<td><code>/test</code></td>
+<td><code>TestCommand</code></td>
+<td>runs setup diagnostic checks</td>
+</tr>
+<tr>
+<td><code>/model</code></td>
+<td><code>ModelCommand</code></td>
+<td>views/updates <code>[model]</code> config via <code>ModelConfigStore</code></td>
+</tr>
+<tr>
+<td><code>/lsp</code></td>
+<td><code>LspCommand</code></td>
+<td>inspects/manages language servers</td>
+</tr>
+<tr>
+<td><code>/debug</code></td>
+<td><code>DebugCommand</code></td>
+<td>toggles grey model-request debug output</td>
+</tr>
+</tbody>
+</table>
+<p>New commands register exactly like new tools: import the class and add it to the registry (<code>src/citra/commands/default_registry.py:5</code>). Per-command usage is documented in the subsections below.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-q-65714f7a35" data-depth="1" data-search-text="command-q
+**usage:** `/q`
+
+exits the repl. `quitcommand._run` returns `commandresult(output=&quot;bye.&quot;, exit=true)`, which terminates the repl loop after the command runs (`src/citra/commands/quit.py`). ignores arguments.
+
+the bare word `/exit` is a legacy alias normalized to `q` by `citraapplication` before dispatch (`src/citra/application.py:101`).">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-q</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-q</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong> <code>/q</code></p>
+<p>Exits the REPL. <code>QuitCommand._run</code> returns <code>CommandResult(output="Bye.", exit=True)</code>, which terminates the REPL loop after the command runs (<code>src/citra/commands/quit.py</code>). Ignores arguments.</p>
+<p>The bare word <code>/exit</code> is a legacy alias normalized to <code>q</code> by <code>CitraApplication</code> before dispatch (<code>src/citra/application.py:101</code>).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-c-4f2401f52d" data-depth="1" data-search-text="command-c
+**usage:** `/c`
+
+clears the conversation history. returns `clear_messages=true`, which makes the application reset the message list and conversation memory, then prints a green confirmation (`src/citra/commands/clear.py`). ignores arguments.
+
+use this to start a fresh task without restarting the process; the workspace filesystem and lifecycle state are preserved.">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-c</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-c</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong> <code>/c</code></p>
+<p>Clears the conversation history. Returns <code>clear_messages=True</code>, which makes the application reset the message list and conversation memory, then prints a green confirmation (<code>src/citra/commands/clear.py</code>). Ignores arguments.</p>
+<p>Use this to start a fresh task without restarting the process; the workspace filesystem and lifecycle state are preserved.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-help-ee9d666a3f" data-depth="1" data-search-text="command-help
+**usage:** `/help`
+
+lists all registered commands. reads ids and descriptions from `command_registry.help_lines()` (sorted alphabetically, formatted as `  /id        description`) (`src/citra/commands/help.py`). new commands appear automatically once registered; no per-command help text is required. ignores arguments.">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-help</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-help</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong> <code>/help</code></p>
+<p>Lists all registered commands. Reads ids and descriptions from <code>COMMAND_REGISTRY.help_lines()</code> (sorted alphabetically, formatted as <code>/id        description</code>) (<code>src/citra/commands/help.py</code>). New commands appear automatically once registered; no per-command help text is required. Ignores arguments.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-test-5a6bde1cf5" data-depth="1" data-search-text="command-test
+**usage:** `/test`
+
+verifies that the current citra setup works. runs six independent checks and prints a `✓`/`✗` line plus a pass/fail summary for each (`src/citra/commands/test.py`); a failure in one check does not stop the others:
+
+1. **configuration** — config loading (already guaranteed by `executioncontext`, reported explicitly).
+2. **model api** — sends a minimal chat-completions request and validates the `choices` array.
+3. **web search (searxng)** — issues a trivial query and expects http 200 / json.
+4. **bash** — confirms `bash` is on `path`.
+5. **workspace** — confirms the configured workspace exists and is readable.
+6. **language servers** — confirms the built-in lsp adapters have executables.
+
+ignores arguments. this is the first command to try when a fresh installation misbehaves.">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-test</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-test</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong> <code>/test</code></p>
+<p>Verifies that the current Citra setup works. Runs six independent checks and prints a <code>✓</code>/<code>✗</code> line plus a pass/fail summary for each (<code>src/citra/commands/test.py</code>); a failure in one check does not stop the others:</p>
+<ol>
+<li><strong>Configuration</strong> — config loading (already guaranteed by <code>ExecutionContext</code>, reported explicitly).</li>
+<li><strong>Model API</strong> — sends a minimal chat-completions request and validates the <code>choices</code> array.</li>
+<li><strong>Web search (SearXNG)</strong> — issues a trivial query and expects HTTP 200 / JSON.</li>
+<li><strong>Bash</strong> — confirms <code>bash</code> is on <code>PATH</code>.</li>
+<li><strong>Workspace</strong> — confirms the configured workspace exists and is readable.</li>
+<li><strong>Language servers</strong> — confirms the built-in LSP adapters have executables.</li>
+</ol>
+<p>Ignores arguments. This is the first command to try when a fresh installation misbehaves.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-model-41c9cb5016" data-depth="1" data-search-text="command-model
+**usage:**
+
+```text
+/model                      # show current config
+/model show | get | status  # same as above
+/model help                 # usage text
+/model set &lt;setting&gt; &lt;value&gt;
+```
+
+inspects and modifies the `[model]` section of citra&#x27;s `config.toml` through `modelconfigstore`, which persists every change immediately (`src/citra/commands/model.py`). supported settings:
+
+| setting | value |
+|---------|-------|
+| `host` | base url of the chat-completions endpoint (non-empty) |
+| `id` | model identifier (non-empty) |
+| `api_key` | stored encrypted; never echoed back after setting |
+| `max_input_tokens` / `max_output_tokens` | positive integers |
+| `reasoning_effort` | string or empty to clear |
+| `retry.max_attempts` / `retry.request_timeout` | positive numbers (attempts/seconds) |
+| `retry.initial_backoff` / `retry.max_backoff` | non-negative seconds |
+
+values containing spaces are accepted because the remainder of the argument line is joined. unknown settings print the available list.">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-model</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-model</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong></p>
+<pre><code class="language-text">/model                      # show current config
+/model show | get | status  # same as above
+/model help                 # usage text
+/model set &lt;setting&gt; &lt;value&gt;
+</code></pre>
+<p>Inspects and modifies the <code>[model]</code> section of Citra's <code>config.toml</code> through <code>ModelConfigStore</code>, which persists every change immediately (<code>src/citra/commands/model.py</code>). Supported settings:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>host</code></td>
+<td>base URL of the chat-completions endpoint (non-empty)</td>
+</tr>
+<tr>
+<td><code>id</code></td>
+<td>model identifier (non-empty)</td>
+</tr>
+<tr>
+<td><code>api_key</code></td>
+<td>stored encrypted; never echoed back after setting</td>
+</tr>
+<tr>
+<td><code>max_input_tokens</code> / <code>max_output_tokens</code></td>
+<td>positive integers</td>
+</tr>
+<tr>
+<td><code>reasoning_effort</code></td>
+<td>string or empty to clear</td>
+</tr>
+<tr>
+<td><code>retry.max_attempts</code> / <code>retry.request_timeout</code></td>
+<td>positive numbers (attempts/seconds)</td>
+</tr>
+<tr>
+<td><code>retry.initial_backoff</code> / <code>retry.max_backoff</code></td>
+<td>non-negative seconds</td>
+</tr>
+</tbody>
+</table>
+<p>Values containing spaces are accepted because the remainder of the argument line is joined. Unknown settings print the available list.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-lsp-64f9e583b1" data-depth="1" data-search-text="command-lsp
+**usage:**
+
+```text
+/lsp                                  # status (same as /lsp status)
+/lsp install &lt;server|language|missing|all&gt; [--dry-run]
+/lsp restart [server]
+/lsp stop [server]
+```
+
+lifecycle control for the lsp subsystem (`src/citra/commands/lsp.py`). `status` renders the manager&#x27;s per-server state. `install` resolves its single target against server ids, language ids, `missing` (everything without a usable executable), or `all`; with `--dry-run` it prints the commands that would run without executing them. installation output is truncated to the last 20 lines per server and reports whether the executable was found afterwards. `restart`/`stop` accept an optional server id and default to all instances, reporting how many were affected.
+
+errors (unknown action, bad arguments) are converted into error `commandresult`s by the `command.run` wrapper, so the repl never crashes. if no `lspmanager` exists in the current execution context the command reports that lsp services are unavailable.">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-lsp</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-lsp</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong></p>
+<pre><code class="language-text">/lsp                                  # status (same as /lsp status)
+/lsp install &lt;server|language|missing|all&gt; [--dry-run]
+/lsp restart [server]
+/lsp stop [server]
+</code></pre>
+<p>Lifecycle control for the LSP subsystem (<code>src/citra/commands/lsp.py</code>). <code>status</code> renders the manager's per-server state. <code>install</code> resolves its single target against server ids, language ids, <code>missing</code> (everything without a usable executable), or <code>all</code>; with <code>--dry-run</code> it prints the commands that would run without executing them. Installation output is truncated to the last 20 lines per server and reports whether the executable was found afterwards. <code>restart</code>/<code>stop</code> accept an optional server id and default to all instances, reporting how many were affected.</p>
+<p>Errors (unknown action, bad arguments) are converted into error <code>CommandResult</code>s by the <code>Command.run</code> wrapper, so the REPL never crashes. If no <code>LspManager</code> exists in the current execution context the command reports that LSP services are unavailable.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-command-debug-e6fac25eb8" data-depth="1" data-search-text="command-debug
+**usage:**
+
+```text
+/debug          # flip the current state
+/debug on       # enable grey debug printing
+/debug off      # disable grey debug printing
+```
+
+toggles the grey (`dim`) diagnostic lines printed by `src/citra/utils/chat_completions_api.py` around each model request: `⏺ starting model request (attempt …)`, `⏺ model http 200 received in …`, and `⏺ model finish_reason(s): …` (`src/citra/commands/debug.py`).
+
+the command flips or sets the module-level `debug_printing` flag, which is consulted by `_debug_print()`; yellow retry warnings and red http-error output are always printed and are not affected. the change applies immediately to the running process. unknown arguments return usage: `/debug [on|off]`. debug printing is enabled by default.">
+<header class="section-header">
+<div class="breadcrumb">slash-commands<span class="breadcrumb-separator"> / </span>command-debug</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>command-debug</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Usage:</strong></p>
+<pre><code class="language-text">/debug          # flip the current state
+/debug on       # enable grey debug printing
+/debug off      # disable grey debug printing
+</code></pre>
+<p>Toggles the grey (<code>DIM</code>) diagnostic lines printed by <code>src/citra/utils/chat_completions_api.py</code> around each model request: <code>⏺ Starting model request (attempt …)</code>, <code>⏺ Model HTTP 200 received in …</code>, and <code>⏺ Model finish_reason(s): …</code> (<code>src/citra/commands/debug.py</code>).</p>
+<p>The command flips or sets the module-level <code>DEBUG_PRINTING</code> flag, which is consulted by <code>_debug_print()</code>; yellow retry warnings and red HTTP-error output are always printed and are not affected. The change applies immediately to the running process. Unknown arguments return usage: <code>/debug [on|off]</code>. Debug printing is enabled by default.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-supporting-utilities-30d6316128" data-depth="0" data-search-text="supporting-utilities
+## prompt construction
+
+`utils/prompt.py` owns the dynamic system prompt. `promptenvironment` captures workspace paths, os, architecture, python version, local time, timezone, and git-repository detection (`src/citra/utils/prompt.py:27`); `build_system_prompt` assembles the markdown prompt fresh per turn so environment facts stay current (`prompt.py:42`). tool definitions remain responsible for their own detailed behavior (`prompt.py:1`). the available-tools catalog injected into the prompt is produced by `context/available_tools.py`.
+
+## repository map
+
+`repomap` builds aider-style structural maps backed by grep-ast/tree-sitter: per-file `definition` records, a `fileindex`, and reference `_edge`s ranked into a token-budgeted map (`src/citra/utils/repo_map.py:1`). it powers the `tree` tool&#x27;s ranking.
+
+## tokenization
+
+`utils/tokenize.py` selects a tokenizer for the configured model (tiktoken / hf tokenizers / sentencepiece) and backs both context trimming (`src/citra/agent/session.py:195`) and output truncation (`src/citra/context/execution_context.py:188`). model tokenizer files ship in the repository&#x27;s `tokenizers/` directory.
+
+## converters
+
+`utils/converters/` normalizes model-facing file content: pdfs (`pdf.py`), excel (`excel.py`), jupyter notebooks with html-stripping of outputs (`jupyter_notebook.py`, `notebook_html_converter.py`), plus a generic readable converter used by `read`.
+
+## mermaid rendering
+
+`utils/mermaid.py` defines a typed mermaid model (diagram types, themes, node shapes, participant kinds) with validation/render error classes (`mermaidvalidationerror`, `mermaidrendererror`, `src/citra/utils/mermaid.py:28`) used by the `diagram` tool to validate `.mmd` sources and render svg assets.
+
+## terminal i/o
+
+`utils/terminal.py` holds ansi color helpers; `utils/terminal_input.py` provides the prompt service with idle-timeout prompts (`prompt_with_idle_timeout`) and predicate-based prompts (`prompt_until`) that make foreground steering possible (`src/citra/cli/repl.py:120`).">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>supporting-utilities</h2>
+</div>
+</header>
+<div class="section-body">
+<h2>Prompt construction</h2>
+<p><code>utils/prompt.py</code> owns the dynamic system prompt. <code>PromptEnvironment</code> captures workspace paths, OS, architecture, Python version, local time, timezone, and git-repository detection (<code>src/citra/utils/prompt.py:27</code>); <code>build_system_prompt</code> assembles the Markdown prompt fresh per turn so environment facts stay current (<code>prompt.py:42</code>). Tool definitions remain responsible for their own detailed behavior (<code>prompt.py:1</code>). The available-tools catalog injected into the prompt is produced by <code>context/available_tools.py</code>.</p>
+<h2>Repository map</h2>
+<p><code>RepoMap</code> builds Aider-style structural maps backed by grep-ast/tree-sitter: per-file <code>Definition</code> records, a <code>FileIndex</code>, and reference <code>_Edge</code>s ranked into a token-budgeted map (<code>src/citra/utils/repo_map.py:1</code>). It powers the <code>tree</code> tool's ranking.</p>
+<h2>Tokenization</h2>
+<p><code>utils/tokenize.py</code> selects a tokenizer for the configured model (tiktoken / HF tokenizers / sentencepiece) and backs both context trimming (<code>src/citra/agent/session.py:195</code>) and output truncation (<code>src/citra/context/execution_context.py:188</code>). Model tokenizer files ship in the repository's <code>tokenizers/</code> directory.</p>
+<h2>Converters</h2>
+<p><code>utils/converters/</code> normalizes model-facing file content: PDFs (<code>pdf.py</code>), Excel (<code>excel.py</code>), Jupyter notebooks with HTML-stripping of outputs (<code>jupyter_notebook.py</code>, <code>notebook_html_converter.py</code>), plus a generic readable converter used by <code>read</code>.</p>
+<h2>Mermaid rendering</h2>
+<p><code>utils/mermaid.py</code> defines a typed Mermaid model (diagram types, themes, node shapes, participant kinds) with validation/render error classes (<code>MermaidValidationError</code>, <code>MermaidRenderError</code>, <code>src/citra/utils/mermaid.py:28</code>) used by the <code>diagram</code> tool to validate <code>.mmd</code> sources and render SVG assets.</p>
+<h2>Terminal I/O</h2>
+<p><code>utils/terminal.py</code> holds ANSI color helpers; <code>utils/terminal_input.py</code> provides the prompt service with idle-timeout prompts (<code>prompt_with_idle_timeout</code>) and predicate-based prompts (<code>prompt_until</code>) that make foreground steering possible (<code>src/citra/cli/repl.py:120</code>).</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+<article class="document-section" id="section-testing-cf80cd8aed" data-depth="0" data-search-text="testing
+the `tests/` package covers the major subsystems with unit and integration suites:
+
+| suite | focus |
+|-------|-------|
+| `test_main_repl.py`, `test_turn_main.py` | repl loop and end-to-end turn flow |
+| `test_steering.py` | steering inbox ordering, cancellation semantics |
+| `test_chat_completions.py`, `test_provider_retries.py` | api client retries, interruption |
+| `test_direct_and_promoted_memory.py`, `test_working_state_memory.py` | memory tools, promotion provenance |
+| `test_turn_workspace.py`, `test_repo_library.py` | workspace aliases, documents library |
+| `test_sandbox_config.py`, `test_sandboxed_filesystem_tools.py`, `test_bash_network.py` | sandbox policy + network permissioning |
+| `test_lsp*.py` + `fake_lsp_server.py` | lsp protocol, matrix of servers, reliability/restart |
+| `test_browser_subprocess_tools.py`, `test_curl.py` | deferred tool behaviors |
+| `test_git_repository.py` | git tool surface against real repos |
+| `test_tool_logging.py`, `test_prompt_user.py`, `test_terminal_input.py`, `test_prompt_notification.py` | interaction plumbing |
+| `test_mock_citra_use_case.py` | mock end-to-end agent use case |
+
+type checking uses pyrefly (configured in `pyproject.toml:[tool.pyrefly]`, `pyproject.toml:36`); formatting follows standard python conventions.
+">
+<header class="section-header">
+
+<div class="section-heading-row section-heading-row-single">
+
+<h2>testing</h2>
+</div>
+</header>
+<div class="section-body">
+<p>The <code>tests/</code> package covers the major subsystems with unit and integration suites:</p>
+<table>
+<thead>
+<tr>
+<th>Suite</th>
+<th>Focus</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_main_repl.py</code>, <code>test_turn_main.py</code></td>
+<td>REPL loop and end-to-end turn flow</td>
+</tr>
+<tr>
+<td><code>test_steering.py</code></td>
+<td>steering inbox ordering, cancellation semantics</td>
+</tr>
+<tr>
+<td><code>test_chat_completions.py</code>, <code>test_provider_retries.py</code></td>
+<td>API client retries, interruption</td>
+</tr>
+<tr>
+<td><code>test_direct_and_promoted_memory.py</code>, <code>test_working_state_memory.py</code></td>
+<td>memory tools, promotion provenance</td>
+</tr>
+<tr>
+<td><code>test_turn_workspace.py</code>, <code>test_repo_library.py</code></td>
+<td>workspace aliases, documents library</td>
+</tr>
+<tr>
+<td><code>test_sandbox_config.py</code>, <code>test_sandboxed_filesystem_tools.py</code>, <code>test_bash_network.py</code></td>
+<td>sandbox policy + network permissioning</td>
+</tr>
+<tr>
+<td><code>test_lsp*.py</code> + <code>fake_lsp_server.py</code></td>
+<td>LSP protocol, matrix of servers, reliability/restart</td>
+</tr>
+<tr>
+<td><code>test_browser_subprocess_tools.py</code>, <code>test_curl.py</code></td>
+<td>deferred tool behaviors</td>
+</tr>
+<tr>
+<td><code>test_git_repository.py</code></td>
+<td>Git tool surface against real repos</td>
+</tr>
+<tr>
+<td><code>test_tool_logging.py</code>, <code>test_prompt_user.py</code>, <code>test_terminal_input.py</code>, <code>test_prompt_notification.py</code></td>
+<td>interaction plumbing</td>
+</tr>
+<tr>
+<td><code>test_mock_citra_use_case.py</code></td>
+<td>mock end-to-end agent use case</td>
+</tr>
+</tbody>
+</table>
+<p>Type checking uses pyrefly (configured in <code>pyproject.toml:[tool.pyrefly]</code>, <code>pyproject.toml:36</code>); formatting follows standard Python conventions.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
+        </main>
+    </div>
+    <script>
+        (() => {
+            const links = Array.from(
+                document.querySelectorAll('.document-index a[href^="#section-"]')
+            );
+            const sections = links
+                .map(link => document.querySelector(link.getAttribute('href')))
+                .filter(Boolean);
+            if (!links.length || !sections.length || !('IntersectionObserver' in window)) {
+                return;
+            }
+            const byId = new Map(
+                links.map(link => [link.getAttribute('href').slice(1), link])
+            );
+            const activate = id => {
+                links.forEach(link => link.classList.remove('active'));
+                const active = byId.get(id);
+                if (active) active.classList.add('active');
+            };
+            const observer = new IntersectionObserver(
+                entries => {
+                    const visible = entries
+                        .filter(entry => entry.isIntersecting)
+                        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+                    if (visible.length) activate(visible[0].target.id);
+                },
+                { rootMargin: '-12% 0px -70% 0px', threshold: 0 }
+            );
+            sections.forEach(section => observer.observe(section));
+        })();
+    </script>
+    <script>
+
+        (() => {
+            const root = document.documentElement;
+            const articles = Array.from(
+                document.querySelectorAll('main > .document-section')
+            );
+            const collapsed = new Set();
+
+            // --- Theme ---------------------------------------------------
+            const THEME_KEY = 'citra-doc-theme';
+            const themeButton = document.getElementById('theme-toggle');
+            const applyTheme = value => {
+                if (value === 'light' || value === 'dark') {
+                    root.dataset.theme = value;
+                } else {
+                    delete root.dataset.theme;
+                }
+                if (themeButton) {
+                    const label = {
+                        auto: 'Auto',
+                        light: 'Light',
+                        dark: 'Dark',
+                    }[value] || 'Auto';
+                    themeButton.textContent = 'Theme: ' + label;
+                    themeButton.setAttribute('aria-label', 'Color theme: ' + label);
+                }
+            };
+            let storedTheme = null;
+            try {
+                storedTheme = localStorage.getItem(THEME_KEY);
+            } catch (error) {
+                storedTheme = null;
+            }
+            applyTheme(
+                storedTheme === 'light' || storedTheme === 'dark'
+                    ? storedTheme
+                    : 'auto'
+            );
+            if (themeButton) {
+                themeButton.addEventListener('click', () => {
+                    const current = root.dataset.theme || 'auto';
+                    const next = current === 'auto'
+                        ? 'light'
+                        : current === 'light' ? 'dark' : 'auto';
+                    try {
+                        localStorage.setItem(THEME_KEY, next);
+                    } catch (error) {
+                        // Private mode; theme simply does not persist.
+                    }
+                    applyTheme(next);
+                });
+            }
+
+            // --- Collapsible sections --------------------------------------
+            const ancestorsOf = new Map();
+            {
+                const stack = [];
+                for (const article of articles) {
+                    const depth = Number(article.dataset.depth);
+                    while (
+                        stack.length
+                        && stack[stack.length - 1].depth >= depth
+                    ) {
+                        stack.pop();
+                    }
+                    ancestorsOf.set(
+                        article.id,
+                        stack.map(item => item.id)
+                    );
+                    stack.push({ depth: depth, id: article.id });
+                }
+            }
+
+            const navItems = Array.from(
+                document.querySelectorAll('.document-index li')
+            );
+            const searchInput = document.getElementById('document-search');
+            const statusBox = document.getElementById('search-status');
+
+            const syncToggleButtons = () => {
+                document.querySelectorAll('.section-toggle').forEach(button => {
+                    const expanded = !collapsed.has(button.dataset.target);
+                    button.setAttribute('aria-expanded', String(expanded));
+                    button.textContent = expanded ? '\u2212' : '+';
+                    button.setAttribute(
+                        'aria-label',
+                        expanded ? 'Collapse section' : 'Expand section'
+                    );
+                });
+            };
+
+            const applyState = () => {
+                const query = searchInput
+                    ? searchInput.value.trim().toLowerCase()
+                    : '';
+                const searching = query.length > 0;
+                let visibleCount = 0;
+
+                for (const article of articles) {
+                    const hiddenByCollapse = !searching
+                        && ancestorsOf.get(article.id)
+                            .some(id => collapsed.has(id));
+                    const matches = !searching
+                        || (article.dataset.searchText || '').includes(query);
+
+                    article.classList.toggle('descendant-hidden', hiddenByCollapse);
+                    article.classList.toggle('search-hidden', searching && !matches);
+
+                    if ((searching && matches) || (!searching && !hiddenByCollapse)) {
+                        visibleCount++;
+                    }
+                }
+
+                for (const item of navItems) {
+                    const link = item.querySelector(':scope > a[href^="#section-"]');
+                    let show = true;
+                    if (link) {
+                        const target = document.getElementById(
+                            link.getAttribute('href').slice(1)
+                        );
+                        if (target) {
+                            show = searching
+                                ? !target.classList.contains('search-hidden')
+                                : !ancestorsOf.get(target.id)
+                                    .some(id => collapsed.has(id));
+                        }
+                    }
+                    item.classList.toggle('nav-hidden', !show);
+                }
+
+                if (statusBox) {
+                    statusBox.hidden = !searching;
+                    statusBox.textContent = searching
+                        ? visibleCount + ' matching section'
+                            + (visibleCount === 1 ? '' : 's')
+                        : '';
+                }
+            };
+
+            document.querySelectorAll('.section-toggle').forEach(button => {
+                button.addEventListener('click', () => {
+                    const id = button.dataset.target;
+                    if (!id) return;
+                    if (collapsed.has(id)) {
+                        collapsed.delete(id);
+                    } else {
+                        collapsed.add(id);
+                    }
+                    syncToggleButtons();
+                    applyState();
+                });
+            });
+
+            // Opening an anchor inside collapsed sections expands ancestors.
+            document.querySelectorAll('.document-index a[href^="#section-"]')
+                .forEach(link => {
+                    link.addEventListener('click', () => {
+                        const id = link.getAttribute('href').slice(1);
+                        let changed = false;
+                        for (const ancestor of ancestorsOf.get(id) || []) {
+                            if (collapsed.has(ancestor)) {
+                                collapsed.delete(ancestor);
+                                changed = true;
+                            }
+                        }
+                        if (changed) {
+                            syncToggleButtons();
+                            applyState();
+                        }
+                    });
+                });
+
+            if (searchInput) {
+                searchInput.addEventListener('input', applyState);
+            }
+        })();
+    
+    </script>
+</body>
+</html>

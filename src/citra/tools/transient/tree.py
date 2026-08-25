@@ -22,12 +22,8 @@ class Tree(Tool):
         function=FunctionDefinition(
             name="tree",
             description=(
-                "Show a compact structural repository map built from tree-sitter ASTs. "
-                "The map ranks important definitions and references across the project "
-                "and shows useful class/function/type context rather than a raw directory "
-                "listing. The active workspace overlays @source, so edited and newly "
-                "created files are reflected. Use glob when you only need file/path "
-                "discovery. Optionally focus the ranking on identifiers or paths."
+                "Discover repository structure, definitions, signatures, and relevant code locations. "
+                "Use read when you need the implementation."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -35,9 +31,9 @@ class Tree(Tool):
                         name="path",
                         schema=JsonSchema.string(
                             description=(
-                                "Project-relative subtree to map. Defaults to the entire "
-                                "project. '@source' and '@source/<subtree>' are accepted "
-                                "as aliases for project-relative source paths."
+                                "Project-relative subtree or @tmp path to map. Defaults "
+                                "to the entire project. '@source' is accepted as a "
+                                "project-relative source alias."
                             ),
                         ),
                         required=False,

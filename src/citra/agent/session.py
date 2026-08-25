@@ -16,7 +16,7 @@ instructions through ``steering``.
 from __future__ import annotations
 
 import json
-from citra.utils.tokenize import tokenize
+from citra.utils.model_tokenizer import tokenize
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,61 +117,7 @@ class MessageGroup:
         """
         return list(self.messages)
 
-class ReadFile:
-    agent_turn: int
-    path: Path
-    start: int
-    end: int
-    dirty: bool
 
-
-class FileContext:
-    """
-    Class in charge of:
-
-        A) Tracking what files have been read and what part of them
-           (file + offsets).
-        B) Deduping calls to read the same contents, replacing old tool
-           calls results with a debug str.
-        C) Marking old reads that were then modified by recent tools as
-           dirty.
-    """
-
-    read_files: dict[Path, list[ReadFile]]
-
-    def __init__(self):
-        self.read_files = {}
-
-    def register_write(
-        self,
-        path: Path,
-        start_line: int = 0,
-        end_line: int | None = None,
-    ) -> None:
-        """
-        Invalidates a read file order if it was previously registered
-        """
-        pass
-
-    def register_new_read(
-        self,
-        path: Path,
-        start_offset: int,
-        end_offset: int,
-    ) -> None:
-        """
-        Registers a new read, invalidating previous ones.
-        """
-        pass
-
-    def newTurn(
-        self,
-        turn: int,
-    ) -> None:
-        """
-        Invalidates read file orders of old files ()
-        """
-        pass
 
 @dataclass
 class AgentSession:
@@ -205,9 +151,6 @@ class AgentSession:
 
     turn_number: int = 0
 
-    files: FileContext = field(
-        default_factory=FileContext
-    )
 
     tool_cache: ToolCallCache = field(
         default_factory=ToolCallCache
@@ -228,7 +171,6 @@ class AgentSession:
     def begin_turn(self) -> int:
         """Advance and return the durable conversation turn number."""
         self.turn_number += 1
-        self.files.newTurn(self.turn_number)
         self.tool_cache.begin_turn()
         self._turn_start_group_index = len(self.message_groups)
         self._turn_cache_context_complete = True

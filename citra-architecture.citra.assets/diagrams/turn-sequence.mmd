@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    participant U as User (terminal)
+    participant R as REPL thread
+    participant S as AgentSession
+    participant A as AgentRunner (agent thread)
+    participant M as Model API
+    participant T as Tool / WorkspaceChanges
+
+    U->>R: prompt
+    R->>S: add_user_message
+    R->>A: run_turn_with_steering (background thread)
+    A->>S: begin_turn()
+    loop until no tool calls
+        A->>M: messages + tool schemas
+        M-->>A: assistant message (+tool_calls?)
+        A->>S: add_assistant_message
+        alt steering pending before call N
+            A-->>S: mark remaining calls cancelled
+            A->>S: add_tool_result("cancelled ...")
+        else normal execution
+            A->>T: execute_tool_call
+            T-->>A: result (cached if deterministic & unchanged)
+            A->>S: add_tool_result (grouped, protocol-safe)
+        end
+    end
+    U->>R: types while agent works
+    R->>S: queue_steering (FIFO)
+    A->>S: flush_steering at safe boundary
+    A-->>R: turn complete
+    R-->>U: render final output

@@ -1045,6 +1045,213 @@ class Document(Tool):
 
         return html_path
 
+    # Plain (non-f-string) page script. Rendered HTML is a static file, so
+    # all interactivity — theme selection, collapsible sections, and the
+    # title/content search filter — is implemented client-side.
+    _INTERACTIVE_SCRIPT = """
+        (() => {
+            const root = document.documentElement;
+            const articles = Array.from(
+                document.querySelectorAll('main > .document-section')
+            );
+            const collapsed = new Set();
+
+            // --- Theme ---------------------------------------------------
+            const THEME_KEY = 'citra-doc-theme';
+            const themeButton = document.getElementById('theme-toggle');
+            const applyTheme = value => {
+                if (value === 'light' || value === 'dark') {
+                    root.dataset.theme = value;
+                } else {
+                    delete root.dataset.theme;
+                }
+                if (themeButton) {
+                    const label = {
+                        auto: 'Auto',
+                        light: 'Light',
+                        dark: 'Dark',
+                    }[value] || 'Auto';
+                    themeButton.textContent = 'Theme: ' + label;
+                    themeButton.setAttribute('aria-label', 'Color theme: ' + label);
+                }
+            };
+            let storedTheme = null;
+            try {
+                storedTheme = localStorage.getItem(THEME_KEY);
+            } catch (error) {
+                storedTheme = null;
+            }
+            applyTheme(
+                storedTheme === 'light' || storedTheme === 'dark'
+                    ? storedTheme
+                    : 'auto'
+            );
+            if (themeButton) {
+                themeButton.addEventListener('click', () => {
+                    const current = root.dataset.theme || 'auto';
+                    const next = current === 'auto'
+                        ? 'light'
+                        : current === 'light' ? 'dark' : 'auto';
+                    try {
+                        localStorage.setItem(THEME_KEY, next);
+                    } catch (error) {
+                        // Private mode; theme simply does not persist.
+                    }
+                    applyTheme(next);
+                });
+            }
+
+            // --- Collapsible sections --------------------------------------
+            const ancestorsOf = new Map();
+            {
+                const stack = [];
+                for (const article of articles) {
+                    const depth = Number(article.dataset.depth);
+                    while (
+                        stack.length
+                        && stack[stack.length - 1].depth >= depth
+                    ) {
+                        stack.pop();
+                    }
+                    ancestorsOf.set(
+                        article.id,
+                        stack.map(item => item.id)
+                    );
+                    stack.push({ depth: depth, id: article.id });
+                }
+            }
+
+            const navItems = Array.from(
+                document.querySelectorAll('.document-index li')
+            );
+            const searchInput = document.getElementById('document-search');
+            const statusBox = document.getElementById('search-status');
+
+            const syncToggleButtons = () => {
+                document.querySelectorAll('.section-toggle').forEach(button => {
+                    const expanded = !collapsed.has(button.dataset.target);
+                    button.setAttribute('aria-expanded', String(expanded));
+                    button.textContent = expanded ? '\\u2212' : '+';
+                    button.setAttribute(
+                        'aria-label',
+                        expanded ? 'Collapse section' : 'Expand section'
+                    );
+                });
+            };
+
+            const applyState = () => {
+                const query = searchInput
+                    ? searchInput.value.trim().toLowerCase()
+                    : '';
+                const searching = query.length > 0;
+                let visibleCount = 0;
+
+                const indexRoot = document.querySelector('.document-index');
+                if (indexRoot) {
+                    indexRoot.classList.toggle('index-searching', searching);
+                }
+
+                for (const article of articles) {
+                    const hiddenByCollapse = !searching
+                        && ancestorsOf.get(article.id)
+                            .some(id => collapsed.has(id));
+                    const matches = !searching
+                        || (article.dataset.searchText || '').includes(query);
+
+                    article.classList.toggle('descendant-hidden', hiddenByCollapse);
+                    article.classList.toggle('search-hidden', searching && !matches);
+
+                    if ((searching && matches) || (!searching && !hiddenByCollapse)) {
+                        visibleCount++;
+                    }
+                }
+
+                for (const item of navItems) {
+                    const link = item.querySelector(
+                        ':scope > a[href^="#section-"]'
+                    ) || item.querySelector(
+                        ':scope > .index-row > a[href^="#section-"]'
+                    );
+                    let show = true;
+                    if (link) {
+                        const target = document.getElementById(
+                            link.getAttribute('href').slice(1)
+                        );
+                        if (target) {
+                            show = searching
+                                ? !target.classList.contains('search-hidden')
+                                : !ancestorsOf.get(target.id)
+                                    .some(id => collapsed.has(id));
+                        }
+                    }
+                    item.classList.toggle('nav-hidden', !show);
+                }
+
+                if (statusBox) {
+                    statusBox.hidden = !searching;
+                    statusBox.textContent = searching
+                        ? visibleCount + ' matching section'
+                            + (visibleCount === 1 ? '' : 's')
+                        : '';
+                }
+            };
+
+            document.querySelectorAll('.section-toggle').forEach(button => {
+                button.addEventListener('click', () => {
+                    const id = button.dataset.target;
+                    if (!id) return;
+                    if (collapsed.has(id)) {
+                        collapsed.delete(id);
+                    } else {
+                        collapsed.add(id);
+                    }
+                    syncToggleButtons();
+                    applyState();
+                });
+            });
+
+            // --- Collapsible index tree -----------------------------------
+            // Sidebar toggles fold only the index; section bodies are not
+            // affected by them.
+            document.querySelectorAll('.document-index .index-toggle').forEach(button => {
+                button.addEventListener('click', () => {
+                    const item = button.closest('li');
+                    if (!item) return;
+                    const expanded = !item.classList.toggle('nav-branch-collapsed');
+                    button.setAttribute('aria-expanded', String(expanded));
+                    button.textContent = expanded ? '\\u2212' : '+';
+                    button.setAttribute(
+                        'aria-label',
+                        expanded ? 'Collapse subsections' : 'Expand subsections'
+                    );
+                });
+            });
+
+            // Opening an anchor inside collapsed sections expands ancestors.
+            document.querySelectorAll('.document-index a[href^="#section-"]')
+                .forEach(link => {
+                    link.addEventListener('click', () => {
+                        const id = link.getAttribute('href').slice(1);
+                        let changed = false;
+                        for (const ancestor of ancestorsOf.get(id) || []) {
+                            if (collapsed.has(ancestor)) {
+                                collapsed.delete(ancestor);
+                                changed = true;
+                            }
+                        }
+                        if (changed) {
+                            syncToggleButtons();
+                            applyState();
+                        }
+                    });
+                });
+
+            if (searchInput) {
+                searchInput.addEventListener('input', applyState);
+            }
+        })();
+    """
+
     @classmethod
     def _build_html(
         cls,
@@ -1105,6 +1312,15 @@ class Document(Tool):
             index_element
         )
 
+        # A section has children when the immediately following entry in
+        # pre-order is one level deeper.
+        sections_with_children: set[str] = {
+            entry[0]
+            for position, entry in enumerate(ordered_sections)
+            if position + 1 < len(ordered_sections)
+            and entry[1] + 1 == ordered_sections[position + 1][1]
+        }
+
         rendered_sections: list[str] = []
 
         for section_name, depth, ancestors in ordered_sections:
@@ -1158,20 +1374,43 @@ class Document(Tool):
             else:
                 breadcrumb = ""
 
+            if section_name in sections_with_children:
+                toggle_button = (
+                    '<button type="button" class="section-toggle" '
+                    f'data-target="{section_id}" '
+                    'aria-expanded="true" '
+                    'aria-label="Collapse section">'
+                    "&minus;</button>"
+                )
+                heading_row_class = "section-heading-row"
+            else:
+                toggle_button = ""
+                heading_row_class = "section-heading-row section-heading-row-single"
+
+            # Raw Markdown plus the section name; searched case-insensitively
+            # by the generated page's client-side filter.
+            search_text = escape(
+                f"{section_name}\n{section.text or ''}".casefold(),
+            )
+
             rendered_sections.append(
                 "\n".join(
                     (
                         (
                             '<article class="document-section" '
-                            f'id="{section_id}" data-depth="{depth}">'
+                            f'id="{section_id}" data-depth="{depth}" '
+                            f'data-search-text="{search_text}">'
                         ),
                         '<header class="section-header">',
                         breadcrumb,
+                        f'<div class="{heading_row_class}">',
+                        toggle_button,
                         (
                             f"<h{heading_level}>"
                             f"{escaped_name}"
                             f"</h{heading_level}>"
                         ),
+                        "</div>",
                         "</header>",
                         '<div class="section-body">',
                         body,
@@ -1226,7 +1465,7 @@ class Document(Tool):
     <title>{escaped_title}</title>
     <style>
         :root {{
-            color-scheme: light dark;
+            color-scheme: light;
             --background: #ffffff;
             --sidebar-background: #f6f8fa;
             --text: #1f2328;
@@ -1236,8 +1475,20 @@ class Document(Tool):
             --accent-soft: #ddf4ff;
             --code-background: #f6f8fa;
         }}
+        :root[data-theme="dark"] {{
+            color-scheme: dark;
+            --background: #0d1117;
+            --sidebar-background: #161b22;
+            --text: #e6edf3;
+            --muted: #8b949e;
+            --border: #30363d;
+            --accent: #58a6ff;
+            --accent-soft: #13233a;
+            --code-background: #161b22;
+        }}
         @media (prefers-color-scheme: dark) {{
-            :root {{
+            :root:not([data-theme="light"]) {{
+                color-scheme: dark;
                 --background: #0d1117;
                 --sidebar-background: #161b22;
                 --text: #e6edf3;
@@ -1307,6 +1558,39 @@ class Document(Tool):
             padding-left: 12px;
             border-left: 1px solid var(--border);
         }}
+        .index-row {{
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .index-row-single {{ gap: 0; }}
+        .index-toggle {{
+            flex: none;
+            width: 18px;
+            height: 18px;
+            margin-left: -24px;
+            padding: 0;
+            border: 0;
+            border-radius: 4px;
+            background: none;
+            color: var(--muted);
+            font-size: 0.95rem;
+            line-height: 1;
+            cursor: pointer;
+        }}
+        .index-toggle:hover {{
+            color: var(--accent);
+        }}
+        /* Index toggles fold only the sidebar tree; section bodies in main
+           are never hidden by them. */
+        .document-index li.nav-branch-collapsed > ul {{
+            display: none;
+        }}
+        /* While searching, matches must remain reachable even inside a
+           folded branch. */
+        .document-index.index-searching li.nav-branch-collapsed > ul {{
+            display: block;
+        }}
         .document-index a {{
             display: block;
             padding: 5px 7px;
@@ -1329,6 +1613,65 @@ class Document(Tool):
             border-bottom: 1px solid var(--border);
         }}
         .section-header {{ margin-bottom: 20px; }}
+        .section-heading-row {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .section-heading-row-single {{ gap: 0; }}
+        .section-toggle {{
+            flex: none;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--sidebar-background);
+            color: var(--muted);
+            font-size: 1rem;
+            line-height: 1;
+            cursor: pointer;
+        }}
+        .section-toggle:hover {{
+            border-color: var(--accent);
+            color: var(--accent);
+        }}
+        .document-section.descendant-hidden,
+        .document-section.search-hidden,
+        .document-index li.nav-hidden {{
+            display: none;
+        }}
+        .search-box {{
+            display: block;
+            margin-bottom: 8px;
+        }}
+        .search-label {{
+            display: block;
+            margin-bottom: 4px;
+            color: var(--muted);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+        }}
+        .search-box input {{
+            width: 100%;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--background);
+            color: var(--text);
+            font-size: 0.88rem;
+        }}
+        .search-box input:focus {{
+            outline: none;
+            border-color: var(--accent);
+        }}
+        .search-status {{
+            margin-bottom: 10px;
+            color: var(--accent);
+            font-size: 0.8rem;
+        }}
         .breadcrumb {{
             margin-bottom: 7px;
             color: var(--muted);
@@ -1362,6 +1705,37 @@ class Document(Tool):
             vertical-align: top;
         }}
         img {{ max-width: 100%; height: auto; }}
+        .sidebar-heading-row {{
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+        }}
+        #theme-toggle {{
+            flex: none;
+            margin-top: 4px;
+            padding: 4px 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--background);
+            color: var(--muted);
+            font-size: 0.75rem;
+            cursor: pointer;
+        }}
+        #theme-toggle:hover {{
+            border-color: var(--accent);
+            color: var(--accent);
+        }}
+        /* Mermaid SVGs are rendered with a fixed light theme; recolor them
+           in dark mode so black strokes stay visible. */
+        :root[data-theme="dark"] .section-body img[src$=".svg"] {{
+            filter: invert(0.92) hue-rotate(180deg);
+        }}
+        @media (prefers-color-scheme: dark) {{
+            :root:not([data-theme="light"]) .section-body img[src$=".svg"] {{
+                filter: invert(0.92) hue-rotate(180deg);
+            }}
+        }}
         .back-to-top {{
             display: inline-block;
             margin-top: 28px;
@@ -1383,8 +1757,25 @@ class Document(Tool):
 <body>
     <div class="page" id="document-top">
         <aside class="sidebar" aria-label="Document contents">
-            <h1 class="document-title">{escaped_title}</h1>
+            <div class="sidebar-heading-row">
+                <h1 class="document-title">{escaped_title}</h1>
+                <button
+                    type="button"
+                    id="theme-toggle"
+                    aria-label="Color theme: Auto"
+                >Theme: Auto</button>
+            </div>
             {version_html}
+            <label class="search-box">
+                <span class="search-label">Search</span>
+                <input
+                    type="search"
+                    id="document-search"
+                    placeholder="Titles and content…"
+                    autocomplete="off"
+                >
+            </label>
+            <div class="search-status" id="search-status" hidden></div>
             <div class="contents-title">Contents</div>
             {navigation}
         </aside>
@@ -1422,6 +1813,9 @@ class Document(Tool):
             );
             sections.forEach(section => observer.observe(section));
         }})();
+    </script>
+    <script>
+{cls._INTERACTIVE_SCRIPT}
     </script>
 </body>
 </html>
@@ -1505,6 +1899,7 @@ class Document(Tool):
         ]
 
         nested = ""
+        has_children = bool(children)
 
         if children:
             child_ancestors = (
@@ -1528,9 +1923,26 @@ class Document(Tool):
                 + "</ul>"
             )
 
+        # Sidebar branches get their own toggle. It only folds this entry's
+        # nested list inside the index; section bodies are never affected.
+        if has_children:
+            index_toggle = (
+                '<button type="button" class="index-toggle" '
+                'aria-expanded="true" '
+                'aria-label="Collapse subsections">'
+                "&minus;</button>"
+            )
+            row_class = "index-row"
+        else:
+            index_toggle = ""
+            row_class = "index-row index-row-single"
+
         return (
             f'<li data-depth="{depth}">'
+            f'<div class="{row_class}">'
+            f"{index_toggle}"
             f'<a href="#{anchor}">{escape(name)}</a>'
+            "</div>"
             f"{nested}"
             "</li>"
         )

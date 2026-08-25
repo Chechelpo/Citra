@@ -85,7 +85,7 @@ class Edit(Tool):
                         schema=JsonSchema.boolean(
                             description=(
                                 "Run LSP diagnostics after a successful edit. "
-                                "Defaults to false."
+                                "Defaults to true."
                             ),
                         ),
                         required=False,
@@ -122,8 +122,9 @@ class Edit(Tool):
 
         if result != "ok":
             return result
+        diagnose:bool | None = arguments.get("diagnostics")
 
-        if not arguments.get("diagnostics", False):
+        if diagnose is False:
             return "ok"
 
         diagnostics = self.context.diagnostics_for_path(

@@ -221,7 +221,7 @@ maintenance rules.
 
 For non-trivial work, generally:
 
-1. Inspect the relevant source and existing memory.
+1. Inspect the relevant source and existing memory. Use tree for discovery, avoid relying solely on read.
 2. Record clear TODOs, verified facts, decisions, and constraints directly as
    they become useful.
 3. Create Working State only when unresolved investigation itself must survive

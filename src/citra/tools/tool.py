@@ -1,7 +1,10 @@
+from citra.utils.model_tokenizer import tokenize
 from abc import ABC, abstractmethod
+from hashlib import sha256
 from time import perf_counter
 from typing import Any, final
 import logging
+import json
 
 from jsonschema import Draft202012Validator
 
@@ -19,13 +22,16 @@ class InvalidToolArguments(ValueError):
 
 
 class Tool(ABC):
+    HISTORY_ARGUMENT_COMPACT_THRESHOLD_TOKENS = 128
+    HISTORY_ARGUMENT_DIGEST_LENGTH = 12
+
     # Tool-result cache policy. Cacheable tools may reuse an identical
     # result within the current agent turn. Tools are assumed to mutate
     # observable state unless they explicitly opt out; stale cache hits
     # are worse than unnecessary invalidation.
     CACHEABLE = False
     INVALIDATES_TOOL_CACHE = True
-    MAX_OUTPUT_TOKENS: int | None = 2_000
+    MAX_OUTPUT_TOKENS: int | None = 4_000
 
     def __init__(
         self,
@@ -76,6 +82,131 @@ class Tool(ABC):
         """Return whether this call may change state seen by cached tools."""
         del arguments
         return self.INVALIDATES_TOOL_CACHE
+
+    def compact_history_arguments(
+        self,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> dict[str, Any] | None:
+        """
+        Return compacted arguments to retain in model-facing history.
+
+        This hook is called only after the tool has executed. Returning
+        ``None`` preserves the model's original argument JSON exactly.
+        Tools that persist large payloads elsewhere may return a schema-valid
+        replacement mapping so the next model request never pays to replay
+        those payloads.
+
+        Implementations must not mutate ``arguments`` in place. They should
+        normally compact only after a successful operation; failed calls keep
+        their exact inputs so the model can reason about the failure.
+        """
+        del arguments, result
+        return None
+
+    def _compact_history_string_arguments(
+        self,
+        arguments: dict[str, Any],
+        *names: str,
+        min_token_savings: int = 64,
+    ) -> dict[str, Any] | None:
+        """
+        Compact large string arguments only when doing so produces a meaningful
+        reduction in their actual model-facing history cost.
+
+        Cost is measured after both levels of JSON serialization:
+        1. the tool arguments object -> function.arguments JSON string
+        2. that JSON string -> model-facing tool-call JSON
+
+        This is more accurate than character length or tokenizing the raw value,
+        especially for source code containing quotes, newlines, or backslashes.
+
+        Returns a new argument mapping when at least one field is worth
+        compacting, otherwise None. Never mutates `arguments`.
+        """
+        model_id = self.context.config.model().id
+
+        def history_tokens(
+            candidate: dict[str, Any],
+        ) -> int:
+            # This is the representation stored in:
+            #
+            #   tool_call["function"]["arguments"]
+            #
+            arguments_json = json.dumps(
+                candidate,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+
+            # Model history sees `arguments_json` as a JSON string nested inside
+            # the tool-call object, so serialize that level too. Include the
+            # stable function envelope to account for tokenizer boundary effects.
+            history_fragment = json.dumps(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": self.id,
+                        "arguments": arguments_json,
+                    },
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+
+            return tokenize(
+                model_id,
+                history_fragment,
+            )
+
+        compacted = dict(arguments)
+        current_tokens = history_tokens(
+            compacted
+        )
+        changed = False
+
+        for name in names:
+            value = compacted.get(name)
+
+            if not isinstance(value, str):
+                continue
+
+            digest = sha256(
+                value.encode("utf-8")
+            ).hexdigest()[
+                :self.HISTORY_ARGUMENT_DIGEST_LENGTH
+            ]
+
+            marker = (
+                f"<citra: compacted {self.id}.{name}; "
+                f"{len(value)} chars; "
+                f"sha256={digest}>"
+            )
+
+            candidate = dict(compacted)
+            candidate[name] = marker
+
+            candidate_tokens = history_tokens(
+                candidate
+            )
+
+            savings = (
+                current_tokens
+                - candidate_tokens
+            )
+
+            if savings < min_token_savings:
+                continue
+
+            compacted = candidate
+            current_tokens = candidate_tokens
+            changed = True
+
+        return (
+            compacted
+            if changed
+            else None
+        )
 
     def validate_arguments(
         self,

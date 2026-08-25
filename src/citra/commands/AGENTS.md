@@ -51,7 +51,8 @@ Re-exports `Command`, `CommandRegistry`, `CommandResult`,
 | `c`   | `ClearCommand` | `clear.py` | Clears conversation (`clear_messages=True`). |
 | `help`| `HelpCommand`  | `help.py`  | Lists all registered commands.          |
 | `test`| `TestCommand`  | `test.py`  | Runs diagnostic checks (config, model API, web search, bash, workspace). |
-| `model`| `ModelCommand`| `model.py` | Inspect and modify the model config (`show`, `set host|id|api_key|max_input_tokens|max_output_tokens|reasoning_effort|retry.*`). |
+| `model`| `ModelCommand`| `model.py` | Manage named model profiles (`list`, `show`, `use`, `add`, `delete`, and profile-targeted `set`). |
+| `debug`| `DebugCommand`| `debug.py` | Toggle the grey model-request debug lines in `chat_completions_api.py` (`on`, `off`, or no argument to flip). |
 
 Legacy alias: bare `/exit` is mapped to `/q` by `CitraApplication`.
 

@@ -121,7 +121,7 @@ class TestCommand(Command):
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {model.encrypted_key}",
+                "Authorization": f"Bearer {model.decrypt_api_key()}",
             },
             method="POST",
         )

@@ -1,0 +1,47 @@
+flowchart TB
+    subgraph Terminal["Terminal (foreground thread)"]
+        REPL["cli/repl.py<br/>REPL + steering input"]
+        CMD["commands/<br/>slash commands"]
+    end
+
+    subgraph App["CitraApplication (lifecycle owner)"]
+        SESSION["AgentSession<br/>history · steering inbox · memory"]
+        RUNNER["AgentRunner<br/>model/tool loop"]
+        CTX["ExecutionContext<br/>service locator"]
+    end
+
+    API[("OpenAI-compatible<br/>chat-completions API")]
+    SKILLS["SkillRegistry"]
+    LSP["LspManager<br/>pyright / tsserver"]
+
+    subgraph WC["WorkspaceContext (lifecycle filesystem)"]
+        WS["@workspace (writable)"]
+        SRC["@source (read-only)"]
+        LIB["@library / @cache / @data / @home"]
+        CHANGES["WorkspaceChanges<br/>private git baseline + staging"]
+    end
+
+    subgraph Sandbox["Bubblewrap sandbox"]
+        WORKER["workers/filesystem.py<br/>JSON stdin/stdout"]
+        BROWSER["BrowserManager<br/>(Playwright worker)"]
+        SUBP["ManagedSubprocesses"]
+    end
+
+    TOOLS["ToolRegistry tools<br/>core + deferred"]
+
+    REPL -->|"user msg / steering"| SESSION
+    REPL --> CMD
+    CMD --> CTX
+    SESSION --> RUNNER
+    RUNNER -->|"messages + tools"| API
+    RUNNER --> TOOLS
+    TOOLS --> CTX
+    CTX --> SKILLS
+    CTX --> LSP
+    CTX --> CHANGES
+    CTX --> BROWSER
+    CTX --> SUBP
+    TOOLS --> WORKER
+    WORKER --> SRC
+    CHANGES -->|"materialize down / apply up"| SRC
+    CHANGES --- WS

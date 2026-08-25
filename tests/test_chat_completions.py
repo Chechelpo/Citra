@@ -12,6 +12,13 @@ import urllib.error
 
 MODULE_PATH = Path('/mnt/data/chat_completions_replacement.py')
 
+if not MODULE_PATH.exists():
+    # Local checkout fallback so the suite runs against the repo source.
+    MODULE_PATH = (
+        Path(__file__).resolve().parents[1]
+        / 'src' / 'citra' / 'utils' / 'chat_completions_api.py'
+    )
+
 
 def install_stubs() -> None:
     openai = types.ModuleType('openai')
@@ -146,6 +153,7 @@ def http_error(code: int, body: dict | str):
 class CallApiTests(unittest.TestCase):
     def setUp(self):
         self.mod = load_module()
+        self.mod.DEBUG_PRINTING = True
         self.context = Context()
         self.messages = [{'role': 'user', 'content': 'Improve logging'}]
 
@@ -192,6 +200,36 @@ class CallApiTests(unittest.TestCase):
         self.assertIn("finish_reason(s): 0='stop'", log)
         self.assertIn('without usable assistant output', log)
         self.assertIn('Retrying in', log)
+
+    def test_debug_printing_disabled_suppresses_grey_lines(self):
+        self.mod.DEBUG_PRINTING = False
+        response = FakeResponse({
+            'choices': [{
+                'finish_reason': 'stop',
+                'message': {'role': 'assistant', 'content': 'done'},
+            }]
+        })
+
+        def urlopen(request, timeout):
+            return response
+
+        result, log = self.run_call(urlopen, max_attempts=1)
+        self.assertEqual(result['choices'][0]['message']['content'], 'done')
+        self.assertNotIn('Starting model request', log)
+        self.assertNotIn('finish_reason(s)', log)
+        self.assertNotIn('HTTP 200 received', log)
+
+    def test_debug_print_helper_respects_flag(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.mod._debug_print('grey line')
+        self.assertIn('grey line', output.getvalue())
+
+        self.mod.DEBUG_PRINTING = False
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.mod._debug_print('grey line')
+        self.assertEqual(output.getvalue(), '')
 
     def test_tool_call_with_empty_text_is_usable(self):
         calls = []

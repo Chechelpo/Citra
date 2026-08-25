@@ -94,8 +94,11 @@ class AgentRunner:
                 api_arguments["reasoning_effort"] = reasoning_effort
 
             if self.api_call is call_api:
+                # Freeze the active model for the entire HTTP request and all
+                # of its retries. A config change only affects the next cycle.
+                api_arguments["model_config"] = model_config
                 api_arguments["retry_interrupt"] = self.session.steering.has_pending
-                
+
             api_arguments["sys_prompt"] = prompt
             try:
                 response = self.api_call(**api_arguments)

@@ -198,14 +198,15 @@ class CitraConfig:
             raw = tomllib.load(file)
 
         try:
-            model_raw = raw["model"]
+            if "model" not in raw and "models" not in raw:
+                raise KeyError("models")
+            if "model" in raw and "models" in raw:
+                raise ValueError(
+                    "Citra config cannot contain both [model] and [models]."
+                )
+
             web_search_raw = raw["web-search"]
             workspace_context_raw = raw["workspace"]
-
-            retry_raw = model_raw.get(
-                "retry",
-                {},
-            )
 
             lsp_raw = raw.get(
                 "lsp",
@@ -241,11 +242,6 @@ class CitraConfig:
                 "sandbox",
                 {},
             )
-
-            if not isinstance(retry_raw, dict):
-                raise ValueError(
-                    "'model.retry' must be a TOML table."
-                )
 
             if not isinstance(lsp_raw, dict):
                 raise ValueError(
@@ -320,6 +316,9 @@ class CitraConfig:
             model = ModelConfigStore(
                 config_path=config_path
             )
+            # Validate the active profile at load time so malformed model
+            # configuration fails before the application starts.
+            model.get()
 
             web_search = WebSearchConfig(
                 host_url=web_search_raw[
@@ -699,5 +698,8 @@ class CitraConfig:
             sandbox=sandbox,
         )
   
-    def model(self) -> ModelConfig:
-        return self.model_config_store.get()
+    def model(self, name: str | None = None) -> ModelConfig:
+        return self.model_config_store.get(name)
+
+    def models(self) -> tuple[str, ...]:
+        return self.model_config_store.names()

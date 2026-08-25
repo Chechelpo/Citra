@@ -7,7 +7,7 @@ import random
 import socket
 import ssl
 import time
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 import urllib.error
 import urllib.request
 
@@ -19,6 +19,10 @@ from ..tools.session_memory import MemoryTool
 from ..tools.tool import Tool
 from .api import chat_completions_url
 from .prompt import build_system_prompt
+
+if TYPE_CHECKING:
+    from ..context import ModelConfig
+
 from .terminal import (
     BLUE,
     BOLD,
@@ -36,9 +40,23 @@ from .terminal import (
 # respecting rate-limit responses and retrying them.
 RETRY_ON_RATE_LIMIT: bool = True
 
+# Grey (DIM) diagnostic lines printed around each model request.
+# Toggled at runtime by the /debug REPL command.
+DEBUG_PRINTING: bool = True
+
 # Despite the historical name, this is used as the maximum number of
 # total request attempts, including the initial request.
 DEFAULT_MAX_RETRIES: int = 12
+
+
+def _debug_print(message: str) -> None:
+    """Print a grey diagnostic line when debug printing is enabled."""
+    if DEBUG_PRINTING:
+        print(
+            f"{DIM}"
+            f"{message}"
+            f"{RESET}"
+        )
 
 
 class ModelRequestInterrupted(RuntimeError):
@@ -1252,11 +1270,9 @@ def _log_finish_reasons(
     value: Any,
 ) -> None:
     """Log finish_reason for every decoded HTTP-200 completion response."""
-    print(
-        f"{DIM}"
+    _debug_print(
         f"⏺ Model finish_reason(s): "
         f"{', '.join(_finish_reason_entries(value))}"
-        f"{RESET}"
     )
 
 
@@ -1399,12 +1415,67 @@ def _append_continue_work_message(
     return continued
 
 
+def _resolve_model_snapshot(
+    context: ExecutionContext,
+    model_config: "ModelConfig | Any | None",
+) -> Any:
+    """Resolve the model once for the lifetime of one HTTP request.
+
+    ``ExecutionContext.config.model()`` is the canonical source. The fallback
+    accepts the older direct ``context.model_config`` test/integration shape
+    without allowing retries to re-resolve a different active profile.
+    """
+    if model_config is not None:
+        return model_config
+
+    config = getattr(context, "config", None)
+    if config is not None:
+        resolver = getattr(config, "model", None)
+        if callable(resolver):
+            return resolver()
+
+    legacy = getattr(context, "model_config", None)
+    if callable(legacy):
+        legacy = legacy()
+    if legacy is not None:
+        return legacy
+
+    raise AttributeError(
+        "Execution context does not expose a model configuration."
+    )
+
+
+def _model_max_output_tokens(model: Any) -> int:
+    value = getattr(model, "max_output_tokens", None)
+    if value is None:
+        value = getattr(model, "max_tokens", None)
+    if value is None:
+        raise AttributeError(
+            "Model config does not define max_output_tokens."
+        )
+    return int(value)
+
+
+def _model_api_key(model: Any) -> str:
+    decrypt = getattr(model, "decrypt_api_key", None)
+    if callable(decrypt):
+        return str(decrypt())
+
+    legacy = getattr(model, "api_key", None)
+    if legacy is None:
+        raise AttributeError(
+            "Model config does not expose an API credential."
+        )
+    return str(legacy)
+
+
 def call_api(
     context: ExecutionContext,
     messages: list[ChatMessage],
     tools: dict[str, Tool],
     reasoning_effort: str | None = None,
     *,
+    model_config: ModelConfig | None = None,
     request_timeout: float | None = None,
     max_attempts: int | None = None,
     initial_backoff: float | None = None,
@@ -1414,6 +1485,10 @@ def call_api(
 ) -> dict[str, Any]:
     """
     Perform one OpenAI-compatible Chat Completions request.
+
+    ``model_config`` may provide a pre-resolved immutable model snapshot.
+    When omitted, the active model is resolved once before the request and
+    reused for every retry attempt.
 
     Requests which fail because of a likely temporary provider,
     upstream, or network condition are retried with exponential
@@ -1528,7 +1603,8 @@ def call_api(
         ValueError:
             If retry/request configuration is invalid.
     """
-    retry_config = context.config.model().retry
+    model = _resolve_model_snapshot(context, model_config)
+    retry_config = model.retry
     if max_attempts is None:
         max_attempts = retry_config.max_attempts
     if request_timeout is None:
@@ -1564,8 +1640,6 @@ def call_api(
         raise ValueError(
             "initial_backoff cannot exceed max_backoff."
         )
-
-    model = context.config.model()
 
     system_messages: list[
         ChatCompletionSystemMessageParam
@@ -1604,7 +1678,7 @@ def call_api(
 
     payload: dict[str, Any] = {
         "model": model.id,
-        "max_tokens": model.max_output_tokens,
+        "max_tokens": _model_max_output_tokens(model),
         "messages": request_messages,
     }
 
@@ -1653,7 +1727,7 @@ def call_api(
                     "application/json"
                 ),
                 "Authorization": (
-                    f"Bearer {model.decrypt_api_key()}"
+                    f"Bearer {_model_api_key(model)}"
                 ),
             },
             method="POST",
@@ -1665,13 +1739,11 @@ def call_api(
         else:
             request_label = "model request"
 
-        print(
-            f"{DIM}"
+        _debug_print(
             f"⏺ Starting {request_label} "
             f"(attempt {attempt}/{max_attempts}, "
             f"model={model.id}, "
             f"timeout={request_timeout:.1f}s)"
-            f"{RESET}"
         )
 
         started_at = time.monotonic()
@@ -1692,11 +1764,9 @@ def call_api(
                 )
 
             elapsed = time.monotonic() - started_at
-            print(
-                f"{DIM}"
+            _debug_print(
                 f"⏺ Model HTTP {response_status} received "
                 f"in {elapsed:.2f}s"
-                f"{RESET}"
             )
 
             try:
