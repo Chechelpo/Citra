@@ -1,82 +1,104 @@
+from gettext import find
+from citra.tools.session_memory import DecisionTool
+from citra.tools.session_memory import WorkingStateTool
+from citra.tools.session_memory import MemoryTool
+from citra.tools.session_memory import FactTool
+from citra.tools.session_memory import ConstraintTool
+from citra.tools.session_memory import TodoTool
+from functools import reduce
+from dataclasses import dataclass
 from .transient import *
 from .session_memory import *
 from .tool import Tool
-from .tool_registry import ToolRegistry
 
+__all__ =  ["all_tools", "ToolSet"]
 
-TOOL_REGISTRY = ToolRegistry()
+@dataclass(frozen=True)
+class ToolSet :
+    core_tools: tuple[type[Tool], ...]
+    deferred_tools : tuple[type[Tool], ...]
 
-# Core transient tools
-TOOL_REGISTRY.register("read", Read)
-TOOL_REGISTRY.register("write", Write)
-TOOL_REGISTRY.register("edit", Edit)
-TOOL_REGISTRY.register("glob", Glob)
-TOOL_REGISTRY.register("tree", Tree)
-TOOL_REGISTRY.register("commit", Commit)
-TOOL_REGISTRY.register("bash", Bash)
-TOOL_REGISTRY.register("prompt_user", PromptUser)
-TOOL_REGISTRY.register("lsp", Lsp)
-TOOL_REGISTRY.register("skill", SkillTool)
+    def __post_init__(self):
+        def add_if_duplicate(duplicates: list[type[Tool]], check_not_in, new_tool: type[Tool]) -> list[type[Tool]]:
+            if new_tool in check_not_in and new_tool not in duplicates:
+                duplicates.append(new_tool)
+            
+            return duplicates
+        
+        duplicates = reduce(
+            lambda duplicated,core_tool: add_if_duplicate(duplicated, self.deferred_tools, core_tool), 
+            self.core_tools, 
+            []
+        )
 
-# Deferred / specialized tools
-TOOL_REGISTRY.register(
-    "git", 
-    Git,
-    deferred=True,
-    summary="Clone repositories to analyze"
-)
-TOOL_REGISTRY.register(
-    "subprocess",
-    Subprocess,
-    deferred=True,
-    summary="Run or manage longer-lived subprocesses.",
-)
-TOOL_REGISTRY.register(
-    "browser",
-    Browser,
-    deferred=True,
-    summary="Interact with websites in a browser.",
-)
-TOOL_REGISTRY.register(
-    "curl",
-    Curl,
-    deferred=True,
-    summary="Make direct HTTP requests.",
-)
-TOOL_REGISTRY.register(
-    "web_search",
-    WebSearch,
-    deferred=True,
-    summary="Search the public web.",
-)
-TOOL_REGISTRY.register(
-    "document",
-    Document,
-    deferred=True,
-    summary="Create or modify rich documents.",
-)
-TOOL_REGISTRY.register(
-    "diagram",
-    Diagram,
-    deferred=True,
-    summary="Create diagrams.",
-)
+        if len(duplicates) > 0:
+            raise Exception(f"Duplicate tools found: {duplicates}")
 
-# Session / memory tools remain core so persisted memory always stays visible.
-TOOL_REGISTRY.register("todo", TodoTool)
-TOOL_REGISTRY.register("fact", FactTool)
-TOOL_REGISTRY.register("decision", DecisionTool)
-TOOL_REGISTRY.register("constraint", ConstraintTool)
-TOOL_REGISTRY.register("checkpoint", CheckpointTool)
-TOOL_REGISTRY.register("working_state", WorkingStateTool)
+    def get_tool_with_id(self, id:str) -> type[Tool] | None:
+        for tool in self.core_tools:
+            if tool.id == id:
+                return tool
+                
+        for tool in self.deferred_tools:
+            if tool.id == id:
+                return tool
+        
+        return None
+
+    def allowed_tools(self) -> tuple[type[Tool], ...]:
+        return self.core_tools + self.deferred_tools
+    
+    def is_core_tool(self, tool:type[Tool]) -> bool:
+        return tool in self.core_tools
+    
+    def is_deffered_tool(self, tool:type[Tool]) -> bool:
+        return tool in self.deferred_tools
+
+    def is_allowed_tool(self, tool:type[Tool])-> bool:
+        return self.is_deffered_tool(tool) or self.is_core_tool(tool)
+    
+def memory_tools() -> tuple[type[Tool], ...]:
+    return (
+        TodoTool,
+        DecisionTool,
+        ConstraintTool,
+        FactTool,
+        MemoryTool,
+        WorkingStateTool
+    )
 
 
 def all_tools(
-    are_deferred : bool,
     excluded: set[type[Tool]] = set()
 ) -> tuple[type[Tool], ...]:
+    _STATIC_REGISTRY : tuple[type[Tool], ...] = (
+        Read,
+        Write,
+        Edit,
+        Glob,
+        Tree,
+        Commit,
+        PromptUser,
+        Lsp,
+        SkillTool,
+        Git,
+        Subprocess,
+        Browser,
+        Curl,
+        WebSearch,
+        Document,
+        Diagram,
+
+        TodoTool,
+        FactTool,
+        DecisionTool,
+        ConstraintTool,
+        CheckpointTool,
+        WorkingStateTool
+    )
+    
     return tuple(
         tool
-        for tool in TOOL_REGISTRY.all_tool_types(are_deferred)
+        for tool in _STATIC_REGISTRY
         if tool not in excluded
     )

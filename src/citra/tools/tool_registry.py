@@ -1,5 +1,7 @@
 # src/citra/tools/registry.py
 
+import tomllib
+from citra.tools.default_registry import ToolSet
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -61,36 +63,13 @@ class ToolRegistry:
     explicitly enabled for the current agent turn.
     """
 
-    def __init__(self):
-        self.__tools: dict[str, ToolRegistration] = {}
+    def __init__(self, toolset: ToolSet):
+        self.__tools = toolset
 
-    def register(
-        self,
-        tool_id: str,
-        tool_type: type[Tool],
-        *,
-        deferred: bool = False,
-        summary: str = "",
-    ) -> None:
-        if tool_id in self.__tools:
-            raise ValueError(
-                f"Tool '{tool_id}' is already registered."
-            )
-
-        if deferred and not summary:
-            raise ValueError(
-                f"Deferred tool '{tool_id}' requires a summary."
-            )
-
-        self.__tools[tool_id] = ToolRegistration(
-            tool_type=tool_type,
-            deferred=deferred,
-            summary=summary,
-        )
-
-    def get_with_id(self, id:str) -> ToolRegistration:
-        return self.__tools[id] 
-
+    @property
+    def tools(self) -> ToolSet:
+        return self.__tools
+    
     def instantiate(
         self,
         context: ExecutionContext,
@@ -107,11 +86,10 @@ class ToolRegistry:
         """
         result: dict[str, Tool] = {}
 
-        for tool_id, registration in self.__tools.items():
-            if tool_ids is not None and tool_id not in tool_ids:
+        for tool_type in self.__tools.allowed_tools():
+            if tool_ids is not None and tool_type not in tool_ids:
                 continue
 
-            tool_type = registration.tool_type
             if issubclass(tool_type, MemoryTool):
                 configured_memory = getattr(
                     getattr(context, "config", None),
@@ -123,7 +101,7 @@ class ToolRegistry:
                 ):
                     continue
                 tool = self._get_memory_tool(
-                    tool_id=tool_id,
+                    tool_id=tool_type.TOOL_ID,
                     tool_type=tool_type,
                     context=context,
                     session=session,
@@ -140,7 +118,7 @@ class ToolRegistry:
                     context=context,
                 )
 
-            result[tool_id] = tool
+            result[tool.TOOL_ID] = tool
 
         return result
 
@@ -175,41 +153,13 @@ class ToolRegistry:
         # Retain this method for callers written against the old registry API.
         del session
 
-    def all_tool_types(self, is_deffered: bool) -> tuple[type[Tool], ...]:
-        return tuple(
-            registration.tool_type
-            for registration in self.__tools.values()
-            if registration.deferred == is_deffered
-        )
     
     def contains(
         self,
         tool_id: str,
     ) -> bool:
-        return tool_id in self.__tools
+        return self.tools.get_tool_with_id(tool_id) is not None
 
-    @property
-    def tool_ids(self) -> tuple[str, ...]:
-        return tuple(self.__tools)
-
-    @property
-    def core_tool_ids(self) -> tuple[str, ...]:
-        return tuple(
-            tool_id
-            for tool_id, registration in self.__tools.items()
-            if not registration.deferred
-        )
-
-    @property
-    def deferred_tool_ids(self) -> tuple[str, ...]:
-        return tuple(
-            tool_id
-            for tool_id, registration in self.__tools.items()
-            if registration.deferred
-        )
-
-
-    
     @property
     def deferred_catalog(self) -> dict[str, str]:
         return {

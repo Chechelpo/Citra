@@ -16,7 +16,6 @@ from ..cli.rendering import (
     render_tool_call_start,
 )
 from ..context import ExecutionContext
-from ..tools.default_registry import TOOL_REGISTRY
 from ..tools.enable_tools import EnableTools
 from ..tools.session_memory import TodoTool
 from ..utils.chat_completions_api import (

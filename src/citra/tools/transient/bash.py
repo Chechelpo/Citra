@@ -364,7 +364,7 @@ class Bash(Tool):
         include_description=True,
         description=(
             "Execute a shell command in the workspace. Commands run in the "
-            "foreground. Use Citra's subprocess tool for persistent processes."
+            "foreground. Use subprocess tool for persistent processes."
         ),
     )
 

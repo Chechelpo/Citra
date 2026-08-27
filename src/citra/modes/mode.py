@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
+from citra.tools.default_registry import ToolSet
 from citra.tools.skills.skill import Skill
 from citra.tools.tool import Tool
 from citra.utils.sandbox import SandboxMode
@@ -103,23 +104,7 @@ class Mode(ABC):
 
     @property
     @abstractmethod
-    def core_tools(
-        self,
-    ) -> tuple[type[Tool], ...]:
-        ...
-
-    @property
-    @abstractmethod
-    def allowed_tools(
-        self,
-    ) -> tuple[type[Tool], ...]:
-        ...
-
-    @property
-    @abstractmethod
-    def available_skills(
-        self,
-    ) -> tuple[type[Skill], ...]:
+    def tool_set(self) -> ToolSet:
         ...
 
     # -------------------------------------------------------------------------
@@ -199,64 +184,6 @@ class Mode(ABC):
                 "Mode name cannot be empty"
             )
 
-        self._validate_tool_tuple(
-            "core_tools",
-            self.core_tools,
-        )
-
-        self._validate_tool_tuple(
-            "allowed_tools",
-            self.allowed_tools,
-        )
-
-        self._validate_skill_tuple(
-            "available_skills",
-            self.available_skills,
-        )
-
-        core_duplicates = self._duplicates(
-            self.core_tools
-        )
-
-        if core_duplicates:
-            raise ValueError(
-                "core_tools contains duplicates: "
-                + ", ".join(
-                    tool.__name__
-                    for tool in core_duplicates
-                )
-            )
-
-        allowed_duplicates = self._duplicates(
-            self.allowed_tools
-        )
-
-        if allowed_duplicates:
-            raise ValueError(
-                "allowed_tools contains duplicates: "
-                + ", ".join(
-                    tool.__name__
-                    for tool in allowed_duplicates
-                )
-            )
-
-        overlap = (
-            set(self.core_tools)
-            & set(self.allowed_tools)
-        )
-
-        if overlap:
-            raise ValueError(
-                f"Mode '{self.name}' has tools declared "
-                "as both core and allowed: "
-                + ", ".join(
-                    sorted(
-                        tool.__name__
-                        for tool in overlap
-                    )
-                )
-            )
-
     @staticmethod
     def _validate_tool_tuple(
         name: str,
@@ -319,13 +246,7 @@ class StaticMode(Mode):
     _NAME: ClassVar[str]
     _DESCRIPTION: ClassVar[str | None] = None
 
-    _CORE_TOOLS: ClassVar[
-        tuple[type[Tool], ...]
-    ] = ()
-
-    _ALLOWED_TOOLS: ClassVar[
-        tuple[type[Tool], ...]
-    ] = ()
+    _TOOLS : ClassVar[ToolSet]
 
     _AVAILABLE_SKILLS: ClassVar[
         tuple[type[Skill], ...]
@@ -354,25 +275,9 @@ class StaticMode(Mode):
 
     @property
     @final
-    def core_tools(
-        self,
-    ) -> tuple[type[Tool], ...]:
-        return self._CORE_TOOLS
-
-    @property
-    @final
-    def allowed_tools(
-        self,
-    ) -> tuple[type[Tool], ...]:
-        return self._ALLOWED_TOOLS
-
-    @property
-    @final
-    def available_skills(
-        self,
-    ) -> tuple[type[Skill], ...]:
-        return self._AVAILABLE_SKILLS
-
+    def tool_set(self) -> ToolSet:
+        return self._TOOLS
+ 
     @property
     @final
     def sandbox_config(self) -> SandboxConfig:

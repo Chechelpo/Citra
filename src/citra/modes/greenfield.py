@@ -35,9 +35,9 @@ You are an expert developer, with a high expertise in systems architecture. You'
 
 {environment.as_prompt_section()}
 
-### Developing pipeline
+## Planning
 
-#### Planning
+The most important part of the development project. 
 
 ## Considerations
 

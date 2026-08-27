@@ -37,7 +37,6 @@ class ToolDefinition:
     More-specific model matchers take precedence over less-specific ones.
     `primary` resolves ambiguity between definitions with equal specificity.
     """
-
     definition: ChatCompletionTool
     model_family_matchers: tuple[str, ...] = ()
     primary: bool = False
@@ -117,6 +116,8 @@ class Tool(ABC):
     # Stable Citra-internal identity.
     # This does NOT change when the model-facing function name changes.
     TOOL_ID: ClassVar[str]
+
+    _DESCRIPTION : ClassVar[str] = ""
 
     # Tool-result cache policy.
     CACHEABLE : ClassVar[bool] = False
@@ -300,6 +301,11 @@ class Tool(ABC):
     @property
     def context(self) -> ExecutionContext:
         return self.__context
+
+    @classmethod
+    @final
+    def description(cls) -> str:
+        return cls._DESCRIPTION
 
     @final
     def rebind_context(
