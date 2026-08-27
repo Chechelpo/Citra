@@ -1,3 +1,4 @@
+from citra.sandbox.filesystem_ops import EditInput
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -441,9 +442,8 @@ class Edit(Tool):
         )
 
         result: str = self.context.filesystem.execute(
-            "edit",
-            filesystem_arguments,
-        )
+            EditInput.parse(arguments)
+        ).to_budgeted(model_id=self.context.model_config().id, token_count=4_000)
 
         if result != "ok":
             return result

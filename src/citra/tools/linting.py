@@ -11,7 +11,7 @@ from citra.context.config_loader import LintContextConfig, LintRuleConfig
 
 if TYPE_CHECKING:
     from citra.context.turn_workspace import WorkspaceContext
-    from citra.utils.sandbox import WorkspaceSandbox
+    from citra.sandbox import WorkspaceSandbox
 
 
 _PLACEHOLDERS = (

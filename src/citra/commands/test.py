@@ -32,7 +32,7 @@ from typing import Any
 
 from ..utils.api import chat_completions_url
 from ..utils.terminal import BOLD, DIM, GREEN, RED, RESET
-from ..tools.lsp import LspManager
+from citra.utils.lsp import LspManager
 from .command import Command, CommandResult
 
 

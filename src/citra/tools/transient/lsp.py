@@ -1,6 +1,7 @@
 """Model-facing semantic navigation backed by persistent language servers."""
-
 from __future__ import annotations
+
+from citra.sandbox.filesystem_ops import ReadRawInput
 
 import json
 from pathlib import Path
@@ -13,17 +14,17 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
-from ..lsp.diagnostics import format_diagnostics
-from ..lsp.errors import (
+from citra.utils.lsp.diagnostics import format_diagnostics
+from citra.utils.lsp.errors import (
     LspDiagnosticsTimeout,
     LspError,
     LspUnavailable,
     LspUnsupportedCapability,
 )
-from ..lsp.language import detect_language
-from ..lsp.manager import LspManager
-from ..lsp.positions import SourcePosition
-from ..lsp.protocol import uri_to_path
+from citra.utils.lsp.language import detect_language
+from citra.utils.lsp.manager import LspManager
+from citra.utils.lsp.positions import SourcePosition
+from citra.utils.lsp.protocol import uri_to_path
 from ..tool import Tool, ToolDefinition
 
 
@@ -436,10 +437,7 @@ class Lsp(Tool):
             )
 
         text = self.context.filesystem.execute(
-            "read_raw",
-            {
-                "path": str(path),
-            },
+            ReadRawInput(path= str(path))
         )
 
         try:
@@ -454,7 +452,7 @@ class Lsp(Tool):
                 rendered = format_diagnostics(
                     manager.diagnostics(
                         path,
-                        text,
+                        text.content,
                     ),
                     path=path,
                     display_path=(
@@ -472,7 +470,7 @@ class Lsp(Tool):
 
             uri = client.sync_document(
                 path,
-                text,
+                text.content,
                 handle.language,
             )
 
@@ -498,7 +496,7 @@ class Lsp(Tool):
 
             position = self._position(
                 arguments,
-                text,
+                text.content,
             )
 
             if action == "hover":

@@ -1,3 +1,4 @@
+from citra.sandbox.filesystem_ops import GlobInput
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -311,11 +312,8 @@ class Glob(Tool):
         arguments: dict[str, Any],
     ) -> str:
         return self.context.filesystem.execute(
-            "glob",
-            self._normalize_arguments(
-                arguments
-            ),
-        )
+            GlobInput.parse(arguments)
+        ).to_budgeted(model_id=self.context.model_config().id, token_count=4_000)
 
     # ------------------------------------------------------------------
     # Logging

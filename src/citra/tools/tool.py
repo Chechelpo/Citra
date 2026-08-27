@@ -178,6 +178,19 @@ class Tool(ABC):
         )
 
     @classmethod
+    @final
+    def resolve_definition_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> ChatCompletionTool:
+        """Resolve the public definition without constructing a tool."""
+
+        return cls._select_definition(
+            context,
+            cls.definitions_for_context(context),
+        )
+
+    @classmethod
     def _select_definition(
         cls,
         context: ExecutionContext,
@@ -304,7 +317,9 @@ class Tool(ABC):
 
     @classmethod
     @final
-    def description(cls) -> str:
+    def registration_summary(cls) -> str:
+        """Static registry summary, when a tool declares one."""
+
         return cls._DESCRIPTION
 
     @final

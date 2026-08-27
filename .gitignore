@@ -1,4 +1,5 @@
 .citra/*
+**/*.zip
 
 **/__pycache__/
 *.py[cod]

@@ -13,14 +13,14 @@ from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
 from citra.utils.model_tokenizer import tokenize
 from citra.utils.repo_map import RepoMap
-from citra.utils.sandbox import WorkspaceSandbox
-from citra.utils.sandboxed_filesystem import SandboxedFilesystem
+from citra.sandbox import WorkspaceSandbox
+from citra.sandbox import SandboxedFilesystem
 
 from .config_loader import CitraConfig
 
 if TYPE_CHECKING:
     from citra.modes import Mode
-    from citra.tools.lsp import LspManager
+    from citra.utils.lsp import LspManager
 
 
 DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000

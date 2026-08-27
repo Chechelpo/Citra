@@ -81,4 +81,4 @@ export PYTHONNOUSERSITE=1
 # The caller's current directory is intentionally preserved and becomes
 # Citra's active workspace. WorkspaceContext creates and manages the
 # lifecycle-scoped agent filesystem separately.
-exec "$PYTHON" -m citra.main "$@"
+exec "$PYTHON" -m cProfile -o citra.prof -m citra.main "$@"

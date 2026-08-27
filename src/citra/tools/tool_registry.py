@@ -1,23 +1,15 @@
-# src/citra/tools/registry.py
+from __future__ import annotations
 
-import tomllib
-from citra.tools.default_registry import ToolSet
-from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Protocol, cast
 
 from citra.agent import AgentSession
 
 from ..context import ExecutionContext
-from .tool import Tool
-from .session_tool import SessionTool
+from .default_registry import ToolSet
 from .session_memory import MemoryTool
-
-
-@dataclass(frozen=True)
-class ToolRegistration:
-    tool_type: type[Tool]
-    deferred: bool = False
-    summary: str = ""
+from .session_tool import SessionTool
+from .tool import Tool
 
 
 class _ToolFactory(Protocol):
@@ -43,24 +35,11 @@ class _MemoryToolFactory(Protocol):
 
 
 class ToolRegistry:
-    """
-    Permanent registry of tool implementations.
+    """Instantiate a mode's tools while preserving internal/public identity.
 
-    Tool lifetimes:
-
-    - Tool:
-        Instantiated fresh for each model call.
-
-    - SessionTool:
-        Instantiated fresh for each model call and receives the
-        current AgentSession.
-
-    - MemoryTool:
-        Owned by AgentSession and reused across model calls and turns, even
-        when older conversation messages are omitted from model context.
-
-    Deferred tools remain registered but are omitted from model calls until
-    explicitly enabled for the current agent turn.
+    Registry selection always uses stable Citra ``TOOL_ID`` values. Once the
+    active context has selected each tool's model-facing definition,
+    :meth:`index_by_model_name` produces the map used for API dispatch.
     """
 
     def __init__(self, toolset: ToolSet):
@@ -69,25 +48,38 @@ class ToolRegistry:
     @property
     def tools(self) -> ToolSet:
         return self.__tools
-    
+
+    @property
+    def core_tool_ids(self) -> frozenset[str]:
+        return self.__tools.core_tool_ids
+
+    @property
+    def deferred_tool_ids(self) -> frozenset[str]:
+        return self.__tools.deferred_tool_ids
+
+    def deferred_catalog(self, context: ExecutionContext) -> dict[str, str]:
+        """Return stable enablement IDs and context-selected descriptions."""
+
+        catalog: dict[str, str] = {}
+        for tool_type in self.__tools.deferred_tools:
+            definition = tool_type.resolve_definition_for_context(context)
+            catalog[tool_type.TOOL_ID] = definition.function.description
+        return catalog
+
     def instantiate(
         self,
         context: ExecutionContext,
         session: AgentSession,
         *,
-        tool_ids: set[str] | None = None,
+        tool_ids: set[str] | frozenset[str] | None = None,
     ) -> dict[str, Tool]:
-        """
-        Instantiate selected registered tools for a model call.
+        """Instantiate selected tools, keyed by stable internal ID."""
 
-        If tool_ids is omitted, all registered tools are instantiated.
-        MemoryTool instances are reused for the lifetime of the AgentSession.
-        Other tools are created fresh.
-        """
         result: dict[str, Tool] = {}
 
         for tool_type in self.__tools.allowed_tools():
-            if tool_ids is not None and tool_type not in tool_ids:
+            tool_id = tool_type.TOOL_ID
+            if tool_ids is not None and tool_id not in tool_ids:
                 continue
 
             if issubclass(tool_type, MemoryTool):
@@ -101,25 +93,37 @@ class ToolRegistry:
                 ):
                     continue
                 tool = self._get_memory_tool(
-                    tool_id=tool_type.TOOL_ID,
+                    tool_id=tool_id,
                     tool_type=tool_type,
                     context=context,
                     session=session,
                 )
-
             elif issubclass(tool_type, SessionTool):
                 tool = cast(_SessionToolFactory, tool_type)(
                     context=context,
                     session=session,
                 )
-
             else:
-                tool = cast(_ToolFactory, tool_type)(
-                    context=context,
+                tool = cast(_ToolFactory, tool_type)(context=context)
+
+            result[tool_id] = tool
+
+        return result
+
+    @staticmethod
+    def index_by_model_name(tools: Iterable[Tool]) -> dict[str, Tool]:
+        """Index tools by the exact function name exposed to the model."""
+
+        result: dict[str, Tool] = {}
+        for tool in tools:
+            previous = result.get(tool.model_name)
+            if previous is not None:
+                raise ValueError(
+                    "Model-facing tool name collision "
+                    f"{tool.model_name!r}: internal IDs "
+                    f"{previous.id!r} and {tool.id!r}"
                 )
-
-            result[tool.TOOL_ID] = tool
-
+            result[tool.model_name] = tool
         return result
 
     def _get_memory_tool(
@@ -137,33 +141,13 @@ class ToolRegistry:
                 session=session,
             ),
         )
-        tool.rebind_context(
-            context
-        )
+        tool.rebind_context(context)
         return tool
 
-    def release_session(
-        self,
-        session: AgentSession,
-    ) -> None:
-        """
-        Compatibility no-op; AgentSession owns and clears its own memory.
-        """
-        # Memory lifetime is explicitly controlled by AgentSession now.
-        # Retain this method for callers written against the old registry API.
+    def release_session(self, session: AgentSession) -> None:
+        """Compatibility no-op; ``AgentSession`` owns durable memory."""
+
         del session
 
-    
-    def contains(
-        self,
-        tool_id: str,
-    ) -> bool:
-        return self.tools.get_tool_with_id(tool_id) is not None
-
-    @property
-    def deferred_catalog(self) -> dict[str, str]:
-        return {
-            tool_id: registration.summary
-            for tool_id, registration in self.__tools.items()
-            if registration.deferred
-        }
+    def contains(self, tool_id: str) -> bool:
+        return self.__tools.get_tool_with_id(tool_id) is not None

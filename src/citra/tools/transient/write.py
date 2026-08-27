@@ -1,3 +1,4 @@
+from citra.sandbox.filesystem_ops import WriteInput
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -399,15 +400,8 @@ class Write(Tool):
         )
 
         result: str = self.context.filesystem.execute(
-            "write",
-            {
-                # Filesystem worker always receives Citra's canonical
-                # internal representation, independent of what the model
-                # happened to see.
-                "path": path,
-                "content": content,
-            },
-        )
+            WriteInput(path, content)
+        ).to_budgeted(model_id=self.context.model_config().id,token_count=4_000)
 
         if result != "ok":
             return result

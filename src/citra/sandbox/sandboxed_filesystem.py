@@ -5,13 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
-from typing import Any
+from typing import TypeVar
+
+from .filesystem_ops import FilesystemInput, FilesystemOutput
 
 from .sandbox import WorkspaceSandbox
 
 
+OutputT = TypeVar("OutputT", bound=FilesystemOutput)
+
+
 class SandboxedFilesystem:
-    """Execute scoped reads and writes inside Bubblewrap, never in-process."""
+    """Execute typed scoped filesystem operations inside Bubblewrap."""
 
     DEFAULT_TIMEOUT_SECONDS = 30
 
@@ -20,14 +25,16 @@ class SandboxedFilesystem:
 
     def execute(
         self,
-        operation: str,
-        arguments: dict[str, Any],
+        operation: FilesystemInput[OutputT],
         *,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
-    ) -> str:
+    ) -> OutputT:
         source_root = Path(__file__).resolve().parents[2]
         payload = json.dumps(
-            {"operation": operation, "arguments": arguments},
+            {
+                "operation": operation.operation,
+                "arguments": operation.to_arguments(),
+            },
             ensure_ascii=False,
         )
         result = self._sandbox.run(
@@ -58,11 +65,11 @@ class SandboxedFilesystem:
                 f"{result.output[:500]}"
             ) from error
         if not isinstance(response, dict):
-            raise RuntimeError("Sandboxed filesystem worker returned an invalid response.")
+            raise RuntimeError(
+                "Sandboxed filesystem worker returned an invalid response."
+            )
         if not response.get("ok"):
-            raise RuntimeError(str(response.get("error") or "filesystem operation failed"))
-        value = response.get("result")
-        if not isinstance(value, str):
-            raise RuntimeError("Sandboxed filesystem worker returned a non-text result.")
-        return value
-
+            raise RuntimeError(
+                str(response.get("error") or "filesystem operation failed")
+            )
+        return operation.parse_output(response.get("result"))

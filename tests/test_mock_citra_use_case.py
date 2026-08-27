@@ -11,8 +11,8 @@ from unittest import mock
 
 from citra.context.config_loader import WorkspaceContextConfig
 from citra.context.turn_workspace import WorkspaceContext
-from citra.utils.sandbox import WorkspaceSandbox
-from citra.utils.sandboxed_filesystem import SandboxedFilesystem
+from citra.sandbox.sandbox import WorkspaceSandbox
+from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 
 
 class MockCitraFilesystemUseCaseTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, final
@@ -8,10 +9,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, final
 from citra.tools.default_registry import ToolSet
 from citra.tools.skills.skill import Skill
 from citra.tools.tool import Tool
-from citra.utils.sandbox import SandboxMode
+from citra.sandbox.sandbox import SandboxMode
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
+
 
 @dataclass(frozen=True)
 class SandboxConfig:
@@ -123,6 +125,13 @@ class Mode(ABC):
     ) -> TaskSteeringConfig | None:
         ...
 
+    @property
+    @abstractmethod
+    def initial_working_states(self) -> tuple[str, ...]:
+        """Provisional memory states the model creates on its first turn."""
+
+        ...
+
     # -------------------------------------------------------------------------
     # Prompt
     # -------------------------------------------------------------------------
@@ -144,33 +153,70 @@ class Mode(ABC):
         current_turn: int,
         context: ExecutionContext,
     ) -> str | None:
-        steering = self.task_steering
-
-        if steering is None:
-            return None
-
         if current_turn < 0:
             raise ValueError(
                 "current_turn cannot be negative"
             )
 
+        parts: list[str] = []
+
         if current_turn == 0:
-            if not steering.include_first:
-                return None
+            initial_state_steering = self._initial_state_steering(context)
+            if initial_state_steering:
+                parts.append(initial_state_steering)
 
-            return steering.get_content(
-                context
-            )
+        steering = self.task_steering
+        if steering is None:
+            return "\n\n".join(parts) or None
 
-        if (
-            current_turn
-            % steering.every_n_turns
-            != 0
-        ):
+        if current_turn == 0:
+            if steering.include_first:
+                parts.append(steering.get_content(context))
+        elif current_turn % steering.every_n_turns == 0:
+            parts.append(steering.get_content(context))
+
+        return "\n\n".join(part for part in parts if part.strip()) or None
+
+    def _initial_state_steering(
+        self,
+        context: ExecutionContext,
+    ) -> str | None:
+        states = self.initial_working_states
+        if not states:
             return None
 
-        return steering.get_content(
+        memory_config = getattr(getattr(context, "config", None), "memory", None)
+        if not bool(getattr(memory_config, "enabled", True)):
+            return None
+
+        disabled_tool_ids = set(
+            getattr(getattr(context, "workspace", None), "disabled_tool_ids", ())
+        )
+        if "working_state" in disabled_tool_ids:
+            return None
+
+        tool_type = self.tool_set.get_tool_with_id("working_state")
+        if tool_type is None:
+            return None
+
+        public_tool_id = tool_type.resolve_definition_for_context(
             context
+        ).function.name
+        arguments = json.dumps(
+            {
+                "action": "create",
+                "contents": list(states),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+        return (
+            "Initialize this mode's provisional memory before other task work. "
+            f"Call the `{public_tool_id}` tool once with exactly these arguments: "
+            f"`{arguments}`. These are working states, not established facts; "
+            "maintain, promote, resolve, or discard them through the memory tools "
+            "as the task develops."
         )
 
     @final
@@ -182,6 +228,33 @@ class Mode(ABC):
         if not self.name.strip():
             raise ValueError(
                 "Mode name cannot be empty"
+            )
+
+        if not isinstance(self.initial_working_states, tuple):
+            raise TypeError("initial_working_states must be a tuple")
+
+        if any(
+            not isinstance(state, str) or not state.strip()
+            for state in self.initial_working_states
+        ):
+            raise ValueError(
+                "initial_working_states must contain non-empty strings"
+            )
+
+        duplicate_states = self._duplicates(self.initial_working_states)
+        if duplicate_states:
+            raise ValueError(
+                "Duplicate initial working states: "
+                + ", ".join(repr(state) for state in duplicate_states)
+            )
+
+        if (
+            self.initial_working_states
+            and "working_state" not in self.tool_set.core_tool_ids
+        ):
+            raise ValueError(
+                "Modes with initial working states must expose the "
+                "'working_state' tool as a core tool"
             )
 
     @staticmethod
@@ -238,6 +311,7 @@ class Mode(ABC):
 
         return tuple(duplicates)
 
+
 class StaticMode(Mode):
     """
     Base class for modes declared directly in Python.
@@ -246,7 +320,7 @@ class StaticMode(Mode):
     _NAME: ClassVar[str]
     _DESCRIPTION: ClassVar[str | None] = None
 
-    _TOOLS : ClassVar[ToolSet]
+    _TOOLS: ClassVar[ToolSet]
 
     _AVAILABLE_SKILLS: ClassVar[
         tuple[type[Skill], ...]
@@ -259,6 +333,8 @@ class StaticMode(Mode):
     _TASK_STEERING: ClassVar[
         TaskSteeringConfig | None
     ] = None
+
+    _INITIAL_WORKING_STATES: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self) -> None:
         self.validate()
@@ -277,7 +353,7 @@ class StaticMode(Mode):
     @final
     def tool_set(self) -> ToolSet:
         return self._TOOLS
- 
+
     @property
     @final
     def sandbox_config(self) -> SandboxConfig:
@@ -289,6 +365,12 @@ class StaticMode(Mode):
         self,
     ) -> TaskSteeringConfig | None:
         return self._TASK_STEERING
+
+    @property
+    @final
+    def initial_working_states(self) -> tuple[str, ...]:
+        return self._INITIAL_WORKING_STATES
+
 
 class UserMode(Mode):
     """
@@ -306,6 +388,7 @@ class UserMode(Mode):
         available_skills: tuple[type[Skill], ...] = (),
         sandbox_config: SandboxConfig | None = None,
         task_steering: TaskSteeringConfig | None = None,
+        initial_working_states: tuple[str, ...] = (),
     ) -> None:
         self._name = name
         self._description = description
@@ -322,6 +405,11 @@ class UserMode(Mode):
         )
 
         self._task_steering = task_steering
+        self._initial_working_states = initial_working_states
+        self._tool_set = ToolSet(
+            core_tools=core_tools,
+            deferred_tools=allowed_tools,
+        )
 
         self.validate()
 
@@ -346,6 +434,10 @@ class UserMode(Mode):
         return self._allowed_tools
 
     @property
+    def tool_set(self) -> ToolSet:
+        return self._tool_set
+
+    @property
     def available_skills(
         self,
     ) -> tuple[type[Skill], ...]:
@@ -360,6 +452,10 @@ class UserMode(Mode):
         self,
     ) -> TaskSteeringConfig | None:
         return self._task_steering
+
+    @property
+    def initial_working_states(self) -> tuple[str, ...]:
+        return self._initial_working_states
 
     def get_system_prompt(
         self,

@@ -25,7 +25,7 @@ class WebSearchError(RuntimeError):
 
 class WebSearch(Tool):
     INVALIDATES_TOOL_CACHE = False
-
+    TOOL_ID = "web-search"
     """
     Search the public web through the OpenSERP instance configured in the
     current ExecutionContext.

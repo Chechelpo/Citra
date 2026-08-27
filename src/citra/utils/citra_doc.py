@@ -802,7 +802,8 @@ class CitraDoc:
         )
 
         tree = self._load_tree()
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("A")
 
         title = self._require_single_child(
             root,
@@ -869,8 +870,9 @@ class CitraDoc:
         )
 
         tree = self._load_tree()
-        root = tree.getroot()
-
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
+        
         versioning = (
             self._optional_single_child(
                 root,
@@ -994,7 +996,8 @@ class CitraDoc:
         )
 
         tree = self._load_tree()
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
 
         index_element = (
             self._require_single_child(
@@ -1130,7 +1133,8 @@ class CitraDoc:
         )
 
         tree = self._load_tree()
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
 
         index_element = (
             self._require_single_child(
@@ -1243,7 +1247,8 @@ class CitraDoc:
         )
 
         tree = self._load_tree()
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
 
         sections = (
             self._require_single_child(
@@ -1344,7 +1349,8 @@ class CitraDoc:
         )
 
         tree = self._load_tree()
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
 
         index_element = (
             self._require_single_child(
@@ -1438,7 +1444,8 @@ class CitraDoc:
                 f"{self.path}: {error}"
             ) from error
 
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
 
         self._validate_root(
             root
@@ -1450,7 +1457,9 @@ class CitraDoc:
         self,
     ) -> ET.Element:
         tree = self._load_tree()
-        return tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
+        return root
 
     @classmethod
     def _validate_root(
@@ -1915,7 +1924,8 @@ class CitraDoc:
         A temporary file is created beside the target so ``os.replace`` remains
         an atomic same-filesystem replacement.
         """
-        root = tree.getroot()
+        if (root := tree.getroot()) is None:
+            raise Exception("Root is none")
         if root is None:
             raise Exception("Root is none")
 

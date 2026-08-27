@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
-from ..tools.lsp.manager import LspManager
+from citra.utils.lsp import LspManager
 from .command import Command, CommandResult
 
 

@@ -1,3 +1,4 @@
+from citra.sandbox.filesystem_ops import TreeInput
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -170,9 +171,8 @@ class Tree(Tool):
             # Compatibility for lightweight embedded contexts.
             # Production ExecutionContext uses the semantic repo map.
             return self.context.filesystem.execute(
-                "tree",
-                arguments,
-            )
+                TreeInput.parse(arguments)
+            ).to_budgeted(model_id=self.context.model_config().id,token_count=4_000)
 
         model_id = self.context.config.model().id
 

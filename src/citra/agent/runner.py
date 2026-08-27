@@ -1,4 +1,5 @@
 """Protocol-safe agent loop independent of workspace and REPL lifecycle."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from ..cli.rendering import (
 from ..context import ExecutionContext
 from ..tools.enable_tools import EnableTools
 from ..tools.session_memory import TodoTool
+from ..tools.tool_registry import ToolRegistry
 from ..utils.chat_completions_api import (
     ModelRequestInterrupted,
     build_memory_context,
@@ -52,6 +54,7 @@ class AgentRunner:
         ensure_active = getattr(self.context, "ensure_active", None)
         if callable(ensure_active):
             ensure_active()
+
         turn_number = self.session.begin_turn()
         mode = getattr(self.context, "mode", None)
         get_task_steering = getattr(mode, "get_task_steering", None)
@@ -63,6 +66,7 @@ class AgentRunner:
             if callable(get_task_steering)
             else None
         )
+
         if steering is not None and not isinstance(steering, str):
             raise TypeError("Mode task steering must be a string or None")
         if steering:
@@ -72,7 +76,12 @@ class AgentRunner:
             if hasattr(self.context, "workspace")
             else ""
         )
-        core_tool_ids, deferred_catalog = _configured_tools(self.context)
+
+        tool_registry = ToolRegistry(toolset=self.context.mode.tool_set)
+        core_tool_ids, deferred_catalog = _configured_tools(
+            self.context,
+            tool_registry,
+        )
         enabled_tool_ids: set[str] = set()
 
         while True:
@@ -82,22 +91,30 @@ class AgentRunner:
 
             # Keep the tool schema order monotonic for prompt-cache locality:
             # core tools and the loader stay fixed, deferred tools append only.
-            tools = TOOL_REGISTRY.instantiate(
+            tools_by_id = tool_registry.instantiate(
                 self.context,
                 self.session,
                 tool_ids=core_tool_ids,
             )
-            tools["enable_tools"] = EnableTools(
-                context=self.context,
-                available_tools=deferred_catalog,
-                enabled_tool_ids=enabled_tool_ids,
-            )
-            tools.update(
-                TOOL_REGISTRY.instantiate(
+            if deferred_catalog:
+                enable_tools = EnableTools(
+                    context=self.context,
+                    available_tools=deferred_catalog,
+                    enabled_tool_ids=enabled_tool_ids,
+                )
+                tools_by_id[enable_tools.id] = enable_tools
+            tools_by_id.update(
+                tool_registry.instantiate(
                     self.context,
                     self.session,
                     tool_ids=enabled_tool_ids,
                 )
+            )
+            # The model-facing name is selected from the current context and
+            # can differ from the stable Citra ID. Build the dispatch map only
+            # after every tool for this request has resolved its definition.
+            tools = tool_registry.index_by_model_name(
+                tools_by_id.values()
             )
 
             model_value = self.context.config.model
@@ -146,7 +163,7 @@ class AgentRunner:
                 list[ChatCompletionMessageFunctionToolCallParam],
                 assistant.get("tool_calls") or [],
             )
-            
+
             self.session.add_assistant_message(assistant)
             if not tool_calls:
                 # Steering may have arrived while a final-looking response was
@@ -154,7 +171,7 @@ class AgentRunner:
                 # and give the model the correction before ending the turn.
                 if self.session.steering.has_pending():
                     continue
-                todo_tool = tools.get("todo")
+                todo_tool = tools_by_id.get(TodoTool.TOOL_ID)
                 if (
                     isinstance(todo_tool, TodoTool)
                     and todo_tool.has_outstanding_todos()
@@ -203,6 +220,7 @@ class AgentRunner:
 
 def _configured_tools(
     context: ExecutionContext,
+    tool_registry: ToolRegistry,
 ) -> tuple[set[str], dict[str, str]]:
     """Apply runtime-mode exclusions before exposing any tool schemas."""
     disabled_tool_ids = set(
@@ -212,12 +230,14 @@ def _configured_tools(
             (),
         )
     )
-    core_tool_ids = set(TOOL_REGISTRY.core_tool_ids) - disabled_tool_ids
+
+    core_tool_ids = set(tool_registry.core_tool_ids) - disabled_tool_ids
     deferred_catalog = {
         tool_id: summary
-        for tool_id, summary in TOOL_REGISTRY.deferred_catalog.items()
+        for tool_id, summary in tool_registry.deferred_catalog(context).items()
         if tool_id not in disabled_tool_ids
     }
+
     return core_tool_ids, deferred_catalog
 
 

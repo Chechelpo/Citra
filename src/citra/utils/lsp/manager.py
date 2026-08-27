@@ -1,6 +1,7 @@
 """Lifecycle-scoped language-server discovery, startup, reuse, and shutdown."""
-
 from __future__ import annotations
+
+from citra.sandbox.filesystem_ops import ReadRawInput
 
 from dataclasses import dataclass
 import logging
@@ -11,8 +12,8 @@ from threading import RLock
 from typing import Any, Iterable
 
 from citra.context.turn_workspace import WorkspaceContext
-from citra.utils.sandbox import WorkspaceSandbox
-from citra.utils.sandboxed_filesystem import SandboxedFilesystem
+from citra.sandbox import WorkspaceSandbox
+from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 
 from .client import LspClient
 from .config import LspConfig, ServerConfig
@@ -172,9 +173,9 @@ class LspManager:
         language = detect_language(path)
         if language is None or not supports_language(language):
             return None
-        text = filesystem.execute("read_raw", {"path": str(path)})
+        text = filesystem.execute(ReadRawInput(path=str(path)))
         try:
-            diagnostics = self.diagnostics(path, text)
+            diagnostics = self.diagnostics(path, text.content)
         except (LspUnavailable, LspDiagnosticsTimeout):
             # Automatic Edit/Write diagnostics are advisory. A language server
             # that is temporarily unable to produce diagnostics must not turn a

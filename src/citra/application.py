@@ -13,11 +13,10 @@ from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
 from .modes import Mode, ModeRegistry
-from .tools.default_registry import TOOL_REGISTRY
-from .tools.lsp import LspConfig, LspManager
+from  citra.utils.lsp import LspConfig, LspManager
 from .tools.skills.skill_registry import SkillRegistry
 from .utils.chat_completions_api import call_api
-from .utils.sandbox import WorkspaceSandbox
+from  citra.sandbox import WorkspaceSandbox
 from .utils.terminal import RESET, YELLOW
 
 
@@ -190,14 +189,6 @@ class CitraApplication:
                 errors.append(error)
             try:
                 self.context.close(force=force)
-            except BaseException as error:
-                errors.append(error)
-            try:
-                TOOL_REGISTRY.release_session(self.session)
-            except BaseException as error:
-                errors.append(error)
-            try:
-                self.workspace.cleanup(force=force)
             except BaseException as error:
                 errors.append(error)
         finally:

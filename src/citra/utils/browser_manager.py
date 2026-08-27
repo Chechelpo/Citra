@@ -11,7 +11,7 @@ import os
 from threading import Lock, Thread
 from typing import Any
 
-from .sandbox import WorkspaceSandbox
+from citra.sandbox import WorkspaceSandbox
 
 
 class BrowserManager:

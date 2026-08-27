@@ -1,10 +1,13 @@
 """Model-facing read tool backed by the sandbox filesystem worker."""
 
-from citra.tools.lsp import LspError
-from citra.tools.lsp.errors import LspDiagnosticsTimeout
-from citra.tools.lsp import LspUnavailable
-from citra.tools.lsp.diagnostics import format_diagnostics
-from citra.tools.lsp import detect_language
+from citra.sandbox.filesystem_ops import ReadRawInput
+from citra.sandbox.filesystem_ops import ReadOutput
+from citra.sandbox.filesystem_ops import ReadInput
+from citra.utils.lsp import LspError
+from citra.utils.lsp.errors import LspDiagnosticsTimeout
+from citra.utils.lsp import LspUnavailable
+from citra.utils.lsp.diagnostics import format_diagnostics
+from citra.utils.lsp import detect_language
 from pathlib import Path
 from typing import Any, override
 
@@ -149,9 +152,8 @@ class Read(Tool):
         arguments: dict[str, Any],
     ) -> str:
         result: str = self.context.filesystem.execute(
-            "read",
-            arguments,
-        )
+            ReadInput.parse(arguments)
+        ).to_budgeted(model_id=self.context.model_config().id, token_count=2_000)
 
         diagnostic_results = self._run_diagnostics(
             arguments
@@ -246,18 +248,19 @@ class Read(Tool):
                 f"{path.suffix or 'this file'}"
             )
 
-        text = self.context.filesystem.execute(
-            "read_raw",
-            {
-                "path": str(path),
-            },
+        read_result = self.context.filesystem.execute(
+            ReadRawInput.parse(
+                {
+                    "path": str(path),
+                }
+            )
         )
 
         try:
             rendered = format_diagnostics(
                 manager.diagnostics(
                     path,
-                    text,
+                    read_result.content,
                 ),
                 path=path,
                 display_path=self.context.workspace.display_path,
