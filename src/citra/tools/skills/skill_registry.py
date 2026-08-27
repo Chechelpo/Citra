@@ -29,6 +29,8 @@ class SkillRegistry:
         self,
         agent_session: AgentSession,
         skills_root: Path | None,
+        *,
+        memory_enabled: bool = True,
     ) -> None:
         if skills_root is None:
             citra_root = os.environ.get("CITRA_INSTALL_ROOT")
@@ -40,14 +42,16 @@ class SkillRegistry:
         self.skills_root = skills_root
         self.skills: dict[str, Skill] = dict()
         
-        self._register((
-            TaskRecognition(),
+        built_in_skills: tuple[Skill, ...] = (
             SandboxEnvironment(),
             CodingConventions(),
             WebAppDebugging(),
             Translator(),
-            CitraDocsSkill()
-        ))
+            CitraDocsSkill(),
+        )
+        if memory_enabled:
+            built_in_skills = (TaskRecognition(), *built_in_skills)
+        self._register(built_in_skills)
         
         self._load()
         

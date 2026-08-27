@@ -6,7 +6,7 @@ from typing import Any, override
 from urllib.parse import urlparse
 
 from ...context import ExecutionContext
-from ..tool import Tool
+from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -18,7 +18,7 @@ from .prompt_user import PromptUser
 
 class Curl(Tool):
     """Perform constrained HTTP requests with explicit user authorization."""
-
+    TOOL_ID = "curl"
     METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"})
     ALLOW_OPTION = "Allow once"
     DENY_OPTION = "Deny"
@@ -129,8 +129,22 @@ class Curl(Tool):
         )
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(self, context: ExecutionContext) -> None:
-        super().__init__(context=context, definition=self.DEFINITION)
+        super().__init__(context)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:

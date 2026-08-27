@@ -1,14 +1,13 @@
 """Protocol-safe agent loop independent of workspace and REPL lifecycle."""
 from __future__ import annotations
 
-from citra.utils.prompt import build_system_prompt
-
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 
-from .response import execute_tool_call, get_assistant_message
-from .session import AgentSession
+from citra.utils.prompt import build_system_prompt
+
 from ..cli.rendering import (
     memory_tool_for_call,
     render_assistant_text,
@@ -26,6 +25,8 @@ from ..utils.chat_completions_api import (
     call_api,
 )
 from ..utils.terminal import RESET, YELLOW
+from .response import execute_tool_call, get_assistant_message
+from .session import AgentSession
 
 
 ApiCall = Callable[..., dict]
@@ -49,13 +50,35 @@ class AgentRunner:
         self.api_call = api_call
 
     def run_turn(self) -> None:
-        self.session.begin_turn()
-        prompt: str = build_system_prompt(self.context)
-        core_tool_ids = set(TOOL_REGISTRY.core_tool_ids)
+        ensure_active = getattr(self.context, "ensure_active", None)
+        if callable(ensure_active):
+            ensure_active()
+        turn_number = self.session.begin_turn()
+        mode = getattr(self.context, "mode", None)
+        get_task_steering = getattr(mode, "get_task_steering", None)
+        steering = (
+            get_task_steering(
+                turn_number - 1,
+                self.context,
+            )
+            if callable(get_task_steering)
+            else None
+        )
+        if steering is not None and not isinstance(steering, str):
+            raise TypeError("Mode task steering must be a string or None")
+        if steering:
+            self.session.add_user_message(steering)
+        prompt: str = (
+            build_system_prompt(self.context)
+            if hasattr(self.context, "workspace")
+            else ""
+        )
+        core_tool_ids, deferred_catalog = _configured_tools(self.context)
         enabled_tool_ids: set[str] = set()
-        deferred_catalog = TOOL_REGISTRY.deferred_catalog
 
         while True:
+            if self._runtime_is_closing():
+                return
             self.session.flush_steering()
 
             # Keep the tool schema order monotonic for prompt-cache locality:
@@ -78,13 +101,18 @@ class AgentRunner:
                 )
             )
 
-            model_config = self.context.config.model()
+            model_value = self.context.config.model
+            model_config = model_value() if callable(model_value) else model_value
+            model_id = str(getattr(model_config, "id", "test-model"))
+            max_input_tokens = int(
+                getattr(model_config, "max_input_tokens", 1_000_000)
+            )
 
             api_arguments: dict[str, Any] = {
                 "context": self.context,
                 "messages": self.session.get_last_messages_up_to_tokenLength(
-                    model_id=model_config.id,
-                    length=model_config.max_input_tokens
+                    model_id=model_id,
+                    length=max_input_tokens,
                 ),
                 "tools": tools,
             }
@@ -99,13 +127,17 @@ class AgentRunner:
                 api_arguments["model_config"] = model_config
                 api_arguments["retry_interrupt"] = self.session.steering.has_pending
 
-            api_arguments["sys_prompt"] = prompt
+            if prompt:
+                api_arguments["sys_prompt"] = prompt
             try:
                 response = self.api_call(**api_arguments)
             except ModelRequestInterrupted:
                 # No assistant message was accepted, so this is a safe place
                 # to flush steering and rebuild the request immediately.
                 continue
+
+            if self._runtime_is_closing():
+                return
 
             assistant = get_assistant_message(response)
             text = assistant.get("content")
@@ -137,6 +169,8 @@ class AgentRunner:
                 return
             cancel_remaining = False
             for tool_call in tool_calls:
+                if self._runtime_is_closing():
+                    return
                 call_id = tool_call.get("id")
                 if not call_id:
                     raise RuntimeError("Model returned a tool call without an id.")
@@ -162,6 +196,30 @@ class AgentRunner:
                 self.session.add_tool_result(call_id, result)
                 if not cancel_remaining and memory_tool is not None:
                     render_memory_change(tools, memory_before)
+
+    def _runtime_is_closing(self) -> bool:
+        workspace = getattr(self.context, "workspace", None)
+        return bool(getattr(workspace, "is_closing", False))
+
+
+def _configured_tools(
+    context: ExecutionContext,
+) -> tuple[set[str], dict[str, str]]:
+    """Apply runtime-mode exclusions before exposing any tool schemas."""
+    disabled_tool_ids = set(
+        getattr(
+            getattr(context, "workspace", None),
+            "disabled_tool_ids",
+            (),
+        )
+    )
+    core_tool_ids = set(TOOL_REGISTRY.core_tool_ids) - disabled_tool_ids
+    deferred_catalog = {
+        tool_id: summary
+        for tool_id, summary in TOOL_REGISTRY.deferred_catalog.items()
+        if tool_id not in disabled_tool_ids
+    }
+    return core_tool_ids, deferred_catalog
 
 
 def run_agent_turn(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import json
 import re
@@ -9,7 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ...context import ExecutionContext
-from ..tool import Tool
+from ..tool import Tool,ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -136,6 +137,13 @@ class WebSearch(Tool):
             ),
             parameters=JsonSchema.object(
                 properties=(
+                    # ------------------------------------------------------
+                    # Core search input.
+                    #
+                    # BOTH are optional at schema level because the executor
+                    # enforces "exactly one of query / queries".
+                    # ------------------------------------------------------
+
                     JsonProperty(
                         name="query",
                         schema=JsonSchema.string(
@@ -153,22 +161,26 @@ class WebSearch(Tool):
                             JsonSchema.string(),
                             description=(
                                 "Batch of search queries. Mutually exclusive "
-                                "with 'query'. All queries share the same search "
-                                "options. Up to 10 queries may be supplied."
+                                "with 'query'. All queries share the same "
+                                "search options. Up to 10 queries may be supplied."
                             ),
                         ),
                         required=False,
                     ),
+
+                    # ------------------------------------------------------
+                    # Optional Citra extensions.
+                    # ------------------------------------------------------
+
                     JsonProperty(
                         name="format",
                         schema=JsonSchema.string(
                             description=(
-                                "Result format. 'text' returns OpenSERP's "
-                                "compact plain-text representation optimized "
-                                "for LLM context; 'markdown' returns rendered "
-                                "Markdown; 'json' returns Citra-normalized "
-                                "structured results; 'ndjson' returns "
-                                "newline-delimited JSON. Defaults to 'text'."
+                                "Result format. 'text' returns compact output "
+                                "optimized for model context; 'markdown' returns "
+                                "rendered Markdown; 'json' returns structured "
+                                "results; 'ndjson' returns newline-delimited "
+                                "JSON. Defaults to 'text'."
                             ),
                             enum=SUPPORTED_FORMATS,
                         ),
@@ -181,8 +193,8 @@ class WebSearch(Tool):
                                 enum=SUPPORTED_ENGINES,
                             ),
                             description=(
-                                "Search engines to use, in preferred order. "
-                                "Defaults to bing, duckduckgo, and google."
+                                "Search engines to use. Optional. Citra "
+                                "selects its default engines when omitted."
                             ),
                         ),
                         required=False,
@@ -191,12 +203,10 @@ class WebSearch(Tool):
                         name="mode",
                         schema=JsonSchema.string(
                             description=(
-                                "Search strategy. 'balanced' searches all "
-                                "selected engines in parallel and merges their "
-                                "results; 'any' tries engines in order until one "
-                                "succeeds; 'fast' uses the currently fastest "
-                                "available selected engine. Defaults to "
-                                "'balanced'."
+                                "Optional search strategy. 'balanced' searches "
+                                "selected engines concurrently, 'any' tries "
+                                "them until one succeeds, and 'fast' prefers "
+                                "the fastest available engine."
                             ),
                             enum=(
                                 "balanced",
@@ -210,8 +220,8 @@ class WebSearch(Tool):
                         name="language",
                         schema=JsonSchema.string(
                             description=(
-                                "Optional search language hint, such as 'EN', "
-                                "'ES', or 'DE'. Engine behavior may vary."
+                                "Optional search-language hint such as "
+                                "'EN', 'ES', or 'DE'."
                             ),
                         ),
                         required=False,
@@ -220,9 +230,8 @@ class WebSearch(Tool):
                         name="region",
                         schema=JsonSchema.string(
                             description=(
-                                "Optional market/location hint such as 'US', "
-                                "'DE', 'en-GB', or a supported engine-specific "
-                                "region."
+                                "Optional market or location hint such as "
+                                "'US', 'DE', or 'en-GB'."
                             ),
                         ),
                         required=False,
@@ -251,8 +260,8 @@ class WebSearch(Tool):
                         name="file_type",
                         schema=JsonSchema.string(
                             description=(
-                                "Optional file-extension filter such as 'pdf', "
-                                "'doc', or 'txt'."
+                                "Optional file-extension filter such as "
+                                "'pdf', 'doc', or 'txt'."
                             ),
                         ),
                         required=False,
@@ -261,7 +270,8 @@ class WebSearch(Tool):
                         name="offset",
                         schema=JsonSchema.integer(
                             description=(
-                                "Result pagination offset. Defaults to 0."
+                                "Optional result pagination offset. "
+                                "Defaults to 0."
                             ),
                         ),
                         required=False,
@@ -270,8 +280,8 @@ class WebSearch(Tool):
                         name="max_results",
                         schema=JsonSchema.integer(
                             description=(
-                                "Maximum number of search results returned per "
-                                "query. Defaults to 10; Citra allows at most 50."
+                                "Optional maximum number of results per query. "
+                                "Defaults to 10 and cannot exceed 50."
                             ),
                         ),
                         required=False,
@@ -280,10 +290,9 @@ class WebSearch(Tool):
                         name="extract_results",
                         schema=JsonSchema.integer(
                             description=(
-                                "Fetch and embed cleaned page content for the "
-                                "top N results of each query. 0 disables "
-                                "extraction. Valid range is 0-5 and defaults "
-                                "to 0."
+                                "Optionally fetch and embed cleaned page "
+                                "content for the top N results. 0 disables "
+                                "extraction; valid range is 0-5."
                             ),
                         ),
                         required=False,
@@ -292,10 +301,9 @@ class WebSearch(Tool):
                         name="extract_mode",
                         schema=JsonSchema.string(
                             description=(
-                                "Extraction strategy when extract_results > 0: "
-                                "'auto' tries a fast fetch and renders when "
-                                "needed, 'fast' avoids browser rendering, and "
-                                "'rendered' forces browser rendering."
+                                "Optional extraction strategy when "
+                                "extract_results > 0: 'auto', 'fast', "
+                                "or 'rendered'."
                             ),
                             enum=(
                                 "auto",
@@ -309,9 +317,9 @@ class WebSearch(Tool):
                         name="include_features",
                         schema=JsonSchema.boolean(
                             description=(
-                                "Include supported SERP features such as answer "
-                                "boxes, AI summaries, related searches, and "
-                                "people-also-ask data. Defaults to false."
+                                "Optionally include supported SERP features "
+                                "such as answer boxes, related searches, "
+                                "and people-also-ask data."
                             ),
                         ),
                         required=False,
@@ -320,8 +328,8 @@ class WebSearch(Tool):
                         name="timeout_seconds",
                         schema=JsonSchema.number(
                             description=(
-                                "Maximum seconds to wait for each OpenSERP "
-                                "search request. Defaults to 20; maximum 60."
+                                "Optional per-search timeout in seconds. "
+                                "Defaults to 20 and cannot exceed 60."
                             ),
                         ),
                         required=False,
@@ -329,8 +337,107 @@ class WebSearch(Tool):
                 ),
                 additional_properties=False,
             ),
-        )
+        ),
     )
+
+    # ------------------------------------------------------------------
+    # Model-facing aliases
+    # ------------------------------------------------------------------
+
+    CLAUDE_CODE_DEFINITION = ToolDefinition(
+        definition=DEFINITION,
+    ).with_name(
+        "WebSearch",
+    ).definition
+
+    GEMINI_CLI_DEFINITION = ToolDefinition(
+        definition=DEFINITION,
+    ).with_name(
+        "google_web_search",
+    ).definition
+
+    QWEN_CODE_DEFINITION = ToolDefinition(
+        definition=DEFINITION,
+    ).with_name(
+        "web_search",
+    ).definition
+
+    KIMI_CODE_DEFINITION = ToolDefinition(
+        definition=DEFINITION,
+    ).with_name(
+        "WebSearch",
+    ).definition
+
+    ZCODE_DEFINITION = ToolDefinition(
+        definition=DEFINITION,
+    ).with_name(
+        "WebSearch",
+    ).definition
+
+    # Future harness-aware profile.
+    OPENCODE_DEFINITION = ToolDefinition(
+        definition=DEFINITION,
+    ).with_name(
+        "websearch",
+    ).definition
+
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.CLAUDE_CODE_DEFINITION,
+                model_family_matchers=(
+                    "claude",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.GEMINI_CLI_DEFINITION,
+                model_family_matchers=(
+                    "gemini",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.QWEN_CODE_DEFINITION,
+                model_family_matchers=(
+                    "qwen",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.KIMI_CODE_DEFINITION,
+                model_family_matchers=(
+                    "kimi",
+                    "moonshot",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.ZCODE_DEFINITION,
+                model_family_matchers=(
+                    "glm",
+                ),
+            ),
+
+            # GPT/Codex intentionally stays on the generic callable
+            # web_search shape. Current Codex's native web.run is a
+            # compound namespaced search/open/click/find tool and cannot
+            # be truthfully represented by this search-only Tool class.
+            ToolDefinition(
+                definition=cls.DEFINITION,
+                model_family_matchers=(
+                    "gpt",
+                    "codex",
+                ),
+            ),
+
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
 
     def __init__(
         self,
@@ -338,8 +445,9 @@ class WebSearch(Tool):
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
         )
+
+
 
     @override
     def _execute(

@@ -16,7 +16,7 @@ from ...utils.mermaid import (
     MermaidTheme,
 )
 
-from ..tool import Tool
+from ..tool import Tool,ToolDefinition
 
 
 class Diagram(Tool):
@@ -48,6 +48,7 @@ class Diagram(Tool):
     """
 
     DEFAULT_RENDER_TIMEOUT_SECONDS = 30
+    TOOL_ID = "diagram"
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
@@ -249,14 +250,25 @@ class Diagram(Tool):
         },
     }
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
     ) -> None:
-        super().__init__(
-            context=context,
-            definition=self.DEFINITION,
-        )
+        super().__init__(context)
 
     @override
     def _execute(

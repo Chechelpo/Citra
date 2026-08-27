@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
-from threading import Event, Thread
 import time
+from threading import Event, Thread
 from typing import Any
 
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -12,6 +13,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from ..agent.interactions import UserPromptRequest
 from ..agent.runner import ApiCall
 from ..application import CitraApplication
+from ..modes import Mode, ModeRegistry
 from ..utils.chat_completions_api import call_api
 from ..utils.terminal import (
     BLUE,
@@ -27,6 +29,36 @@ from ..utils.terminal import (
 )
 from ..utils.terminal_input import terminal_input
 from .rendering import print_header
+
+
+class HardShutdownRequested(RuntimeError):
+    """The second interrupt requested bounded application shutdown."""
+
+
+def select_startup_mode(
+    registry: ModeRegistry,
+    *,
+    input_service: Any = terminal_input,
+) -> Mode:
+    """Select a mode before any runtime or sandbox service is constructed."""
+    print(f"{BOLD}Select a Citra mode:{RESET}")
+    for index, mode in enumerate(registry.modes, 1):
+        description = f" — {mode.description}" if mode.description else ""
+        default = (
+            f" {GREEN}(default){RESET}"
+            if mode is registry.default_mode
+            else ""
+        )
+        print(f"  {DIM}{index}.{RESET} {mode.name}{description}{default}")
+
+    while True:
+        selection = input_service.prompt(
+            f"{BOLD}{BLUE}mode❯{RESET} "
+        ).strip()
+        try:
+            return registry.select(selection)
+        except (KeyError, ValueError) as error:
+            print(f"{RED}⏺ {error}{RESET}")
 
 
 def is_command(user_input: str) -> bool:
@@ -83,6 +115,24 @@ def run_turn_with_steering(
     thread.start()
 
     input_closed = False
+    soft_stop_requested = False
+
+    def handle_interrupt() -> None:
+        nonlocal soft_stop_requested
+        if not soft_stop_requested:
+            soft_stop_requested = True
+            application.session.queue_steering(
+                "Stop the current work safely and return control to the user."
+            )
+            print(f"{YELLOW}⏺ Stop instruction queued. Press Ctrl+C again to exit.{RESET}")
+            return
+
+        print(f"{YELLOW}⏺ Hard shutdown requested.{RESET}")
+        try:
+            application.request_hard_shutdown()
+        except Exception as error:
+            raise HardShutdownRequested(str(error)) from error
+        raise HardShutdownRequested()
 
     with patch_stdout(raw=True):
         while not done.is_set():
@@ -100,10 +150,7 @@ def run_turn_with_steering(
                     )
                 except KeyboardInterrupt:
                     application.interactions.respond(request.id, None)
-                    application.session.queue_steering(
-                        "Stop the current work safely and return control to the user."
-                    )
-                    print(f"{YELLOW}⏺ Stop instruction queued.{RESET}")
+                    handle_interrupt()
                 except EOFError:
                     application.interactions.respond(request.id, None)
                     application.session.queue_steering(
@@ -123,10 +170,7 @@ def run_turn_with_steering(
                     message=f"{BOLD}{BLUE}↪ steer{RESET} {DIM}(Enter to send){RESET} ",
                 )
             except KeyboardInterrupt:
-                application.session.queue_steering(
-                    "Stop the current work safely and return control to the user."
-                )
-                print(f"{YELLOW}⏺ Stop instruction queued.{RESET}")
+                handle_interrupt()
                 continue
             except EOFError:
                 application.session.queue_steering(
@@ -146,8 +190,29 @@ def main(
     *,
     api_call: ApiCall = call_api,
     input_service: Any = terminal_input,
+    interactive_mode_selection: bool | None = None,
 ) -> None:
-    application = CitraApplication.create(api_call=api_call)
+    mode_registry = ModeRegistry(
+        config_path=os.environ.get("CITRA_CONFIG_PATH"),
+    )
+    should_prompt = (
+        sys.stdin.isatty()
+        if interactive_mode_selection is None
+        else interactive_mode_selection
+    )
+    mode = (
+        select_startup_mode(
+            mode_registry,
+            input_service=input_service,
+        )
+        if should_prompt
+        else mode_registry.select()
+    )
+    application = CitraApplication.create(
+        api_call=api_call,
+        mode=mode,
+        mode_registry=mode_registry,
+    )
     try:
         print_header(application.config, application.source_workspace)
         while True:
@@ -174,7 +239,11 @@ def main(
                 print()
             except (KeyboardInterrupt, EOFError):
                 break
+            except HardShutdownRequested as error:
+                if str(error):
+                    print(f"{RED}⏺ Hard shutdown error: {error}{RESET}")
+                break
             except Exception as error:
                 print(f"{RED}⏺ Error: {error}{RESET}")
     finally:
-        application.close()
+        application.close(force=application.hard_shutdown_requested)

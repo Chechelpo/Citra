@@ -11,7 +11,7 @@ from typing import Sequence
 
 
 class WorkspaceConflictError(RuntimeError):
-    """The source no longer matches the lifecycle materialization baseline."""
+    """The source no longer matches the Agent Runtime startup baseline."""
 
 
 class GitCommandError(RuntimeError):
@@ -201,6 +201,7 @@ class WorkspaceChanges:
         workspace: Path,
         state: Path,
         home: Path,
+        source_snapshots: dict[str, SourceSnapshot] | None = None,
     ) -> WorkspaceChanges:
         git = shutil.which("git")
 
@@ -218,10 +219,37 @@ class WorkspaceChanges:
             git=git,
         )
         instance._initialize_private_repository()
+        if source_snapshots:
+            instance._initialize_full_workspace_baseline(source_snapshots)
         instance.__source_is_git_repository = (
             instance._detect_source_repository()
         )
         return instance
+
+    def _initialize_full_workspace_baseline(
+        self,
+        source_snapshots: dict[str, SourceSnapshot],
+    ) -> None:
+        """Baseline the complete startup copy for staging/diff semantics.
+
+        The private repository remains controller-only and never touches the
+        source repository's index or history.  Git is used here as a compact,
+        transactional partial-staging representation; source conflict checks
+        continue to use the independent content/mode/link snapshots.
+        """
+        paths = tuple(sorted(source_snapshots))
+        self.__materialized.update(paths)
+        self.__source_snapshots.update(source_snapshots)
+        if not paths:
+            return
+        self._add_to_index(self.__baseline_index, (".",))
+        commit = self._commit_current_baseline_index(
+            "Initialize complete Agent Runtime workspace baseline"
+        )
+        self._private_git(
+            ["read-tree", commit],
+            index=self.__staging_index,
+        )
 
     @property
     def source_workspace(self) -> Path:
@@ -853,7 +881,7 @@ class WorkspaceChanges:
         except GitCommandError as error:
             raise WorkspaceConflictError(
                 "Cannot apply staged updates because the source workspace "
-                "no longer matches the materialized baseline. "
+                "no longer matches the Agent Runtime startup baseline. "
                 f"Git reported: {error}"
             ) from error
 
@@ -913,6 +941,12 @@ class WorkspaceChanges:
             source = self.__source_workspace / relative
             expected = self.__source_snapshots.get(path)
 
+            if not self._source_parent_is_safe(relative):
+                conflicts.append(
+                    f"{path} (source parent now escapes the source workspace)"
+                )
+                continue
+
             if expected is None:
                 if os.path.lexists(source):
                     conflicts.append(
@@ -941,8 +975,21 @@ class WorkspaceChanges:
 
             raise WorkspaceConflictError(
                 "Cannot apply staged updates because @source no longer "
-                f"matches the materialized baseline: {detail}"
+                f"matches the Agent Runtime startup baseline: {detail}"
             )
+
+    def _source_parent_is_safe(self, relative: Path) -> bool:
+        """Reject externally introduced parent symlinks escaping @source."""
+        parent = self.__source_workspace / relative.parent
+        existing = parent
+        while not os.path.lexists(existing) and existing != self.__source_workspace:
+            existing = existing.parent
+        try:
+            resolved = existing.resolve(strict=True)
+            resolved.relative_to(self.__source_workspace.resolve())
+        except (FileNotFoundError, OSError, ValueError):
+            return False
+        return True
 
     def _refresh_source_snapshots(
         self,

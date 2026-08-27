@@ -1,5 +1,11 @@
 """Model-facing read tool backed by the sandbox filesystem worker."""
 
+from citra.tools.lsp import LspError
+from citra.tools.lsp.errors import LspDiagnosticsTimeout
+from citra.tools.lsp import LspUnavailable
+from citra.tools.lsp.diagnostics import format_diagnostics
+from citra.tools.lsp import detect_language
+from pathlib import Path
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -9,12 +15,14 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
-from ..tool import Tool
+from ..tool import Tool, ToolDefinition
 
 _TRUNCATE_LENGTH = 120
 
 
 class Read(Tool):
+    TOOL_ID = "read"
+
     CACHEABLE = True
     INVALIDATES_TOOL_CACHE = False
 
@@ -45,6 +53,13 @@ class Read(Tool):
                 name="limit",
                 schema=JsonSchema.integer(
                     description="Maximum number of lines to return.",
+                ),
+                required=False,
+            ),
+            JsonProperty(
+                name="diagnose",
+                schema=JsonSchema.boolean(
+                    description="Whether to also run diagnosis (lsp) on the read file"
                 ),
                 required=False,
             ),
@@ -90,20 +105,183 @@ class Read(Tool):
                         ),
                         required=False,
                     ),
+                    JsonProperty(
+                        name="diagnose",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Also run language-server diagnostics on the file. "
+                                "Only supported for exact file paths."
+                            ),
+                        ),
+                        required=False,
+                    ),
                 ),
                 additional_properties=False,
             ),
         ),
     )
 
-    def __init__(self, context: ExecutionContext) -> None:
-        super().__init__(context=context, definition=self.DEFINITION)
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
+    def __init__(
+        self,
+        context: ExecutionContext,
+    ) -> None:
+        super().__init__(
+            context=context,
+        )
 
     @override
-    def _execute(self, arguments: dict[str, Any]) -> str:
-        return self.context.filesystem.execute(
+    def _execute(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        result: str = self.context.filesystem.execute(
             "read",
             arguments,
+        )
+
+        diagnostic_results = self._run_diagnostics(
+            arguments
+        )
+
+        if not diagnostic_results:
+            return result
+
+        return (
+            result
+            + "\n\nDIAGNOSTICS:\n"
+            + "\n\n".join(diagnostic_results)
+        )
+
+    def _run_diagnostics(
+        self,
+        arguments: dict[str, Any],
+    ) -> list[str]:
+        results: list[str] = []
+
+        path = arguments.get("path")
+
+        if (
+            path is not None
+            and arguments.get("diagnose", False)
+        ):
+            results.append(
+                self._diagnose_path(
+                    str(path)
+                )
+            )
+
+        requests = arguments.get("requests") or ()
+
+        for request in requests:
+            if not request.get("diagnose", False):
+                continue
+
+            request_path = request.get("path")
+
+            if not request_path:
+                continue
+
+            results.append(
+                self._diagnose_path(
+                    str(request_path)
+                )
+            )
+
+        return results
+
+    def _diagnose_path(
+        self,
+        path: str,
+    ) -> str:
+        display_path = path
+
+        if self._looks_like_glob(path):
+            return (
+                f"{display_path}: diagnostics unavailable for glob patterns"
+            )
+
+        resolved = self.context.workspace.resolve_path(
+            path
+        )
+
+        diagnostic = self._diagnose_file(
+            resolved
+        )
+
+        return (
+            f"{display_path}:\n"
+            f"{diagnostic or 'ok'}"
+        )
+
+    def _diagnose_file(
+        self,
+        path: Path,
+    ) -> str | None:
+        manager = self.context.lsp_manager
+
+        if manager is None:
+            return "LSP diagnostics unavailable"
+
+        language = detect_language(
+            path
+        )
+
+        if language is None:
+            return (
+                "unsupported: no language server is configured for "
+                f"{path.suffix or 'this file'}"
+            )
+
+        text = self.context.filesystem.execute(
+            "read_raw",
+            {
+                "path": str(path),
+            },
+        )
+
+        try:
+            rendered = format_diagnostics(
+                manager.diagnostics(
+                    path,
+                    text,
+                ),
+                path=path,
+                display_path=self.context.workspace.display_path,
+            )
+        except LspDiagnosticsTimeout:
+            return "LSP diagnostics timed out"
+        except LspUnavailable:
+            return "LSP unavailable"
+        except LspError as error:
+            return f"LSP error: {error}"
+
+        return rendered or None
+
+    @staticmethod
+    def _looks_like_glob(
+        path: str,
+    ) -> bool:
+        return any(
+            character in path
+            for character in (
+                "*",
+                "?",
+                "[",
+            )
         )
 
     @override
@@ -143,19 +321,29 @@ class Read(Tool):
             return "empty result"
 
         file_count = text.count("===== ")
-
         lines = text.splitlines()
 
-        parts = [f"{len(lines)} lines", f"{len(text)} chars"]
+        parts = [
+            f"{len(lines)} lines",
+            f"{len(text)} chars",
+        ]
 
         if file_count:
-            parts.insert(0, f"{file_count} file(s)")
+            parts.insert(
+                0,
+                f"{file_count} file(s)",
+            )
 
         return " | ".join(parts)
 
     @staticmethod
-    def _truncate(value: str) -> str:
+    def _truncate(
+        value: str,
+    ) -> str:
         if len(value) <= _TRUNCATE_LENGTH:
             return value
-        return value[:_TRUNCATE_LENGTH] + "..."
 
+        return (
+            value[:_TRUNCATE_LENGTH]
+            + "..."
+        )

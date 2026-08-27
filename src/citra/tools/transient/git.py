@@ -7,7 +7,7 @@ from typing import Any, override
 from urllib.parse import urlparse
 
 from ...context import ExecutionContext
-from ..tool import Tool
+from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -23,6 +23,8 @@ class Git(Tool):
     This tool intentionally exposes no arbitrary Git argument passthrough.
     """
 
+    TOOL_ID = "git"
+
     DEFAULT_TIMEOUT_SECONDS = 30
 
     DEFAULT_LOG_LIMIT = 30
@@ -33,20 +35,22 @@ class Git(Tool):
 
     MAX_OUTPUT_LENGTH = 50_000
 
-    ACTIONS = frozenset(
-        {
-            "status",
-            "diff",
-            "log",
-            "show",
-            "blame",
-            "branches",
-            "remotes",
-            "root",
-            "rev_parse",
-            "clone",
-            "ls_remote",
-        }
+    ACTIONS = (
+        "status",
+        "diff",
+        "log",
+        "show",
+        "blame",
+        "branches",
+        "remotes",
+        "root",
+        "rev_parse",
+        "clone",
+        "ls_remote",
+    )
+
+    ACTION_SET = frozenset(
+        ACTIONS
     )
 
     DEFINITION = ChatCompletionTool(
@@ -66,11 +70,8 @@ class Git(Tool):
                     JsonProperty(
                         name="action",
                         schema=JsonSchema.string(
-                            description=(
-                                "Git operation: status, diff, log, show, "
-                                "blame, branches, remotes, root, rev_parse, "
-                                "clone, or ls_remote."
-                            ),
+                            description="Git operation to perform.",
+                            enum=ACTIONS,
                         ),
                     ),
                     JsonProperty(
@@ -172,27 +173,48 @@ class Git(Tool):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
         )
-
 
     def is_cacheable(
         self,
         arguments: dict[str, Any],
     ) -> bool:
-        return arguments.get("action") not in {"clone", "ls_remote"}
+        return (
+            arguments.get("action")
+            not in {
+                "clone",
+                "ls_remote",
+            }
+        )
 
     def invalidates_tool_cache(
         self,
         arguments: dict[str, Any],
     ) -> bool:
-        return arguments.get("action") == "clone"
+        return (
+            arguments.get("action")
+            == "clone"
+        )
 
     @override
     def _execute(

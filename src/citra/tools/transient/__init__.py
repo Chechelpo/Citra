@@ -4,7 +4,6 @@ from .commit import Commit
 from .curl import Curl
 from .edit import Edit
 from .glob import Glob
-from .grep import Grep
 from .prompt_user import PromptUser
 from .read import Read
 from .web_search import WebSearch
@@ -25,7 +24,6 @@ __all__ = [
     "Curl",
     "Edit",
     "Glob",
-    "Grep",
     "PromptUser",
     "Read",
     "WebSearch",

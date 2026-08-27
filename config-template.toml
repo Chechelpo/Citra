@@ -45,7 +45,7 @@
     # Browser navigation runs in a network-capable sandbox, but unapproved
     # origins are blocked by request interception.
     # After installing Citra dependencies, install Chromium once in the active
-    # lifecycle filesystem with a network-approved subprocess command:
+    # Agent Runtime with a network-approved subprocess command:
     # playwright install chromium
     always_allow_network = false
     permission_timeout = 30
@@ -63,13 +63,28 @@
     always_allow_unsafe_actions = false
 
 [sandbox]
-    # Additional host paths exposed read-only inside sandboxed commands.
-    # Useful for language runtimes or SDKs stored beneath otherwise masked
-    # directories such as /home. Supports ~ and environment variables.
-    extra_readonly_binds = [
-        "~/.local/share/uv",
-        "~/.cache/ms-playwright"
-    ]
+    # Additional explicit host paths exposed read-only. Normal runtime/tool
+    # assets are declared and provisioned automatically; keep this list narrow.
+    extra_readonly_binds = []
+
+[runtime.storage]
+    # Hard limit for duplicated host runtime assets. The project workspace is
+    # copied independently and is not charged against this budget.
+    provisioning_copy_budget_bytes = 4294967296
+    # Guardrails for controller-owned allocations/accounting. These are soft
+    # limits unless a quota-capable backing filesystem is configured.
+    env_soft_limit_bytes = 4294967296
+    cache_soft_limit_bytes = 4294967296
+    tmp_soft_limit_bytes = 2147483648
+
+[runtime.environment]
+    aggressive_normalization = true
+
+[runtime.environment.overrides]
+    # MY_TOOL_MODE = "agent"
+
+[runtime.cleanup]
+    remove_stale_process_roots = true
 
 [notifications]
     # Emit the terminal BEL character whenever the model waits for an answer
@@ -80,12 +95,20 @@
 [message-context]
     uncompressed_messages = 20
 
+[memory]
+    # Disable durable TODO/fact/decision/constraint/checkpoint/working-state
+    # tools and remove their prompt guidance. Conversation history is retained.
+    enabled = true
+
 [workspace]
     # Parent directory for the process-lifetime agent workspace.
     # temporary_workspace = "/temp"
     # 
     # Permanent agent workspace. Do not comment next line.
     # permanent_workspace = "/perm"
+    # When true, work directly in permanent_workspace/current directory.
+    # No project copy is created and Commit/materialize tools are unavailable.
+    direct_source = false
 
 [lsp]
     enabled = true

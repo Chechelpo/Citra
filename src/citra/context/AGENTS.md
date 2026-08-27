@@ -2,8 +2,9 @@
 
 > Execution context and configuration loading.
 
-This package provides process-lifetime configuration, workspace, staging, and
-execution services used by every tool and command.
+This package provides process-lifetime Agent Runtime configuration,
+provisioning, workspace, staging, and execution services used by every tool
+and command.
 
 ---
 
@@ -17,16 +18,17 @@ execution services used by every tool and command.
 | Property       | Source                                        |
 |----------------|-----------------------------------------------|
 | `os`           | `platform.system()` (normalized: `darwin`→`macos`) |
-| `workspace`    | lifecycle-scoped `WorkspaceContext`            |
+| `workspace`    | lifecycle-scoped Agent Runtime facade           |
 | `config`       | supplied `CitraConfig`, or `CITRA_CONFIG_PATH` fallback |
+| `mode`         | selected process-lifetime operating mode        |
 | `model_config` | shortcut → `config.model`                     |
 | `web_search_config` | shortcut → `config.web_search`          |
 | `sandbox`      | Bubblewrap execution broker                    |
 | `filesystem`   | fixed-operation sandbox filesystem client      |
 | `lsp_manager`  | persistent language-server manager             |
 
-**Key method:** `has_command(cmd)` — checks whether an executable is on
-`PATH` (used by the `bash` tool).
+**Key method:** `has_command(cmd)` — queries the provisioned runtime resolver,
+not the controller's host `PATH`.
 
 The dataclass uses private (`__`-prefixed) fields set via
 `object.__setattr__` in `__post_init__` because frozen dataclasses
@@ -46,7 +48,10 @@ Configuration uses frozen dataclasses, including:
   an old monolithic config.
 - **`RetryConfig`** — attempts, request timeout, and backoff bounds.
 - **`WebSearchConfig`** — `host_url`.
-- **`WorkspaceContextConfig`** — source and temporary-root selection.
+- **`WorkspaceContextConfig`** — source and temporary-root selection. Its
+  historical `direct_source` field remains parseable, but the selected mode's
+  `SandboxMode` is authoritative for the project view.
+- **`MemoryConfig`** — enables or fully removes durable model-facing memory.
 - **`LspContextConfig`** — enable flag and protocol timeouts.
 - **`LintContextConfig` / `LintRuleConfig`** — global fallback lint policy.
   Successful `edit`/`write` operations first detect supported lint policy in
@@ -59,8 +64,12 @@ Configuration uses frozen dataclasses, including:
 - **`BrowserConfig`** — Playwright path, timeouts, and unsafe-action policy.
 - **`CurlConfig`** — always-allow network, permission, and timeout limits.
 - **`NotificationConfig`** — `prompt_bell`.
-- **`SandboxContextConfig`** — Bubblewrap sandbox policy (binds, namespaces,
-  environment handling).
+- **`SandboxContextConfig`** — operator Bubblewrap policy (binds, namespaces,
+  environment handling). Operator binds extend mode binds and the global
+  network setting may only further restrict the selected mode.
+- **`RuntimeConfig`** and its storage/environment/cleanup children — hard
+  provisioning budget, mutable-state soft limits, normalization/overrides,
+  and stale-root cleanup.
 - **`CitraConfig`** — top-level config assembled from the split configuration
   directory. Missing required keys raise `ValueError`; model, web-search, and
   workspace configuration remain required.
@@ -71,7 +80,7 @@ configuration domains:
 
 | File | Contents |
 |------|----------|
-| `tools.toml` | `[web-search]`, `[workspace]`, `[browser]`, `[sandbox]`, `[subprocess]`, `[bash]`, `[curl]`, `[lsp]`, `[notifications]`, and future non-model/non-lint operational sections. |
+| `tools.toml` | `[web-search]`, `[workspace]`, `[memory]`, `[runtime.*]`, `[browser]`, `[sandbox]`, `[subprocess]`, `[bash]`, `[curl]`, `[lsp]`, `[notifications]`, and future non-model/non-lint operational sections. |
 | `models.toml` | `[models]`, its `active` selector, named model profiles, and retry tables. |
 | `linting.toml` | Optional global fallback `[lint]` and `[[lint.rules]]`. |
 
@@ -96,9 +105,10 @@ is valid with zero global rules, which enables project-declared linting while
 leaving the global fallback empty. If `linting.toml` is absent, this enabled,
 empty-fallback behavior is used.
 
-The source project is permanent/read-only to ordinary model tools, so staged
-edits cannot weaken the policy that verifies those same edits. Ruff is the
-first auto-detected project linter: `[tool.ruff.lint]` enables a per-file
+In isolated-copy mode the source project is permanent/read-only to ordinary
+model tools, so staged edits cannot weaken the policy that verifies those same
+edits. Direct-source mode intentionally trades away that separation. Ruff is
+the first auto-detected project linter: `[tool.ruff.lint]` enables a per-file
 `ruff check` using that `pyproject.toml`; `[tool.ruff.format]` additionally
 enables `ruff format --check`. Direct file checks use `--force-exclude` so
 project exclusions remain effective.
@@ -161,5 +171,14 @@ Re-exports the public configuration, execution, workspace, and staging types.
   it is `.citra/config`; direct legacy file paths remain supported.
 - `ExecutionContext` is frozen. Long-lived mutable services are referenced by
   it rather than replaced.
-- General filesystem tools must use `context.filesystem`; privileged
-  materialization/staging are narrow domain brokers, not arbitrary I/O APIs.
+- Mode selection happens before `WorkspaceContext` or `WorkspaceSandbox` is
+  created. `CitraApplication` passes the same selected mode and sandbox object
+  into `ExecutionContext` and every lifecycle-owned consumer.
+- By default, the complete source snapshot is present in the writable
+  workspace at startup. General filesystem tools use `context.filesystem`;
+  staging/apply is the narrow, conflict-checked bridge back to read-only
+  `@source`. A direct-source mode instead makes the permanent source the active
+  workspace; mode-declared tool availability governs related tool exposure.
+- `runtime/` is immutable and `metadata/` is controller-only. Mutable
+  dependency, cache, home, and temporary state belongs under the Agent Runtime
+  and must use its canonical environment and command resolver.

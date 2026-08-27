@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from enum import IntEnum
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -7,7 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Iterable, Mapping, Sequence
+from typing import Any, TYPE_CHECKING, Iterable, Mapping, Sequence
 
 if TYPE_CHECKING:
     from ..context.turn_workspace import WorkspaceContext
@@ -17,26 +19,34 @@ if TYPE_CHECKING:
 # Sandbox policy
 # ---------------------------------------------------------------------------
 #
-# The default policy deliberately favors compatibility with normal developer
-# commands over a minimal root filesystem:
-#
-#   1. The host root is visible read-only, preserving distro-specific layouts,
-#      dynamic linkers, /usr/local, /opt toolchains, CA stores, etc.
-#   2. Sensitive / stateful host trees are then masked.
-#   3. Only Citra-owned lifecycle directories are rebound writable.
-#   4. The original source workspace is rebound read-only both at its original
-#      absolute path and at <agent workspace>/@source.
+# The default policy starts from Bubblewrap's empty root and exposes only the
+# explicit compatibility assets selected by runtime provisioning, plus the
+# process-lifetime Agent Runtime data-plane roots.  A broad compatibility bind
+# can still be configured by an operator, but is never the default.
 #
 # Bubblewrap applies filesystem operations in command-line order, so later
 # mounts intentionally override earlier ones.
 
-# Read-only host paths that form the compatibility baseline. Keeping "/" here
-# is the least distro-fragile option. If you later want a strict allow-list
-# root, replace this with explicit paths such as /usr, /bin, /lib*, /etc, /opt
-# and test it on every target distro/toolchain.
-BASE_READONLY_BINDS: tuple[str, ...] = (
-    "/",
-)
+class SandboxMode(IntEnum):
+    """
+    Level of sandboxing required by a mode.
+
+    Each level includes the guarantees of the previous level.
+    """
+
+    FULL_ACCESS = 0
+    ONLY_SOURCE = 1
+    PARTIAL_SANDBOX = 2
+    FULL_SANDBOX = 3
+
+    @property
+    def uses_direct_source(self) -> bool:
+        """Whether the authoritative source is the active project root."""
+        return self <= SandboxMode.ONLY_SOURCE
+
+# Optional operator compatibility baseline.  Normal runtime assets arrive via
+# WorkspaceContext.runtime_readonly_binds instead.
+BASE_READONLY_BINDS: tuple[str, ...] = ()
 
 # Host directories hidden after BASE_READONLY_BINDS are mounted. These are
 # masked with empty tmpfs mounts. Do not add /etc or /opt casually: many normal
@@ -64,11 +74,9 @@ MASKED_HOST_FILES: tuple[str, ...] = ()
 # state and is never exposed writable to arbitrary commands.
 SANDBOX_WRITABLE_DIRS: tuple[str, ...] = (
     "workspace",
+    "env",
     "cache",
-    "config",
-    "data",
     "home",
-    "runtime",
     "tmp",
 )
 
@@ -91,26 +99,11 @@ CITRA_LEGACY_PRIVATE_CONFIG_FILE = "config.toml"
 # read-only. This preserves many user-installed command launchers without
 # reopening the rest of $HOME. Some runtimes need sibling directories too
 # (notably NVM/npm or rustup); add their runtime root to EXTRA_READONLY_BINDS.
-AUTO_BIND_MASKED_PATH_ENTRIES: bool = True
+AUTO_BIND_MASKED_PATH_ENTRIES: bool = False
 
 # Some environments point TLS libraries directly at a CA file/directory. If
 # that target lives under a masked directory, reopen only that path read-only.
-AUTO_BIND_ENV_PATHS: tuple[str, ...] = (
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "REQUESTS_CA_BUNDLE",
-    "CURL_CA_BUNDLE",
-    "PLAYWRIGHT_BROWSERS_PATH",
-    "NODE_EXTRA_CA_CERTS",
-    "VIRTUAL_ENV",
-    "JAVA_HOME",
-    "GOROOT",
-    "NVM_BIN",
-    "NVM_DIR",
-    "PYTHONPATH",
-    "PYENV_ROOT",
-    "RUSTUP_HOME",
-)
+AUTO_BIND_ENV_PATHS: tuple[str, ...] = ()
 
 # /run is masked to hide host D-Bus, Docker/Podman sockets, SSH/GPG agents,
 # systemd private sockets, etc. On many Linux systems /etc/resolv.conf is a
@@ -156,6 +149,27 @@ DROP_ENVIRONMENT_VARIABLES: frozenset[str] = frozenset(
 # is a useful place to add prefixes such as "AWS_", "GITHUB_", "OPENAI_", etc.
 DROP_ENVIRONMENT_PREFIXES: tuple[str, ...] = ()
 
+ISOLATION_ENVIRONMENT_VARIABLES: tuple[str, ...] = (
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_RUNTIME_DIR",
+    "VIRTUAL_ENV",
+    "CITRA_WORKSPACE",
+    "CITRA_SOURCE",
+    "CITRA_LIBRARY",
+    "CITRA_AGENT_ROOT",
+    "CITRA_RUNTIME",
+    "CITRA_ENV",
+    "CITRA_TMP",
+    "CITRA_CACHE",
+)
+
 
 @dataclass(frozen=True)
 class SandboxResult:
@@ -183,9 +197,28 @@ class WorkspaceSandbox:
         workspace: WorkspaceContext,
         *,
         config: object | None = None,
+        mode_config: object | None = None,
     ) -> None:
         self.__workspace = workspace
         self.__config = config
+        self.__mode_config = mode_config
+
+    @property
+    def mode(self) -> SandboxMode:
+        configured = getattr(
+            self.__mode_config,
+            "mode",
+            None,
+        )
+        if configured is None:
+            return (
+                SandboxMode.ONLY_SOURCE
+                if bool(getattr(self.__workspace, "direct_source", False))
+                else SandboxMode.FULL_SANDBOX
+            )
+        if not isinstance(configured, SandboxMode):
+            raise TypeError("Mode sandbox configuration has an invalid mode")
+        return configured
 
     def _setting(self, name: str, default: object) -> object:
         if self.__config is None:
@@ -203,13 +236,53 @@ class WorkspaceSandbox:
             for item in value
         ):
             raise TypeError(f"Sandbox setting '{name}' must contain strings.")
-        return tuple(value)
+        configured = tuple(value)
+        mode_name = {
+            "extra_readonly_binds": "additional_ro_binds",
+            "extra_writable_binds": "additional_w_binds",
+        }.get(name)
+        if mode_name is None or self.__mode_config is None:
+            return configured
+
+        mode_paths = getattr(self.__mode_config, mode_name, ())
+        if not isinstance(mode_paths, tuple) or not all(
+            isinstance(path, Path)
+            for path in mode_paths
+        ):
+            raise TypeError(
+                f"Mode sandbox setting '{mode_name}' must contain Path values."
+            )
+        return tuple(
+            dict.fromkeys(
+                (
+                    *(str(path) for path in mode_paths),
+                    *configured,
+                )
+            )
+        )
 
     def _bool_setting(self, name: str, default: bool) -> bool:
         value = self._setting(name, default)
         if not isinstance(value, bool):
             raise TypeError(f"Sandbox setting '{name}' must be boolean.")
         return value
+
+    def allows_network(self, requested: bool) -> bool:
+        """Apply mode and operator global network restrictions."""
+        if not isinstance(requested, bool):
+            raise TypeError("requested network access must be boolean")
+        mode_disallows = bool(
+            getattr(
+                self.__mode_config,
+                "global_network_disallow",
+                False,
+            )
+        )
+        operator_disallows = self._bool_setting(
+            "global_network_disallow",
+            False,
+        )
+        return requested and not (mode_disallows or operator_disallows)
 
     def run(
         self,
@@ -221,6 +294,7 @@ class WorkspaceSandbox:
         environment: Mapping[str, str] | None = None,
         input_text: str | None = None,
     ) -> SandboxResult:
+        self.__workspace.ensure_active()
         bwrap = shutil.which(
             "bwrap"
         )
@@ -240,6 +314,8 @@ class WorkspaceSandbox:
             raise ValueError(
                 "Sandbox timeout must be greater than zero."
             )
+
+        network = self.allows_network(network)
 
         workspace = self.__workspace
 
@@ -337,42 +413,34 @@ class WorkspaceSandbox:
                 start_new_session=True,
                 pass_fds=tuple(descriptors),
             )
+            if not workspace.processes.register(proc):
+                raise RuntimeError("Agent Runtime began closing during process start.")
         finally:
             for descriptor in descriptors:
                 os.close(descriptor)
 
         try:
-            if input_text is None:
-                output, _ = proc.communicate(timeout=timeout)
-            else:
-                output, _ = proc.communicate(input=input_text, timeout=timeout)
-
-            return SandboxResult(
-                returncode=proc.returncode,
-                output=output,
-                timed_out=False,
-            )
-
-        except subprocess.TimeoutExpired:
-            # bwrap itself is the process-group leader created by Popen.
-            # --die-with-parent plus bwrap's PID-namespace reaper are retained,
-            # while killing the outer process group also terminates helpers
-            # which remained in that group.
             try:
-                os.killpg(
-                    proc.pid,
-                    signal.SIGKILL,
+                if input_text is None:
+                    output, _ = proc.communicate(timeout=timeout)
+                else:
+                    output, _ = proc.communicate(input=input_text, timeout=timeout)
+
+                return SandboxResult(
+                    returncode=proc.returncode,
+                    output=output,
+                    timed_out=False,
                 )
-            except ProcessLookupError:
-                pass
-
-            output, _ = proc.communicate()
-
-            return SandboxResult(
-                returncode=proc.returncode,
-                output=output,
-                timed_out=True,
-            )
+            except subprocess.TimeoutExpired:
+                self.terminate_process(proc, force=True)
+                output, _ = proc.communicate()
+                return SandboxResult(
+                    returncode=proc.returncode,
+                    output=output,
+                    timed_out=True,
+                )
+        finally:
+            workspace.processes.unregister(proc)
     def environment_info(
         self,
     ) -> SandboxEnvironmentInfo:
@@ -398,6 +466,7 @@ class WorkspaceSandbox:
         environment: Mapping[str, str] | None = None,
     ) -> subprocess.Popen[bytes]:
         """Start a lifecycle-owned process under the same mount policy."""
+        self.__workspace.ensure_active()
         bwrap = shutil.which("bwrap")
         if bwrap is None:
             raise RuntimeError(
@@ -406,6 +475,7 @@ class WorkspaceSandbox:
             )
         if not command:
             raise ValueError("Sandbox command cannot be empty.")
+        network = self.allows_network(network)
         workspace = self.__workspace
         cwd_path = workspace.workspace if cwd is None else workspace.resolve_path(cwd)
         if not cwd_path.is_dir():
@@ -470,7 +540,7 @@ class WorkspaceSandbox:
                 writable_mounts=writable_mounts,
                 source_mounts=source_mounts,
             )
-            return subprocess.Popen(
+            process = subprocess.Popen(
                 bwrap_command,
                 env=env,
                 stdin=subprocess.PIPE,
@@ -479,63 +549,77 @@ class WorkspaceSandbox:
                 start_new_session=True,
                 pass_fds=tuple(descriptors),
             )
+            if not workspace.processes.register(process):
+                raise RuntimeError("Agent Runtime began closing during process start.")
+            return process
         finally:
             for descriptor in descriptors:
                 os.close(descriptor)
 
-    @staticmethod
-    def terminate_process(process: subprocess.Popen[object]) -> None:
-        """Terminate a sandbox process and all helpers in its process group."""
-        if process.poll() is not None:
-            return
+    def terminate_process(
+        self,
+        process: subprocess.Popen[Any],
+        *,
+        force: bool = False,
+        grace_seconds: float = 1.0,
+    ) -> None:
+        """Terminate a sandbox process group with a bounded graceful phase."""
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            if process.poll() is not None:
+                return
+            try:
+                os.killpg(
+                    process.pid,
+                    signal.SIGKILL if force else signal.SIGTERM,
+                )
+            except ProcessLookupError:
+                return
+            if force:
+                try:
+                    process.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    # Keep the process registered so aggregate runtime cleanup
+                    # gets one final bounded chance to reap it.
+                    return
+                return
+            try:
+                process.wait(timeout=max(0.0, grace_seconds))
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                # The OS will reap the daemon-owned process asynchronously. Do
+                # not let shutdown wait without a bound.
+                return
+        finally:
+            if process.poll() is not None:
+                self.__workspace.processes.unregister(process)
 
     def _prepare_lifecycle_directories(
         self,
     ) -> dict[str, Path]:
         workspace = self.__workspace
-        root = workspace.root
-
-        turn_dirs: dict[str, Path] = {}
-
-        for name in SANDBOX_WRITABLE_DIRS:
-            path = root / name
-            path.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-            turn_dirs[name] = path
-
-        # XDG_RUNTIME_DIR is expected to be private to the user. These paths
-        # are Citra-owned and disposable, so tightening their modes is safe.
-        runtime = turn_dirs.get(
-            "runtime"
-        )
-        if runtime is not None:
-            runtime.chmod(
-                0o700
-            )
-
-        home = turn_dirs.get(
-            "home"
-        )
-        if home is not None:
-            home.chmod(
-                0o700
-            )
-
-        # XDG_STATE_HOME must not point at Citra's trusted root/state control
-        # plane. Give sandboxed programs a separate writable state directory.
-        xdg_state = turn_dirs["data"] / "xdg-state"
-        xdg_state.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-        turn_dirs["xdg-state"] = xdg_state
-
+        turn_dirs = {
+            "workspace": workspace.workspace,
+            "env": workspace.env,
+            "cache": workspace.cache,
+            "home": workspace.home,
+            "tmp": workspace.tmp,
+            "config": workspace.config,
+            "data": workspace.data,
+            "xdg-state": workspace.home / ".local" / "state",
+            "runtime-state": workspace.runtime_state,
+        }
+        for path in turn_dirs.values():
+            path.mkdir(parents=True, exist_ok=True)
+        workspace.home.chmod(0o700)
+        workspace.runtime_state.chmod(0o700)
         return turn_dirs
 
     def _sandbox_environment(
@@ -585,36 +669,13 @@ class WorkspaceSandbox:
                         None,
                     )
 
-        # Force mutable per-command state into Citra-owned directories rather
-        # than the masked host home/tmp trees. Git, npm, Python tempfile, and
-        # most Unix developer tools respect these conventional locations.
-        result["HOME"] = str(
-            turn_dirs["home"]
-        )
-        result["XDG_CONFIG_HOME"] = str(
-            turn_dirs["config"]
-        )
-        result["XDG_CACHE_HOME"] = str(
-            turn_dirs["cache"]
-        )
-        result["XDG_DATA_HOME"] = str(
-            turn_dirs["data"]
-        )
-        result["XDG_STATE_HOME"] = str(
-            turn_dirs["xdg-state"]
-        )
-        result["XDG_RUNTIME_DIR"] = str(
-            turn_dirs["runtime"]
-        )
-        result["TMPDIR"] = str(
-            turn_dirs["tmp"]
-        )
-        result["TMP"] = str(
-            turn_dirs["tmp"]
-        )
-        result["TEMP"] = str(
-            turn_dirs["tmp"]
-        )
+        # WorkspaceContext is the sole canonical environment builder. Reassert
+        # its exact forced values after filtering, including cache/xdg rather
+        # than constructing a subtly different sandbox-only mapping.
+        del turn_dirs
+        for name in ISOLATION_ENVIRONMENT_VARIABLES:
+            if name in env:
+                result[name] = env[name]
 
         return result
 
@@ -640,134 +701,35 @@ class WorkspaceSandbox:
         ]
         created_mount_directories: set[Path] = set()
 
-        if NEW_TERMINAL_SESSION:
-            args.append(
-                "--new-session"
-            )
-
-        if UNSHARE_USER_TRY:
-            args.append(
-                "--unshare-user-try"
-            )
-
-        if UNSHARE_PID:
-            args.append(
-                "--unshare-pid"
-            )
-
-        if UNSHARE_IPC:
-            args.append(
-                "--unshare-ipc"
-            )
-
-        if UNSHARE_UTS:
-            args.append(
-                "--unshare-uts"
-            )
-
-        if UNSHARE_CGROUP_TRY:
-            args.append(
-                "--unshare-cgroup-try"
-            )
-
-        if DISABLE_NESTED_USER_NAMESPACES:
-            args.append(
-                "--disable-userns"
-            )
-
+        for setting, default, option in (
+            ("new_terminal_session", NEW_TERMINAL_SESSION, "--new-session"),
+            ("unshare_user_try", UNSHARE_USER_TRY, "--unshare-user-try"),
+            ("unshare_pid", UNSHARE_PID, "--unshare-pid"),
+            ("unshare_ipc", UNSHARE_IPC, "--unshare-ipc"),
+            ("unshare_uts", UNSHARE_UTS, "--unshare-uts"),
+            ("unshare_cgroup_try", UNSHARE_CGROUP_TRY, "--unshare-cgroup-try"),
+            (
+                "disable_nested_user_namespaces",
+                DISABLE_NESTED_USER_NAMESPACES,
+                "--disable-userns",
+            ),
+        ):
+            if self._bool_setting(setting, default):
+                args.append(option)
         if not network:
-            args.append(
-                "--unshare-net"
-            )
+            args.append("--unshare-net")
 
-        # Compatibility baseline first.
-        for path in BASE_READONLY_BINDS:
-            args.extend(
-                (
-                    "--ro-bind",
-                    path,
-                    path,
-                )
-            )
-
-        # Then hide host state. Later explicit mounts can reopen only the
-        # narrow paths Citra actually needs. A mount destination beneath the
-        # read-only root must already exist: bwrap cannot create a missing
-        # destination such as /media after ``--ro-bind / /``. Missing paths
-        # contain no host state to hide, so omit them instead of making the
-        # entire sandbox fail during setup.
-        for path in MASKED_HOST_DIRS:
-            if not Path(path).is_dir():
-                continue
-
-            args.extend(
-                (
-                    "--tmpfs",
-                    path,
-                )
-            )
-
-        for path in MASKED_HOST_FILES:
-            if not Path(path).is_file():
-                continue
-
-            args.extend(
-                (
-                    "--ro-bind",
-                    "/dev/null",
-                    path,
-                )
-            )
-
-        # Always replace host process/device views with sandbox-owned ones.
-        args.extend(
-            (
-                "--proc",
-                "/proc",
-                "--dev",
-                "/dev",
-                "--tmpfs",
-                "/dev/shm",
-            )
-        )
-
-        # /tmp and /var/tmp remain writable but contain no host files. Most
-        # programs will use TMPDIR (the persistent Citra turn tmp directory),
-        # while hard-coded /tmp users still work in an isolated tmpfs.
-        # MASKED_HOST_DIRS already creates these tmpfs mounts.
-
-        # Explicitly hide the entire Citra turn root as seen through the
-        # read-only host baseline. We then reopen only approved data-plane
-        # directories. This keeps root/state and workspace.git invisible.
-        self._append_masked_parent_directories(
-            args,
-            target=workspace.root,
-            created=created_mount_directories,
-        )
-        args.extend(
-            (
-                "--tmpfs",
-                str(workspace.root),
-            )
-        )
-
-        # DNS compatibility when /run is masked.
-        if resolver_bind is not None:
-            resolver_fd, resolver_target = resolver_bind
-            self._append_resolver_bind(
-                args,
-                resolver_fd=resolver_fd,
-                target=resolver_target,
-            )
-
-        # Reopen selected host tool/runtime paths read-only.
-        # Fixed Citra worker modules and the active Python environment may live
-        # beneath a masked home directory. Production calls pass descriptors
-        # opened before namespace setup, so masking /home cannot hide the bind
-        # sources. The path fallback keeps direct command-construction tests
-        # useful without requiring descriptor management.
+        direct_readonly: tuple[tuple[Path, Path], ...] = ()
         if readonly_mounts is None:
-            readonly_candidates = [
+            candidates: list[tuple[Path, Path]] = []
+            same_path = [
+                *(
+                    self._expand_host_path(path)
+                    for path in self._string_setting(
+                        "base_readonly_binds",
+                        BASE_READONLY_BINDS,
+                    )
+                ),
                 *self._compatibility_readonly_binds(env),
                 *(
                     self._expand_host_path(path)
@@ -776,162 +738,235 @@ class WorkspaceSandbox:
                         EXTRA_READONLY_BINDS,
                     )
                 ),
-                *self._citra_runtime_readonly_binds(),
-                *self._command_runtime_readonly_binds(command),
             ]
-            readonly_paths = self._minimal_existing_bind_paths(
-                readonly_candidates
-            )
-        else:
-            readonly_paths = ()
+            if self._bool_setting("auto_bind_citra_runtime", False):
+                same_path.extend(self._citra_runtime_readonly_binds())
+            candidates.extend((path, path) for path in same_path if path.exists())
+            if workspace.runtime.exists():
+                candidates.append((workspace.runtime, workspace.runtime))
+            candidates.extend(workspace.runtime_readonly_binds)
+            direct_readonly = self._minimal_mount_pairs(candidates)
 
-        for path in readonly_paths:
+        root_direct = tuple(
+            pair for pair in direct_readonly if pair[1] == Path("/")
+        )
+        other_direct = tuple(
+            pair for pair in direct_readonly if pair[1] != Path("/")
+        )
+        root_fd = tuple(
+            mount for mount in (readonly_mounts or ())
+            if mount.target == Path("/")
+        )
+        other_fd = tuple(
+            mount for mount in (readonly_mounts or ())
+            if mount.target != Path("/")
+        )
+
+        # A configured broad compatibility root is applied first so masking
+        # can narrow it.  The default has neither form.
+        for source, target in root_direct:
+            args.extend(("--ro-bind", str(source), str(target)))
+        for mount in root_fd:
+            args.extend(
+                ("--ro-bind-fd", str(mount.descriptor), str(mount.target))
+            )
+        broad_root = bool(root_direct or root_fd)
+        if broad_root:
+            for path in self._string_setting("masked_host_dirs", MASKED_HOST_DIRS):
+                if Path(path).is_dir():
+                    args.extend(("--tmpfs", path))
+            for path in self._string_setting("masked_host_files", MASKED_HOST_FILES):
+                if Path(path).is_file():
+                    args.extend(("--ro-bind", "/dev/null", path))
+
+        # Synthetic process/device views and isolated conventional temp roots.
+        args.extend(
+            (
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/dev/shm",
+                "--tmpfs",
+                "/tmp",
+                "--dir",
+                "/var",
+                "--tmpfs",
+                "/var/tmp",
+                "--tmpfs",
+                "/run",
+            )
+        )
+        created_mount_directories.update(
+            {Path("/tmp"), Path("/var"), Path("/var/tmp"), Path("/run")}
+        )
+
+        # Hide the controller-owned process root even when an operator opts
+        # into a broad host compatibility bind. Approved child roots are
+        # reopened explicitly below; metadata is never reopened.
+        self._append_masked_parent_directories(
+            args,
+            target=workspace.root,
+            created=created_mount_directories,
+            broad_root=broad_root,
+        )
+        args.extend(("--tmpfs", str(workspace.root)))
+        created_mount_directories.add(workspace.root)
+
+        direct_writable: tuple[Path, ...] = ()
+        if writable_mounts is None:
+            direct_writable = tuple(
+                dict.fromkeys(
+                    [
+                        *(turn_dirs[name] for name in SANDBOX_WRITABLE_DIRS),
+                        *(
+                            self._expand_host_path(path)
+                            for path in self._string_setting(
+                                "extra_writable_binds",
+                                EXTRA_WRITABLE_BINDS,
+                            )
+                            if self._expand_host_path(path).exists()
+                        ),
+                    ]
+                )
+            )
+
+        device_paths = tuple(
+            path
+            for path in (
+                self._expand_host_path(value)
+                for value in self._string_setting(
+                    "extra_device_binds",
+                    EXTRA_DEVICE_BINDS,
+                )
+            )
+            if path.exists()
+        )
+
+        direct_source = bool(getattr(workspace, "direct_source", False))
+        source_alias = (
+            workspace.source_workspace
+            if direct_source
+            else workspace.workspace / "@source"
+        )
+        direct_sources: tuple[tuple[Path, Path], ...] = ()
+        if source_mounts is None and not direct_source:
+            direct_sources = (
+                (workspace.source_workspace, workspace.source_workspace),
+                (workspace.source_workspace, source_alias),
+            )
+
+        protected_mount_targets = [
+            *(target for _, target in other_direct),
+            *(mount.target for mount in other_fd),
+            *direct_writable,
+            *(mount.target for mount in (writable_mounts or ())),
+            *device_paths,
+        ]
+        for target in protected_mount_targets:
+            if self._overlaps_metadata(target):
+                raise RuntimeError(
+                    "Sandbox mount would expose controller metadata: "
+                    f"{target}"
+                )
+
+        # Create only empty destination-parent skeletons.  The host root and
+        # controller metadata never become visible merely because an absolute
+        # target shares their spelling.
+        targets = [
+            *(target for _, target in other_direct),
+            *(mount.target for mount in other_fd),
+            *direct_writable,
+            *(mount.target for mount in (writable_mounts or ())),
+            *device_paths,
+            *(
+                target
+                for _, target in direct_sources
+                if not self._is_inside(target, workspace.workspace)
+            ),
+            *(
+                mount.target
+                for mount in (source_mounts or ())
+                if not self._is_inside(mount.target, workspace.workspace)
+            ),
+        ]
+        if resolver_bind is not None:
+            targets.append(resolver_bind[1])
+        for target in targets:
             self._append_masked_parent_directories(
                 args,
-                target=path,
+                target=target,
                 created=created_mount_directories,
+                broad_root=broad_root,
             )
+
+        if resolver_bind is not None:
+            resolver_fd, resolver_target = resolver_bind
             args.extend(
-                (
-                    "--ro-bind",
-                    str(path),
-                    str(path),
-                )
+                ("--ro-bind-fd", str(resolver_fd), str(resolver_target))
             )
 
-        for mount in readonly_mounts or ():
-            self._append_masked_parent_directories(
-                args,
-                target=mount.target,
-                created=created_mount_directories,
-            )
+        for source, target in other_direct:
+            args.extend(("--ro-bind", str(source), str(target)))
+        for mount in other_fd:
             args.extend(
-                (
-                    "--ro-bind-fd",
-                    str(mount.descriptor),
-                    str(mount.target),
-                )
+                ("--ro-bind-fd", str(mount.descriptor), str(mount.target))
             )
 
-        # The whole Citra installation is available read-only. Hide the
-        # operator's API/provider configuration again after that mount.
-        for path in self._citra_private_config_files():
-            if not path.is_file():
-                continue
+        for path in direct_writable:
+            args.extend(("--bind", str(path), str(path)))
+        for mount in writable_mounts or ():
+            args.extend(("--bind-fd", str(mount.descriptor), str(mount.target)))
+
+        for path in device_paths:
+            args.extend(("--dev-bind", str(path), str(path)))
+
+        # In isolated-copy mode, source is authoritative and immutable. These
+        # mounts are last so no compatibility mount can make either view
+        # writable. Direct-source mode intentionally omits them; its workspace
+        # writable bind is the authoritative source itself.
+        for source, target in direct_sources:
+            args.extend(("--ro-bind", str(source), str(target)))
+        for mount in source_mounts or ():
             args.extend(
-                (
-                    "--ro-bind",
-                    "/dev/null",
-                    str(path),
-                )
+                ("--ro-bind-fd", str(mount.descriptor), str(mount.target))
             )
 
-        # Reopen only Citra-owned turn directories writable.
-        if writable_mounts is None:
-            for name in SANDBOX_WRITABLE_DIRS:
-                path = turn_dirs[name]
-                args.extend(
-                    (
-                        "--bind",
-                        str(path),
-                        str(path),
-                    )
-                )
-        else:
-            for mount in writable_mounts:
-                args.extend(
-                    (
-                        "--bind-fd",
-                        str(mount.descriptor),
-                        str(mount.target),
-                    )
-                )
-
-        # XDG_STATE_HOME is a child of data, so the data bind above already
-        # exposes it. No additional mount is necessary.
-
-        if writable_mounts is None:
-            for path in EXTRA_WRITABLE_BINDS:
-                expanded = self._expand_host_path(
-                    path
-                )
-
-                if not expanded.exists():
-                    continue
-
+        # Secret/library masks are the final filesystem operation so neither an
+        # installation-root bind nor an authoritative source bind can reopen
+        # controller-owned state.
+        private_directories = self._citra_private_directories()
+        for path in private_directories:
+            for target in self._private_path_targets(path, source_alias):
                 self._append_masked_parent_directories(
                     args,
-                    target=expanded,
+                    target=target,
                     created=created_mount_directories,
+                    broad_root=broad_root,
                 )
-                args.extend(
-                    (
-                        "--bind",
-                        str(expanded),
-                        str(expanded),
-                    )
-                )
+                args.extend(("--tmpfs", str(target)))
 
-        # Optional hardware/device access is opt-in. /dev itself is synthetic.
-        for path in EXTRA_DEVICE_BINDS:
-            expanded = self._expand_host_path(
-                path
-            )
-
-            if not expanded.exists():
+        private_files = (
+            *self._citra_private_config_files(),
+            *(
+                self._expand_host_path(path).resolve()
+                for path in self._string_setting("private_files", ())
+            ),
+        )
+        for path in private_files:
+            if not path.is_file():
                 continue
-
-            self._append_masked_parent_directories(
-                args,
-                target=expanded,
-                created=created_mount_directories,
-            )
-            args.extend(
-                (
-                    "--dev-bind",
-                    str(expanded),
-                    str(expanded),
+            if any(self._is_inside(path, directory) for directory in private_directories):
+                continue
+            for target in self._private_path_targets(path, source_alias):
+                self._append_masked_parent_directories(
+                    args,
+                    target=target,
+                    created=created_mount_directories,
+                    broad_root=broad_root,
                 )
-            )
-
-        # The original project is authoritative and immutable. Put these last
-        # so no earlier compatibility/writable override can make it writable.
-        source_alias = workspace.workspace / "@source"
-        if source_mounts is None:
-            source = workspace.source_workspace
-            self._append_masked_parent_directories(
-                args,
-                target=source,
-                created=created_mount_directories,
-            )
-            args.extend(
-                (
-                    "--ro-bind",
-                    str(source),
-                    str(source),
-                    "--ro-bind",
-                    str(source),
-                    str(source_alias),
-                )
-            )
-        else:
-            for mount in source_mounts:
-                if not self._is_inside(
-                    mount.target,
-                    workspace.workspace,
-                ):
-                    self._append_masked_parent_directories(
-                        args,
-                        target=mount.target,
-                        created=created_mount_directories,
-                    )
-                args.extend(
-                    (
-                        "--ro-bind-fd",
-                        str(mount.descriptor),
-                        str(mount.target),
-                    )
-                )
+                args.extend(("--ro-bind", "/dev/null", str(target)))
 
         args.extend(
             (
@@ -947,44 +982,36 @@ class WorkspaceSandbox:
 
         return args
 
-    @staticmethod
     def _append_masked_parent_directories(
+        self,
         args: list[str],
         *,
         target: Path,
         created: set[Path],
+        broad_root: bool = False,
     ) -> None:
-        """Recreate a mount target's parents beneath an active mask.
-
-        A tmpfs mounted on ``/home`` or ``/mnt`` intentionally removes the
-        host directory tree from the sandbox. Bubblewrap can create the final
-        bind destination, but it cannot traverse missing intermediate parents.
-        Recreate only the empty directory skeleton required by an explicitly
-        approved later bind.
-        """
+        """Create empty parents needed by one explicit mount destination."""
         absolute = target.absolute()
-        applicable_masks = [
-            Path(raw_mask).absolute()
-            for raw_mask in MASKED_HOST_DIRS
-            if Path(raw_mask).is_dir()
-            and WorkspaceSandbox._is_inside(
-                absolute,
-                Path(raw_mask).absolute(),
-            )
-        ]
+        boundary = Path("/")
+        if broad_root:
+            applicable_masks = [
+                Path(raw_mask).absolute()
+                for raw_mask in self._string_setting(
+                    "masked_host_dirs",
+                    MASKED_HOST_DIRS,
+                )
+                if Path(raw_mask).is_dir()
+                and self._is_inside(absolute, Path(raw_mask).absolute())
+            ]
+            if not applicable_masks:
+                return
+            boundary = max(applicable_masks, key=lambda path: len(path.parts))
 
-        if not applicable_masks:
-            return
-
-        mask = max(
-            applicable_masks,
-            key=lambda path: len(path.parts),
-        )
         parents: list[Path] = []
         parent = absolute.parent
 
-        while parent != mask:
-            if not WorkspaceSandbox._is_inside(parent, mask):
+        while parent != boundary:
+            if not self._is_inside(parent, boundary):
                 return
             parents.append(parent)
             parent = parent.parent
@@ -1024,12 +1051,51 @@ class WorkspaceSandbox:
             )
         )
 
+    @staticmethod
+    def _minimal_mount_pairs(
+        candidates: Iterable[tuple[Path, Path]],
+    ) -> tuple[tuple[Path, Path], ...]:
+        """Deduplicate mounts when an earlier directory pair covers a child."""
+        result: list[tuple[Path, Path]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_source, raw_target in candidates:
+            source = raw_source.absolute()
+            target = raw_target.absolute()
+            key = (os.path.normpath(str(source)), os.path.normpath(str(target)))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            covered = False
+            for parent_source, parent_target in result:
+                if not parent_source.is_dir():
+                    continue
+                try:
+                    relative = target.relative_to(parent_target)
+                except ValueError:
+                    continue
+                expected_source = parent_source / relative
+                if os.path.realpath(expected_source) == os.path.realpath(source):
+                    covered = True
+                    break
+            if not covered:
+                result.append((source, target))
+        return tuple(result)
+
     def _open_readonly_mounts(
         self,
         command: Sequence[str],
         env: Mapping[str, str],
     ) -> tuple[_FdMount, ...]:
-        candidates = [
+        del command  # command closure is supplied by declarative provisioning
+        same_path_candidates = [
+            *(
+                self._expand_host_path(path)
+                for path in self._string_setting(
+                    "base_readonly_binds",
+                    BASE_READONLY_BINDS,
+                )
+            ),
             *self._compatibility_readonly_binds(env),
             *(
                 self._expand_host_path(path)
@@ -1038,14 +1104,29 @@ class WorkspaceSandbox:
                     EXTRA_READONLY_BINDS,
                 )
             ),
-            *self._citra_runtime_readonly_binds(),
-            *self._command_runtime_readonly_binds(command),
         ]
-        paths = self._minimal_existing_bind_paths(candidates)
-        return self._open_mounts(
+        if self._bool_setting("auto_bind_citra_runtime", False):
+            same_path_candidates.extend(self._citra_runtime_readonly_binds())
+
+        workspace = self.__workspace
+        mounts: list[tuple[Path, Path]] = [
             (path, path)
-            for path in paths
+            for path in same_path_candidates
+            if path.exists()
+        ]
+        runtime = getattr(workspace, "runtime", None)
+        if isinstance(runtime, Path) and runtime.exists():
+            mounts.append((runtime, runtime))
+        mounts.extend(
+            (Path(source), Path(target))
+            for source, target in getattr(
+                workspace,
+                "runtime_readonly_binds",
+                (),
+            )
+            if Path(source).exists()
         )
+        return self._open_mounts(self._minimal_mount_pairs(mounts))
 
     def _open_writable_mounts(
         self,
@@ -1055,7 +1136,10 @@ class WorkspaceSandbox:
             *(turn_dirs[name] for name in SANDBOX_WRITABLE_DIRS),
             *(
                 self._expand_host_path(path)
-                for path in EXTRA_WRITABLE_BINDS
+                for path in self._string_setting(
+                    "extra_writable_binds",
+                    EXTRA_WRITABLE_BINDS,
+                )
             ),
         ]
         return self._open_mounts(
@@ -1065,6 +1149,8 @@ class WorkspaceSandbox:
         )
 
     def _open_source_mounts(self) -> tuple[_FdMount, ...]:
+        if bool(getattr(self.__workspace, "direct_source", False)):
+            return ()
         source = self.__workspace.source_workspace
         return self._open_mounts(
             (
@@ -1120,10 +1206,10 @@ class WorkspaceSandbox:
         raw = os.environ.get("CITRA_INSTALL_ROOT")
 
         if not raw:
-            raise RuntimeError(
-                "CITRA_INSTALL_ROOT is not defined. "
-                "Citra must be launched through start.sh."
-            )
+            # Direct library/test use does not necessarily pass through the
+            # launcher.  Infer the installed package root without broadening
+            # the sandbox beyond this one explicit path.
+            return Path(__file__).resolve().parents[3]
 
         root = Path(raw).expanduser().resolve()
 
@@ -1133,6 +1219,27 @@ class WorkspaceSandbox:
             )
 
         return root
+
+    def _citra_private_directories(self) -> tuple[Path, ...]:
+        workspace = self.__workspace
+        candidates = [workspace.library]
+        configured = os.environ.get("CITRA_CONFIG_PATH")
+        if configured:
+            configured_path = Path(configured).expanduser().resolve()
+            if configured_path.is_dir():
+                candidates.append(configured_path)
+        state_root = os.environ.get("CITRA_ROOT")
+        if state_root:
+            root = Path(state_root).expanduser().resolve()
+            if root.is_dir() and root != workspace.source_workspace:
+                candidates.append(root)
+
+        result: list[Path] = []
+        for path in sorted(set(candidates), key=lambda item: len(item.parts)):
+            if any(self._is_inside(path, parent) for parent in result):
+                continue
+            result.append(path)
+        return tuple(result)
 
     @staticmethod
     def _citra_private_config_files() -> tuple[Path, ...]:
@@ -1164,9 +1271,32 @@ class WorkspaceSandbox:
                 )
             return (root / CITRA_LEGACY_PRIVATE_CONFIG_FILE,)
 
-        raise RuntimeError(
-            "CITRA_CONFIG_PATH and CITRA_ROOT are not defined. "
-            "Citra must be launched through start.sh."
+        return ()
+
+    def _private_path_targets(
+        self,
+        path: Path,
+        source_alias: Path,
+    ) -> tuple[Path, ...]:
+        targets = [path]
+        try:
+            relative = path.relative_to(self.__workspace.source_workspace)
+        except ValueError:
+            pass
+        else:
+            targets.append(source_alias / relative)
+        return tuple(dict.fromkeys(targets))
+
+    def _overlaps_metadata(self, target: Path) -> bool:
+        absolute = target.absolute()
+        if absolute == Path("/"):
+            # The opt-in broad root is narrowed by the unconditional runtime
+            # root tmpfs above.
+            return False
+        metadata = self.__workspace.metadata.absolute()
+        return self._is_inside(metadata, absolute) or self._is_inside(
+            absolute,
+            metadata,
         )
 
     @staticmethod
@@ -1185,18 +1315,12 @@ class WorkspaceSandbox:
             candidates.append(resolved.parent.parent)
         return tuple(dict.fromkeys(path.resolve() for path in candidates))
 
-    @staticmethod
     def _validate_command_mount_coverage(
+        self,
         command: Sequence[str],
         readonly_mounts: Sequence[_FdMount],
     ) -> None:
-        """Fail before bwrap if masking would hide the worker executable.
-
-        The command path and its resolved symlink target can live in different
-        trees.  A Citra-local ``.venv/bin/python`` commonly resolves to a
-        Python installation elsewhere under ``/home``.  Both paths must be
-        covered when their host tree is masked.
-        """
+        """Fail before bwrap if the explicit mounts omit an executable."""
         executable = Path(command[0])
 
         if not executable.is_absolute():
@@ -1217,18 +1341,19 @@ class WorkspaceSandbox:
         )
 
         for path in paths:
-            if not WorkspaceSandbox._is_under_masked_host_dir(path):
-                continue
-
             if any(
-                WorkspaceSandbox._is_inside(path, mount.target)
+                self._is_inside(path, mount.target)
                 for mount in readonly_mounts
             ):
                 continue
 
+            writable_roots = getattr(self.__workspace, "writable_roots", ())
+            if any(self._is_inside(path, root) for root in writable_roots):
+                continue
+
             raise RuntimeError(
-                "Sandbox setup would hide the command executable: "
-                f"{path}. Add its runtime root to the read-only binds."
+                "Sandbox setup does not declare the command executable: "
+                f"{path}. Add it to a tool/runtime definition."
             )
 
     def _compatibility_readonly_binds(
@@ -1238,7 +1363,10 @@ class WorkspaceSandbox:
         workspace = self.__workspace
         candidates: list[Path] = []
 
-        if AUTO_BIND_MASKED_PATH_ENTRIES:
+        if self._bool_setting(
+            "auto_bind_masked_path_entries",
+            AUTO_BIND_MASKED_PATH_ENTRIES,
+        ):
             path_value = env.get(
                 "PATH",
                 "",
@@ -1270,7 +1398,10 @@ class WorkspaceSandbox:
                         path
                     )
 
-        for name in AUTO_BIND_ENV_PATHS:
+        for name in self._string_setting(
+            "auto_bind_env_paths",
+            AUTO_BIND_ENV_PATHS,
+        ):
             raw_value = env.get(
                 name
             )
@@ -1379,35 +1510,15 @@ class WorkspaceSandbox:
 
     @staticmethod
     def _resolv_conf_runtime_target() -> Path | None:
-        resolv_conf = Path(
-            "/etc/resolv.conf"
-        )
-
+        resolv_conf = Path("/etc/resolv.conf")
         try:
-            target = resolv_conf.resolve(
-                strict=True
-            )
-        except (
-            FileNotFoundError,
-            OSError,
-            RuntimeError,
-        ):
+            if not resolv_conf.resolve(strict=True).is_file():
+                return None
+        except (FileNotFoundError, OSError, RuntimeError):
             return None
-
-        # /etc/resolv.conf itself is already visible through the read-only
-        # host root. We only need an extra bind when masking /run would hide
-        # the symlink target.
-        try:
-            target.relative_to(
-                "/run"
-            )
-        except ValueError:
-            return None
-
-        if not target.is_file():
-            return None
-
-        return target
+        # Bind the already-open file at the conventional path. This works even
+        # when the host path is a symlink into a hidden /run hierarchy.
+        return resolv_conf
 
     def _open_resolver_bind(
         self,
@@ -1442,28 +1553,6 @@ class WorkspaceSandbox:
         resolver_fd: int,
         target: Path,
     ) -> None:
-        run_root = Path("/run")
-        parents: list[Path] = []
-
-        parent = target.parent
-
-        while parent != run_root:
-            try:
-                parent.relative_to(run_root)
-            except ValueError:
-                return
-
-            parents.append(parent)
-            parent = parent.parent
-
-        for directory in reversed(parents):
-            args.extend(
-                (
-                    "--dir",
-                    str(directory),
-                )
-            )
-
         args.extend(
             (
                 "--ro-bind-fd",

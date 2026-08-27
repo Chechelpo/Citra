@@ -23,7 +23,7 @@ from ...utils.json_schema import (
     JsonSchema,
 )
 
-from ..tool import Tool
+from ..tool import Tool,ToolDefinition
 
 
 class Document(Tool):
@@ -52,7 +52,7 @@ class Document(Tool):
     ``@library`` access is intentionally implemented directly by this trusted
     semantic tool. Generic filesystem tools do not need library authority.
     """
-
+    TOOL_ID = "document"
     MAX_MUTATION_RESULT_CHARS = 8_000
     MAX_LIST_RESULTS = 200
 
@@ -329,15 +329,25 @@ class Document(Tool):
             "name",
         },
     }
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
 
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+    
     def __init__(
         self,
         context: ExecutionContext,
     ) -> None:
-        super().__init__(
-            context=context,
-            definition=self.DEFINITION,
-        )
+        super().__init__(context)
 
     @override
     def _execute(

@@ -47,10 +47,12 @@ TOKENIZER_FILES = {
 
 def _tokenizer_root() -> Path:
     root = os.environ.get("CITRA_INSTALL_ROOT")
-    if not root:
-        raise RuntimeError("CITRA_INSTALL_ROOT is not set")
-
-    path = Path(root) / "tokenizers"
+    install_root = (
+        Path(root).expanduser()
+        if root
+        else Path(__file__).resolve().parents[3]
+    )
+    path = install_root / "tokenizers"
     if not path.is_dir():
         raise RuntimeError(f"Tokenizer directory does not exist: {path}")
 

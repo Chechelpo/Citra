@@ -7,11 +7,13 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
-from ..tool import Tool
+from ..tool import Tool,ToolDefinition
 
 
 class Commit(Tool):
     """Stage agent-workspace changes and apply them to the source."""
+    
+    TOOL_ID = "commit"
 
     ACTIONS = (
         "status",
@@ -31,7 +33,8 @@ class Commit(Tool):
                 "never creates a Git commit and never changes the source "
                 "repository's index or history. Actions: status, diff, stage, "
                 "stage_patch, unstage, and apply. Apply performs a conflict "
-                "check against the content originally materialized this process."
+                "check against the complete source baseline captured when the "
+                "Agent Runtime started or last applied changes."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -79,15 +82,25 @@ class Commit(Tool):
             ),
         ),
     )
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
 
     def __init__(
         self,
         context: ExecutionContext,
     ) -> None:
-        super().__init__(
-            context=context,
-            definition=self.DEFINITION,
-        )
+        super().__init__(context)
 
 
     def is_cacheable(
@@ -109,6 +122,10 @@ class Commit(Tool):
     ) -> str:
         action: str = arguments["action"]
         changes = self.context.workspace.changes
+        if changes is None:
+            raise RuntimeError(
+                "Commit is unavailable while workspace.direct_source is enabled."
+            )
 
         if action == "status":
             self._reject_unused(

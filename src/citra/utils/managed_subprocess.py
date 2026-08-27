@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 from threading import Lock, Thread
 import time
-from typing import BinaryIO
+from typing import Any, IO
 
 from .sandbox import WorkspaceSandbox
 
@@ -34,14 +34,21 @@ class ManagedSubprocesses:
         self._records: dict[int, _ProcessRecord] = {}
         self._lock = Lock()
         self._next_id = 1
+        self._closed = False
 
     def start(self, command: str, *, cwd: Path, network: bool) -> int:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Managed subprocess service is closing.")
         process = self._sandbox.popen(
             ["bash", "--noprofile", "--norc", "-c", command],
             cwd=cwd,
             network=network,
         )
         with self._lock:
+            if self._closed:
+                self._sandbox.terminate_process(process, force=True)
+                raise RuntimeError("Managed subprocess service is closing.")
             process_id = self._next_id
             self._next_id += 1
             record = _ProcessRecord(process_id, command, cwd, network, process)
@@ -73,10 +80,6 @@ class ManagedSubprocesses:
     def stop(self, process_id: int) -> dict[str, object]:
         record = self._get(process_id)
         self._sandbox.terminate_process(record.process)
-        try:
-            record.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
         return self.poll(process_id, clear=True)
 
     def list(self) -> tuple[dict[str, object], ...]:
@@ -94,11 +97,14 @@ class ManagedSubprocesses:
             for record in records
         )
 
-    def close(self) -> None:
+    def close(self, *, force: bool = False) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             records = tuple(self._records.values())
         for record in records:
-            self._sandbox.terminate_process(record.process)
+            self._sandbox.terminate_process(record.process, force=force)
 
     def _get(self, process_id: int) -> _ProcessRecord:
         with self._lock:
@@ -110,7 +116,7 @@ class ManagedSubprocesses:
     def _read_stream(
         self,
         record: _ProcessRecord,
-        stream: BinaryIO | None,
+        stream: IO[Any] | None,
         prefix: str,
     ) -> None:
         if stream is None:

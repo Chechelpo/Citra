@@ -12,6 +12,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
 
@@ -24,6 +25,8 @@ class ConstraintExtract:
 
 class ConstraintTool(MemoryTool[ConstraintExtract]):
     """Manage durable constraints, optionally promoted from working state."""
+
+    TOOL_ID = "constraint"
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
@@ -41,15 +44,19 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
                         name="action",
                         schema=JsonSchema.string(
                             description="Constraint operation.",
-                            enum=("add", "promote", "remove"),
+                            enum=(
+                                "add",
+                                "promote",
+                                "remove",
+                            ),
                         ),
                     ),
                     JsonProperty(
                         name="content",
                         schema=JsonSchema.string(
                             description=(
-                                "Constraint text for direct add, or optional polished "
-                                "text for a single promotion."
+                                "Constraint text for direct add, or optional "
+                                "polished text for a single promotion."
                             ),
                         ),
                         required=False,
@@ -58,14 +65,18 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
                         name="contents",
                         schema=JsonSchema.array(
                             items=JsonSchema.string(),
-                            description="Constraints to add directly as a batch.",
+                            description=(
+                                "Constraints to add directly as a batch."
+                            ),
                         ),
                         required=False,
                     ),
                     JsonProperty(
                         name="working_state_id",
                         schema=JsonSchema.integer(
-                            description="Single working-state ID to promote.",
+                            description=(
+                                "Single working-state ID to promote."
+                            ),
                         ),
                         required=False,
                     ),
@@ -74,8 +85,8 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
                             description=(
-                                "Working-state IDs to promote as a batch. Their "
-                                "contents become the constraints."
+                                "Working-state IDs to promote as a batch. "
+                                "Their contents become the constraints."
                             ),
                         ),
                         required=False,
@@ -83,7 +94,9 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
                     JsonProperty(
                         name="id",
                         schema=JsonSchema.integer(
-                            description="Single constraint ID for remove.",
+                            description=(
+                                "Single constraint ID for remove."
+                            ),
                         ),
                         required=False,
                     ),
@@ -91,7 +104,9 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
                         name="ids",
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
-                            description="Constraint IDs to remove as a batch.",
+                            description=(
+                                "Constraint IDs to remove as a batch."
+                            ),
                         ),
                         required=False,
                     ),
@@ -101,6 +116,20 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
@@ -108,11 +137,50 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
             session=session,
         )
+
         self.__extracts: list[ConstraintExtract] = []
         self.__next_id = 1
+
+    @property
+    @override
+    def heading(self) -> str:
+        return "Constraints"
+
+    @override
+    def get_extracts(
+        self,
+    ) -> list[ConstraintExtract]:
+        return list(
+            self.__extracts
+        )
+
+    @override
+    def format_extract(
+        self,
+        extract: ConstraintExtract,
+    ) -> str:
+        text = (
+            f"- [{extract.id}] "
+            f"{extract.content}"
+        )
+
+        if extract.working_state_id is not None:
+            text += (
+                " (from working state "
+                f"W{extract.working_state_id})"
+            )
+
+        return text
+
+    @override
+    def should_offer_documentation(
+        self,
+    ) -> bool:
+        return bool(
+            self.__extracts
+        )
 
     @property
     @override

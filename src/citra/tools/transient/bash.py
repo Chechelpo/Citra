@@ -1,170 +1,481 @@
+from __future__ import annotations
+
+import re
 from typing import Any, override
 
 from ...context import ExecutionContext
-from ..tool import Tool
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
     JsonProperty,
     JsonSchema,
 )
+from ..tool import Tool, ToolDefinition
 from .prompt_user import PromptUser
-import re
 
-class Bash(Tool):
-    """
-    Executes one or more Bash commands inside the workspace sandbox.
 
-    The sandbox controls filesystem access, environment isolation,
-    process isolation, and network availability.
-    """
-
-    DEFAULT_TIMEOUT_SECONDS = 30
-    MAX_BATCH_SIZE = 20
-
-    REQUEST_SCHEMA = JsonSchema.object(
-        properties=(
-            JsonProperty(
-                name="cmd",
-                schema=JsonSchema.string(
-                    description="Bash command to execute.",
-                ),
-            ),
-            JsonProperty(
-                name="cwd",
-                schema=JsonSchema.string(
-                    description=(
-                        "Working directory for this command. "
-                        "Relative paths resolve from the active workspace. "
-                        "Filesystem aliases such as @tmp are supported."
-                    ),
-                ),
-                required=False,
-            ),
-            JsonProperty(
-                name="timeout",
-                schema=JsonSchema.integer(
-                    description=(
-                        "Maximum execution time in seconds for this command. "
-                        "Defaults to 30 seconds."
-                    ),
-                ),
-                required=False,
-            ),
-            JsonProperty(
-                name="network",
-                schema=JsonSchema.boolean(
-                    description=(
-                        "Request network access for this command. Defaults "
-                        "to false. Unless globally allowed, the exact command "
-                        "and reason are shown to the user for approval."
-                    ),
-                ),
-                required=False,
-            ),
-            JsonProperty(
-                name="reason",
-                schema=JsonSchema.string(
-                    description=(
-                        "Required when network is true. Explain why this "
-                        "command needs network access."
-                    ),
-                ),
-                required=False,
+def _bash_request_schema(
+    *,
+    command_name: str,
+    cwd_name: str,
+    timeout_name: str,
+    timeout_milliseconds: bool,
+    include_description: bool,
+) -> JsonSchema:
+    properties: list[JsonProperty] = [
+        JsonProperty(
+            name=command_name,
+            schema=JsonSchema.string(
+                description="Shell command to execute.",
             ),
         ),
+        JsonProperty(
+            name=cwd_name,
+            schema=JsonSchema.string(
+                description=(
+                    "Working directory for the command. "
+                    "Relative paths resolve from the active workspace."
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name=timeout_name,
+            schema=JsonSchema.integer(
+                description=(
+                    "Maximum execution time in milliseconds."
+                    if timeout_milliseconds
+                    else "Maximum execution time in seconds."
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name="network",
+            schema=JsonSchema.boolean(
+                description=(
+                    "Request network access for this command. "
+                    "Defaults to false."
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name="reason",
+            schema=JsonSchema.string(
+                description=(
+                    "Required when network is true. Explain why "
+                    "network access is needed."
+                ),
+            ),
+            required=False,
+        ),
+    ]
+
+    if include_description:
+        properties.insert(
+            1,
+            JsonProperty(
+                name="description",
+                schema=JsonSchema.string(
+                    description=(
+                        "Brief description of what the command does."
+                    ),
+                ),
+                required=False,
+            ),
+        )
+
+    return JsonSchema.object(
+        properties=tuple(properties),
         additional_properties=False,
     )
 
-    DEFINITION = ChatCompletionTool(
-        function=FunctionDefinition(
-            name="bash",
-            description=(
-                "Execute one or more Bash commands inside the local sandbox. "
-                "For a single command use cmd, with optional cwd and timeout. "
-                "For multiple independent commands use requests. Batch commands "
-                "are best-effort: a failed command does not prevent later "
-                "commands from running. Network access is disabled by "
-                "default; a command may request it with network=true and a "
-                "required reason. Unless globally allowed, Citra shows the "
-                "exact command and asks the user for permission. "
-                "The active workspace and lifecycle agent filesystem are "
-                "writable; the rest of the host filesystem is read-only. "
-                "Filesystem aliases such as @tmp are supported in cwd. "
-                "Inside Bash commands, use environment variables such as "
-                "$CITRA_WORKSPACE, $CITRA_TMP, and $CITRA_CACHE."
+
+def _bash_definition(
+    *,
+    name: str,
+    command_name: str,
+    cwd_name: str,
+    timeout_name: str,
+    timeout_milliseconds: bool,
+    include_description: bool,
+    description: str,
+) -> ChatCompletionTool:
+    request_schema = _bash_request_schema(
+        command_name=command_name,
+        cwd_name=cwd_name,
+        timeout_name=timeout_name,
+        timeout_milliseconds=timeout_milliseconds,
+        include_description=include_description,
+    )
+
+    properties: list[JsonProperty] = [
+        JsonProperty(
+            name=command_name,
+            schema=JsonSchema.string(
+                description=(
+                    "Single shell command to execute. "
+                    "Use 'requests' for multiple independent commands."
+                ),
             ),
-            parameters=JsonSchema.object(
-                properties=(
-                    JsonProperty(
-                        name="cmd",
-                        schema=JsonSchema.string(
-                            description=(
-                                "Single Bash command to execute. "
-                                "Use 'requests' for multiple commands."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="cwd",
-                        schema=JsonSchema.string(
-                            description=(
-                                "Working directory for a single command. "
-                                "Relative paths resolve from the active "
-                                "workspace. Defaults to the workspace."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="timeout",
-                        schema=JsonSchema.integer(
-                            description=(
-                                "Maximum execution time for a single command "
-                                "in seconds. Defaults to 30 seconds."
-                            ),
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="network",
-                        schema=JsonSchema.boolean(
-                            description=(
-                                "Request network access for the single command. "
-                                "Defaults to false."
-                            )
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="reason",
-                        schema=JsonSchema.string(
-                            description=(
-                                "Required when network is true. Explain why "
-                                "the command requires network access."
-                            )
-                        ),
-                        required=False,
-                    ),
-                    JsonProperty(
-                        name="requests",
-                        schema=JsonSchema.array(
-                            REQUEST_SCHEMA,
-                            description=(
-                                "Independent Bash commands to execute as a "
-                                "batch. Each request may specify its own cwd, "
-                                "timeout, network flag, and reason. At most "
-                                "20 commands may be run per batch."
-                            ),
-                        ),
-                        required=False,
+            required=False,
+        ),
+        JsonProperty(
+            name=cwd_name,
+            schema=JsonSchema.string(
+                description=(
+                    "Working directory for the single command. "
+                    "Relative paths resolve from the active workspace."
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name=timeout_name,
+            schema=JsonSchema.integer(
+                description=(
+                    "Maximum execution time for the single command "
+                    + (
+                        "in milliseconds."
+                        if timeout_milliseconds
+                        else "in seconds."
+                    )
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name="network",
+            schema=JsonSchema.boolean(
+                description=(
+                    "Request network access for the command. "
+                    "Defaults to false."
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name="reason",
+            schema=JsonSchema.string(
+                description=(
+                    "Required when network is true. Explain why "
+                    "network access is needed."
+                ),
+            ),
+            required=False,
+        ),
+        JsonProperty(
+            name="requests",
+            schema=JsonSchema.array(
+                request_schema,
+                description=(
+                    "Independent shell commands to execute as a batch. "
+                    "Each request may specify its own working directory, "
+                    "timeout, network flag, and reason."
+                ),
+            ),
+            required=False,
+        ),
+    ]
+
+    if include_description:
+        properties.insert(
+            1,
+            JsonProperty(
+                name="description",
+                schema=JsonSchema.string(
+                    description=(
+                        "Brief description of what the command does. "
+                        "Used only for model/tool compatibility."
                     ),
                 ),
+                required=False,
+            ),
+        )
+
+    return ChatCompletionTool(
+        function=FunctionDefinition(
+            name=name,
+            description=description,
+            parameters=JsonSchema.object(
+                properties=tuple(properties),
                 additional_properties=False,
             ),
         ),
     )
+
+
+class Bash(Tool):
+    """
+    Execute one or more foreground shell commands inside Citra's sandbox.
+    """
+
+    TOOL_ID = "bash"
+
+    DEFAULT_TIMEOUT_SECONDS = 30
+    MAX_BATCH_SIZE = 20
+
+    # ------------------------------------------------------------------
+    # Citra
+    #
+    # bash(
+    #     cmd?,
+    #     cwd?,
+    #     timeout?,       # seconds
+    #     network?,
+    #     reason?,
+    #     requests?,
+    # )
+    # ------------------------------------------------------------------
+
+    CITRA_DEFINITION = _bash_definition(
+        name="bash",
+        command_name="cmd",
+        cwd_name="cwd",
+        timeout_name="timeout",
+        timeout_milliseconds=False,
+        include_description=False,
+        description=(
+            "Execute one or more Bash commands inside the local sandbox. "
+            "For a single command use cmd. For multiple independent commands "
+            "use requests. Prefer specialized tools when available."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Claude Code
+    #
+    # Bash(
+    #     command?,
+    #     timeout?,       # milliseconds
+    #     description?,
+    #
+    #     # Citra extensions:
+    #     cwd?,
+    #     network?,
+    #     reason?,
+    #     requests?,
+    # )
+    #
+    # run_in_background deliberately omitted.
+    # ------------------------------------------------------------------
+
+    CLAUDE_CODE_DEFINITION = _bash_definition(
+        name="Bash",
+        command_name="command",
+        cwd_name="cwd",
+        timeout_name="timeout",
+        timeout_milliseconds=True,
+        include_description=True,
+        description=(
+            "Execute shell commands in the sandbox. Prefer specialized "
+            "tools over shell commands when possible. Commands run in the "
+            "foreground; use Citra's subprocess tool for persistent or "
+            "background processes."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Gemini CLI
+    #
+    # run_shell_command(
+    #     command?,
+    #     description?,
+    #     dir_path?,
+    #
+    #     # Citra extensions:
+    #     timeout_seconds?,
+    #     network?,
+    #     reason?,
+    #     requests?,
+    # )
+    #
+    # is_background deliberately omitted.
+    # ------------------------------------------------------------------
+
+    GEMINI_CLI_DEFINITION = _bash_definition(
+        name="run_shell_command",
+        command_name="command",
+        cwd_name="dir_path",
+        timeout_name="timeout_seconds",
+        timeout_milliseconds=False,
+        include_description=True,
+        description=(
+            "Execute shell commands in the workspace. Use this for command-line "
+            "operations that are not better handled by a specialized tool. "
+            "Commands run in the foreground."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Qwen Code
+    #
+    # run_shell_command(
+    #     command?,
+    #     description?,
+    #     directory?,
+    #
+    #     # Citra extensions:
+    #     timeout_seconds?,
+    #     network?,
+    #     reason?,
+    #     requests?,
+    # )
+    #
+    # Native Qwen currently requires is_background. We intentionally omit
+    # it because Citra's Bash tool is foreground-only.
+    # ------------------------------------------------------------------
+
+    QWEN_CODE_DEFINITION = _bash_definition(
+        name="run_shell_command",
+        command_name="command",
+        cwd_name="directory",
+        timeout_name="timeout_seconds",
+        timeout_milliseconds=False,
+        include_description=True,
+        description=(
+            "Execute a shell command for command-line operations in the "
+            "workspace. Commands run in the foreground. Use the subprocess "
+            "tool when a persistent background process is required."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Kimi Code
+    #
+    # Bash(
+    #     command?,
+    #     cwd?,
+    #     timeout?,       # milliseconds
+    #     description?,
+    #     ...
+    # )
+    #
+    # run_in_background / disable_timeout deliberately omitted.
+    # ------------------------------------------------------------------
+
+    KIMI_CODE_DEFINITION = _bash_definition(
+        name="Bash",
+        command_name="command",
+        cwd_name="cwd",
+        timeout_name="timeout",
+        timeout_milliseconds=True,
+        include_description=True,
+        description=(
+            "Execute a shell command in the workspace. Commands run in the "
+            "foreground. Use Citra's subprocess tool for persistent processes."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # ZCode / GLM
+    #
+    # ZCode has a capitalized Bash tool and is strongly Claude-compatible
+    # in its Bash environment/tool conventions. Keep the compatible shape.
+    # ------------------------------------------------------------------
+
+    ZCODE_DEFINITION = _bash_definition(
+        name="Bash",
+        command_name="command",
+        cwd_name="cwd",
+        timeout_name="timeout",
+        timeout_milliseconds=True,
+        include_description=True,
+        description=(
+            "Execute a shell command in the sandbox. Commands run in the "
+            "foreground; use the subprocess tool for persistent processes."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Codex
+    #
+    # Current unified execution:
+    #
+    # exec_command(
+    #     cmd,
+    #     workdir?,
+    #     ...
+    # )
+    #
+    # Codex's yield/process-continuation parameters are deliberately not
+    # reproduced because this Tool is synchronous. Citra extensions remain
+    # available.
+    # ------------------------------------------------------------------
+
+    CODEX_DEFINITION = _bash_definition(
+        name="exec_command",
+        command_name="cmd",
+        cwd_name="workdir",
+        timeout_name="timeout_seconds",
+        timeout_milliseconds=False,
+        include_description=False,
+        description=(
+            "Execute a shell command in the workspace and return its output. "
+            "Commands run synchronously in the foreground."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # OpenCode reference profile
+    # ------------------------------------------------------------------
+
+    OPENCODE_DEFINITION = _bash_definition(
+        name="bash",
+        command_name="command",
+        cwd_name="workdir",
+        timeout_name="timeout",
+        timeout_milliseconds=True,
+        include_description=False,
+        description=(
+            "Execute one shell command string in the working directory."
+        ),
+    )
+
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.CLAUDE_CODE_DEFINITION,
+                model_family_matchers=("claude",),
+            ),
+            ToolDefinition(
+                definition=cls.GEMINI_CLI_DEFINITION,
+                model_family_matchers=("gemini",),
+            ),
+            ToolDefinition(
+                definition=cls.QWEN_CODE_DEFINITION,
+                model_family_matchers=("qwen",),
+            ),
+            ToolDefinition(
+                definition=cls.KIMI_CODE_DEFINITION,
+                model_family_matchers=(
+                    "kimi",
+                    "moonshot",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.ZCODE_DEFINITION,
+                model_family_matchers=("glm",),
+            ),
+            ToolDefinition(
+                definition=cls.CODEX_DEFINITION,
+                model_family_matchers=(
+                    "gpt",
+                    "codex",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.CITRA_DEFINITION,
+            ),
+        )
 
     def __init__(
         self,
@@ -172,14 +483,139 @@ class Bash(Tool):
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
         )
+
+    # ------------------------------------------------------------------
+    # Normalization
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _first(
+        arguments: dict[str, Any],
+        *names: str,
+    ) -> Any:
+        for name in names:
+            if name in arguments:
+                return arguments[name]
+
+        return None
+
+    def _normalize_request(
+        self,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        command = self._first(
+            arguments,
+            "cmd",
+            "command",
+        )
+
+        cwd = self._first(
+            arguments,
+            "cwd",
+            "dir_path",
+            "directory",
+            "workdir",
+        )
+
+        normalized: dict[str, Any] = {}
+
+        if command is not None:
+            normalized["cmd"] = command
+
+        if cwd is not None:
+            normalized["cwd"] = cwd
+
+        # Explicit Citra-style seconds field used on harnesses whose
+        # native shell tool has no compatible per-call timeout field.
+        if "timeout_seconds" in arguments:
+            normalized["timeout"] = int(
+                arguments["timeout_seconds"]
+            )
+
+        elif "timeout" in arguments:
+            timeout = int(
+                arguments["timeout"]
+            )
+
+            # Claude, Kimi, ZCode and OpenCode train on Bash/bash timeout
+            # values expressed in milliseconds. Citra internally uses
+            # whole seconds.
+            timeout_is_milliseconds = (
+                "command" in arguments
+                and self.model_name in {
+                    "Bash",
+                    "bash",
+                }
+            )
+
+            if timeout_is_milliseconds:
+                # Round up rather than accidentally shortening the model's
+                # requested deadline.
+                timeout = max(
+                    1,
+                    (timeout + 999) // 1000,
+                )
+
+            normalized["timeout"] = timeout
+
+        if "network" in arguments:
+            normalized["network"] = bool(
+                arguments["network"]
+            )
+
+        if "reason" in arguments:
+            normalized["reason"] = arguments["reason"]
+
+        # `description` is deliberately accepted by native-compatible
+        # schemas but has no execution semantics in Citra.
+        #
+        # is_background/run_in_background are not exposed at all.
+
+        return normalized
+
+    def _normalize_arguments(
+        self,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        requests = arguments.get(
+            "requests"
+        )
+
+        if requests is None:
+            return self._normalize_request(
+                arguments
+            )
+
+        if not isinstance(
+            requests,
+            list,
+        ):
+            raise ValueError(
+                "'requests' must be an array."
+            )
+
+        normalized = self._normalize_request(
+            arguments
+        )
+
+        normalized["requests"] = [
+            self._normalize_request(
+                request
+            )
+            for request in requests
+        ]
+
+        return normalized
 
     @override
     def _execute(
         self,
         arguments: dict[str, Any],
     ) -> str:
+        arguments = self._normalize_arguments(
+            arguments
+        )
         if not self.context.has_command(
             "bash"
         ):

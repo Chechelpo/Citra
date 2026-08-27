@@ -1,6 +1,6 @@
 from .transient import *
 from .session_memory import *
-
+from .tool import Tool
 from .tool_registry import ToolRegistry
 
 
@@ -11,10 +11,7 @@ TOOL_REGISTRY.register("read", Read)
 TOOL_REGISTRY.register("write", Write)
 TOOL_REGISTRY.register("edit", Edit)
 TOOL_REGISTRY.register("glob", Glob)
-TOOL_REGISTRY.register("grep", Grep)
-TOOL_REGISTRY.register("git", Git)
 TOOL_REGISTRY.register("tree", Tree)
-TOOL_REGISTRY.register("materialize", Materialize)
 TOOL_REGISTRY.register("commit", Commit)
 TOOL_REGISTRY.register("bash", Bash)
 TOOL_REGISTRY.register("prompt_user", PromptUser)
@@ -22,6 +19,12 @@ TOOL_REGISTRY.register("lsp", Lsp)
 TOOL_REGISTRY.register("skill", SkillTool)
 
 # Deferred / specialized tools
+TOOL_REGISTRY.register(
+    "git", 
+    Git,
+    deferred=True,
+    summary="Clone repositories to analyze"
+)
 TOOL_REGISTRY.register(
     "subprocess",
     Subprocess,
@@ -66,3 +69,14 @@ TOOL_REGISTRY.register("decision", DecisionTool)
 TOOL_REGISTRY.register("constraint", ConstraintTool)
 TOOL_REGISTRY.register("checkpoint", CheckpointTool)
 TOOL_REGISTRY.register("working_state", WorkingStateTool)
+
+
+def all_tools(
+    are_deferred : bool,
+    excluded: set[type[Tool]] = set()
+) -> tuple[type[Tool], ...]:
+    return tuple(
+        tool
+        for tool in TOOL_REGISTRY.all_tool_types(are_deferred)
+        if tool not in excluded
+    )

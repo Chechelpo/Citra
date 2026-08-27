@@ -149,6 +149,8 @@ class AgentSession:
         default_factory=ConversationMemory
     )
 
+    memory_enabled: bool = True
+
     turn_number: int = 0
 
 

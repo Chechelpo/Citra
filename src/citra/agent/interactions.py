@@ -27,6 +27,7 @@ class UserInteractionBroker:
         self._active: dict[int, UserPromptRequest] = {}
         self._lock = Lock()
         self._next_id = 1
+        self._closed = False
 
     def ask(
         self,
@@ -36,6 +37,8 @@ class UserInteractionBroker:
         timeout: float,
     ) -> str | None:
         with self._lock:
+            if self._closed:
+                return None
             request = UserPromptRequest(
                 id=self._next_id,
                 question=question,
@@ -75,8 +78,10 @@ class UserInteractionBroker:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             active = tuple(self._active.values())
             self._active.clear()
         for request in active:
             request.completed.set()
-

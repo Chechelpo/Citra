@@ -66,6 +66,15 @@ ever splitting an assistant tool-call message from its tool results.
 `steering` contains user instructions queued for later insertion.
 `memory` owns the long-lived TODO/fact/decision/constraint/checkpoint tool
 instances, so truncating old chat messages cannot erase working state.
+`memory_enabled` is derived from `[memory].enabled`; when false, memory tools
+and prompt/skill guidance are absent while ordinary message history remains
+active.
+
+At the start of each user turn, `AgentRunner` asks the selected mode for its
+turn-indexed task steering. Non-empty steering is appended as a normal user
+message before the first model request for that turn. System prompts are also
+resolved from `context.mode`; the runner does not own a global hard-coded
+prompt.
 
 ### Message ownership
 

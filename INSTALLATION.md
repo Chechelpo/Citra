@@ -28,6 +28,59 @@ You can then launch Citra from anywhere with:
 citra
 ```
 
+## Agent Runtime prerequisites
+
+Citra executes tools through Bubblewrap. Install `bwrap` with the system
+package manager and verify that user namespaces are permitted by the host:
+
+```bash
+bwrap --version
+```
+
+Each Citra process creates one disposable
+`citra-process-<pid>-<nonce>` directory beneath the configured temporary
+workspace (or the system temporary directory). The complete project copy,
+shared dependency environment, caches, home, and temporary state live there
+until Citra exits. Normal and hard shutdown both remove the directory; a later
+startup conservatively removes verified stale roots left by an abnormal exit.
+
+Runtime/tool assets are provisioned copy-first under a hard byte budget and
+fall back to explicit read-only binds when their declaration permits it.
+`env`, `cache`, and `tmp` limits are soft guardrails for Citra-controlled
+allocations, not kernel quotas. See [`config-template.toml`](config-template.toml)
+for `[runtime.storage]`, `[runtime.environment]`, override, and cleanup settings.
+
+## Operating modes
+
+Citra asks you to select an operating mode immediately after startup and
+before it creates the workspace or sandbox. Enter a displayed number or mode
+name. Press Enter without a selection to use the configured default.
+
+Copy [`mode-template.toml`](mode-template.toml) to
+`.citra/config/mode.toml` and set the default by name:
+
+```toml
+default = "greenfield"
+```
+
+The selected mode owns the sandbox level, including whether Citra uses a
+disposable project workspace or works directly on the authoritative source.
+Operator `[sandbox]` settings in `tools.toml` extend the mode: extra read-only
+and writable binds are appended to the mode's binds, and
+`global_network_disallow = true` can further restrict network access. The
+operator config cannot replace the mode's `SandboxMode` or re-enable network
+access denied by a mode.
+
+Durable conversation memory remains independently configurable:
+
+```toml
+[memory]
+enabled = true
+```
+
+Setting `memory.enabled = false` removes durable memory tools and their prompt
+instructions while preserving ordinary conversation history.
+
 
 ## OpenSERP setup
 

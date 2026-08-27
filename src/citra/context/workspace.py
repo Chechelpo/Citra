@@ -7,8 +7,11 @@ obsolete unsandboxed duplicate that previously lived here.
 
 from .turn_workspace import AvailablePathAlias, WorkspaceContext
 
+AgentRuntime = WorkspaceContext
+
 
 __all__ = [
     "AvailablePathAlias",
+    "AgentRuntime",
     "WorkspaceContext",
 ]

@@ -12,6 +12,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
 
@@ -26,6 +27,8 @@ class TodoExtract:
 
 class TodoTool(MemoryTool[TodoExtract]):
     """Manage hierarchical TODOs with optional working-state provenance."""
+
+    TOOL_ID = "todo"
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
@@ -44,7 +47,13 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="action",
                         schema=JsonSchema.string(
                             description="TODO operation.",
-                            enum=("add", "insert", "promote", "check", "remove"),
+                            enum=(
+                                "add",
+                                "insert",
+                                "promote",
+                                "check",
+                                "remove",
+                            ),
                         ),
                     ),
                     JsonProperty(
@@ -58,7 +67,9 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="working_state_ids",
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
-                            description="Working-state IDs to promote as sibling TODOs.",
+                            description=(
+                                "Working-state IDs to promote as sibling TODOs."
+                            ),
                         ),
                         required=False,
                     ),
@@ -66,8 +77,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="content",
                         schema=JsonSchema.string(
                             description=(
-                                "TODO text for add/insert, or optional polished text "
-                                "for a single promotion."
+                                "TODO text for add/insert, or optional polished "
+                                "text for a single promotion."
                             ),
                         ),
                         required=False,
@@ -77,8 +88,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                         schema=JsonSchema.array(
                             items=JsonSchema.string(),
                             description=(
-                                "TODO descriptions to add directly as a batch. All "
-                                "entries share parent_id. Valid for add only."
+                                "TODO descriptions to add directly as a batch. "
+                                "All entries share parent_id. Valid for add only."
                             ),
                         ),
                         required=False,
@@ -87,8 +98,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="parent_id",
                         schema=JsonSchema.integer(
                             description=(
-                                "Parent TODO ID for a sub-step. Omit for top-level "
-                                "TODOs."
+                                "Parent TODO ID for a sub-step. Omit for "
+                                "top-level TODOs."
                             ),
                         ),
                         required=False,
@@ -97,8 +108,9 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="index",
                         schema=JsonSchema.integer(
                             description=(
-                                "Zero-based sibling insertion position for insert, "
-                                "or optional position for a single promotion."
+                                "Zero-based sibling insertion position for "
+                                "insert, or optional position for a single "
+                                "promotion."
                             ),
                         ),
                         required=False,
@@ -114,7 +126,9 @@ class TodoTool(MemoryTool[TodoExtract]):
                         name="ids",
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
-                            description="TODO IDs to check/remove as a batch.",
+                            description=(
+                                "TODO IDs to check/remove as a batch."
+                            ),
                         ),
                         required=False,
                     ),
@@ -124,6 +138,20 @@ class TodoTool(MemoryTool[TodoExtract]):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
@@ -132,11 +160,11 @@ class TodoTool(MemoryTool[TodoExtract]):
         super().__init__(
             context=context,
             session=session,
-            definition=self.DEFINITION,
         )
-        # Pre-order storage keeps each subtree contiguous while rendering flatly.
+
         self.__extracts: list[TodoExtract] = []
         self.__next_id = 1
+
 
     @property
     @override

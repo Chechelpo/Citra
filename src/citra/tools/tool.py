@@ -1,11 +1,14 @@
-from citra.utils.model_tokenizer import tokenize
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import perf_counter
-from typing import Any, final
-import logging
+from typing import Any, ClassVar, final
 import json
+import logging
 
+from citra.utils.model_tokenizer import tokenize
 from jsonschema import Draft202012Validator
 
 from ..context import ExecutionContext
@@ -21,29 +24,278 @@ class InvalidToolArguments(ValueError):
     pass
 
 
-class Tool(ABC):
-    HISTORY_ARGUMENT_COMPACT_THRESHOLD_TOKENS = 128
-    HISTORY_ARGUMENT_DIGEST_LENGTH = 12
+class InvalidToolDefinition(ValueError):
+    pass
 
-    # Tool-result cache policy. Cacheable tools may reuse an identical
-    # result within the current agent turn. Tools are assumed to mutate
-    # observable state unless they explicitly opt out; stale cache hits
-    # are worse than unnecessary invalidation.
-    CACHEABLE = False
-    INVALIDATES_TOOL_CACHE = True
-    MAX_OUTPUT_TOKENS: int | None = 4_000
+
+@dataclass(frozen=True)
+class ToolDefinition:
+    """
+    A model-facing representation of a tool.
+
+    An empty `model_family_matchers` tuple acts as the fallback definition.
+    More-specific model matchers take precedence over less-specific ones.
+    `primary` resolves ambiguity between definitions with equal specificity.
+    """
+
+    definition: ChatCompletionTool
+    model_family_matchers: tuple[str, ...] = ()
+    primary: bool = False
+
+    def __post_init__(self) -> None:
+        if any(
+            not matcher.strip()
+            for matcher in self.model_family_matchers
+        ):
+            raise ValueError(
+                "Tool model-family matchers cannot be empty strings."
+            )
+
+    def match_score(
+        self,
+        model_id: str,
+    ) -> int | None:
+        """
+        Return match specificity.
+
+        - None: does not match
+        - 0: fallback definition
+        - >0: length of the most-specific matching family string
+        """
+        if not self.model_family_matchers:
+            return 0
+
+        normalized_model_id = model_id.casefold()
+
+        matches = [
+            len(matcher)
+            for matcher in self.model_family_matchers
+            if matcher.casefold() in normalized_model_id
+        ]
+
+        if not matches:
+            return None
+
+        return max(matches)
+
+    def with_name(
+        self,
+        name: str,
+        *,
+        model_family_matchers: tuple[str, ...] | None = None,
+        primary: bool | None = None,
+    ) -> ToolDefinition:
+        """
+        Create another model-facing definition with the same schema but a
+        different function name.
+        """
+        return ToolDefinition(
+            definition=replace(
+                self.definition,
+                function=replace(
+                    self.definition.function,
+                    name=name,
+                ),
+            ),
+            model_family_matchers=(
+                self.model_family_matchers
+                if model_family_matchers is None
+                else model_family_matchers
+            ),
+            primary=(
+                self.primary
+                if primary is None
+                else primary
+            ),
+        )
+
+
+class Tool(ABC):
+    HISTORY_ARGUMENT_COMPACT_THRESHOLD_TOKENS : ClassVar[int] = 128
+    HISTORY_ARGUMENT_DIGEST_LENGTH: ClassVar[int] = 12
+
+    # Stable Citra-internal identity.
+    # This does NOT change when the model-facing function name changes.
+    TOOL_ID: ClassVar[str]
+
+    # Tool-result cache policy.
+    CACHEABLE : ClassVar[bool] = False
+    INVALIDATES_TOOL_CACHE: ClassVar[bool] = True
+    MAX_OUTPUT_TOKENS: ClassVar[int | None] = 4_000
 
     def __init__(
         self,
         context: ExecutionContext,
-        definition: ChatCompletionTool,
-    ):
+    ) -> None:
         self.__context = context
-        self.__definition = definition
-
-        Draft202012Validator.check_schema(
-            definition.function.parameters.to_dict()
+        self.__definition = self._resolve_definition(
+            context
         )
+
+    # -------------------------------------------------------------------------
+    # Definition
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    @abstractmethod
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        """
+        Return the model-facing definitions supported in this execution context.
+
+        Runtime configuration belongs here.
+
+        For example, Bash may omit the `network` and `reason` parameters when
+        network access is globally enabled.
+
+        Model-specific names or schemas should be returned as additional
+        ToolDefinition entries.
+        """
+        ...
+        
+    def definitions_for_instance(
+        self,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        return type(self).definitions_for_context(
+            context
+        )
+
+    def _resolve_definition(
+        self,
+        context: ExecutionContext,
+    ) -> ChatCompletionTool:
+        definitions = self.definitions_for_instance(
+            context
+        )
+
+        return self._select_definition(
+            context,
+            definitions,
+        )
+
+    @classmethod
+    def _select_definition(
+        cls,
+        context: ExecutionContext,
+        definitions: tuple[ToolDefinition, ...],
+    ) -> ChatCompletionTool:
+        model_id = context.config.model().id
+
+        if not definitions:
+            raise InvalidToolDefinition(
+                f"Tool '{cls.TOOL_ID}' produced no definitions."
+            )
+
+        matched: list[
+            tuple[int, ToolDefinition]
+        ] = []
+
+        for tool_definition in definitions:
+            definition = tool_definition.definition
+
+            Draft202012Validator.check_schema(
+                definition.function.parameters.to_dict()
+            )
+
+            score = tool_definition.match_score(
+                model_id
+            )
+
+            if score is not None:
+                matched.append(
+                    (
+                        score,
+                        tool_definition,
+                    )
+                )
+
+        if not matched:
+            raise InvalidToolDefinition(
+                f"Tool '{cls.TOOL_ID}' has no definition "
+                f"for model '{model_id}'."
+            )
+
+        best_score = max(
+            score
+            for score, _ in matched
+        )
+
+        candidates = [
+            tool_definition
+            for score, tool_definition in matched
+            if score == best_score
+        ]
+
+        if len(candidates) == 1:
+            return candidates[0].definition
+
+        primary = [
+            candidate
+            for candidate in candidates
+            if candidate.primary
+        ]
+
+        if len(primary) == 1:
+            return primary[0].definition
+
+        names = [
+            candidate.definition.function.name
+            for candidate in candidates
+        ]
+
+        if len(primary) > 1:
+            raise InvalidToolDefinition(
+                f"Tool '{cls.TOOL_ID}' has multiple primary definitions "
+                f"for model '{model_id}': {names}"
+            )
+
+        raise InvalidToolDefinition(
+            f"Tool '{cls.TOOL_ID}' has ambiguous definitions "
+            f"for model '{model_id}': {names}"
+        )
+    @property
+    def definition(self) -> ChatCompletionTool:
+        """
+        Exact definition exposed to the currently bound model.
+        """
+        return self.__definition
+
+    @property
+    def id(self) -> str:
+        """
+        Stable internal Citra tool identifier.
+        """
+        return self.TOOL_ID
+
+    @property
+    def model_name(self) -> str:
+        """
+        Function name the current model actually sees.
+        """
+        return self.__definition.function.name
+
+    @property
+    def description(self) -> str:
+        return self.__definition.function.description
+
+    def get_as_tool(self) -> dict[str, Any]:
+        return self.__definition.to_dict()
+
+    def accepts_model_name(
+        self,
+        name: str,
+    ) -> bool:
+        """
+        Useful when dispatching a model-emitted tool call.
+        """
+        return name == self.model_name
+
+    # -------------------------------------------------------------------------
+    # Context
+    # -------------------------------------------------------------------------
 
     @property
     def context(self) -> ExecutionContext:
@@ -54,24 +306,23 @@ class Tool(ABC):
         self,
         context: ExecutionContext,
     ) -> None:
+        # Resolve first so a bad context cannot leave the tool half-rebound.
+        definition = self._resolve_definition(
+            context
+        )
+
         self.__context = context
+        self.__definition = definition
 
-    @property
-    def id(self) -> str:
-        return self.__definition.function.name
+    # -------------------------------------------------------------------------
+    # Cache policy
+    # -------------------------------------------------------------------------
 
-    @property
-    def description(self) -> str:
-        return self.__definition.function.description
-
-    def get_as_tool(self) -> dict[str, Any]:
-        return self.__definition.to_dict()
-
+    
     def is_cacheable(
         self,
         arguments: dict[str, Any],
     ) -> bool:
-        """Return whether an identical call may reuse a prior result."""
         del arguments
         return self.CACHEABLE
 
@@ -79,28 +330,18 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> bool:
-        """Return whether this call may change state seen by cached tools."""
         del arguments
         return self.INVALIDATES_TOOL_CACHE
+
+    # -------------------------------------------------------------------------
+    # History compaction
+    # -------------------------------------------------------------------------
 
     def compact_history_arguments(
         self,
         arguments: dict[str, Any],
         result: Any,
     ) -> dict[str, Any] | None:
-        """
-        Return compacted arguments to retain in model-facing history.
-
-        This hook is called only after the tool has executed. Returning
-        ``None`` preserves the model's original argument JSON exactly.
-        Tools that persist large payloads elsewhere may return a schema-valid
-        replacement mapping so the next model request never pays to replay
-        those payloads.
-
-        Implementations must not mutate ``arguments`` in place. They should
-        normally compact only after a successful operation; failed calls keep
-        their exact inputs so the model can reason about the failure.
-        """
         del arguments, result
         return None
 
@@ -108,45 +349,26 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
         *names: str,
-        min_token_savings: int = 64,
+        min_token_savings: int = 128,
     ) -> dict[str, Any] | None:
-        """
-        Compact large string arguments only when doing so produces a meaningful
-        reduction in their actual model-facing history cost.
-
-        Cost is measured after both levels of JSON serialization:
-        1. the tool arguments object -> function.arguments JSON string
-        2. that JSON string -> model-facing tool-call JSON
-
-        This is more accurate than character length or tokenizing the raw value,
-        especially for source code containing quotes, newlines, or backslashes.
-
-        Returns a new argument mapping when at least one field is worth
-        compacting, otherwise None. Never mutates `arguments`.
-        """
         model_id = self.context.config.model().id
 
         def history_tokens(
             candidate: dict[str, Any],
         ) -> int:
-            # This is the representation stored in:
-            #
-            #   tool_call["function"]["arguments"]
-            #
             arguments_json = json.dumps(
                 candidate,
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
 
-            # Model history sees `arguments_json` as a JSON string nested inside
-            # the tool-call object, so serialize that level too. Include the
-            # stable function envelope to account for tokenizer boundary effects.
             history_fragment = json.dumps(
                 {
                     "type": "function",
                     "function": {
-                        "name": self.id,
+                        # Important: history contains the name the model saw,
+                        # not Citra's canonical TOOL_ID.
+                        "name": self.model_name,
                         "arguments": arguments_json,
                     },
                 },
@@ -160,9 +382,11 @@ class Tool(ABC):
             )
 
         compacted = dict(arguments)
+
         current_tokens = history_tokens(
             compacted
         )
+
         changed = False
 
         for name in names:
@@ -208,16 +432,24 @@ class Tool(ABC):
             else None
         )
 
+    # -------------------------------------------------------------------------
+    # Validation
+    # -------------------------------------------------------------------------
+
     def validate_arguments(
         self,
         arguments: dict[str, Any],
     ) -> None:
         validator = Draft202012Validator(
-            self.__definition.function.parameters.to_dict()
+            self.definition.function.parameters.to_dict()
         )
 
-        errors = list(
-            validator.iter_errors(arguments)
+        errors = sorted(
+            validator.iter_errors(arguments),
+            key=lambda error: tuple(
+                str(part)
+                for part in error.absolute_path
+            ),
         )
 
         if not errors:
@@ -236,19 +468,28 @@ class Tool(ABC):
                     f"{path}: {error.message}"
                 )
             else:
-                messages.append(error.message)
+                messages.append(
+                    error.message
+                )
 
         raise InvalidToolArguments(
-            f"Invalid arguments for tool '{self.id}': "
+            f"Invalid arguments for tool "
+            f"'{self.model_name}': "
             + "; ".join(messages)
         )
+
+    # -------------------------------------------------------------------------
+    # Execution
+    # -------------------------------------------------------------------------
 
     @final
     def execute(
         self,
         arguments: dict[str, Any],
     ) -> Any:
-        self.validate_arguments(arguments)
+        self.validate_arguments(
+            arguments
+        )
 
         call_log = self.format_call_log(
             arguments
@@ -267,7 +508,10 @@ class Tool(ABC):
                 arguments
             )
         except Exception as error:
-            elapsed = perf_counter() - started
+            elapsed = (
+                perf_counter()
+                - started
+            )
 
             logger.exception(
                 "[%s] ERROR after %.3fs | %s | %s",
@@ -279,7 +523,10 @@ class Tool(ABC):
 
             raise
 
-        elapsed = perf_counter() - started
+        elapsed = (
+            perf_counter()
+            - started
+        )
 
         result_log = self.format_result_log(
             result
@@ -296,26 +543,74 @@ class Tool(ABC):
 
         return result
 
+    @abstractmethod
+    def _execute(
+        self,
+        arguments: dict[str, Any],
+    ) -> Any:
+        ...
+
+    def compact_if_over_budget(
+        self,
+        arguments: dict[str, Any],
+        tool_result: str,
+    ) -> str:
+        """
+        Truncate the tool result if it exceeds this tool's token budget.
+
+        Assumes:
+            tokenize(text, tokenamount) -> int
+
+        returns the token count of `text`.
+        """
+        del arguments
+
+        token_budget = self.MAX_OUTPUT_TOKENS
+
+        if token_budget is None:
+            return tool_result
+
+        if tokenize(model_id=self.context.model_config().id, text=tool_result) <= token_budget:
+            return tool_result
+
+        suffix = "\n... <truncated to fit tool token budget>"
+
+        # Find the largest character prefix which, including the truncation
+        # marker, remains within the token budget.
+        low = 0
+        high = len(tool_result)
+
+        while low < high:
+            mid = (low + high + 1) // 2
+
+            candidate: str = (
+                tool_result[:mid]
+                + suffix
+            )
+
+            if tokenize(model_id=self.context.model_config().id, text=candidate) <= token_budget:
+                low = mid
+            else:
+                high = mid - 1
+
+        return (
+            tool_result[:low]
+            + suffix
+        )
+    # -------------------------------------------------------------------------
+    # Logging
+    # -------------------------------------------------------------------------
+
     def format_call_log(
         self,
         arguments: dict[str, Any],
     ) -> str:
-        """
-        Human-friendly description of the invocation.
-
-        Tools can override this when the raw argument dict isn't useful.
-        """
         return str(arguments)
 
     def format_result_log(
         self,
         result: Any,
     ) -> str:
-        """
-        Human-friendly description of the result.
-
-        Tools should override this for structured/large results.
-        """
         return str(result)
 
     @staticmethod
@@ -329,17 +624,11 @@ class Tool(ABC):
             return text
 
         truncated_chars = (
-            len(text) - max_length
+            len(text)
+            - max_length
         )
 
         return (
             text[:max_length]
             + f"... <truncated {truncated_chars} chars>"
         )
-
-    @abstractmethod
-    def _execute(
-        self,
-        arguments: dict[str, Any],
-    ) -> Any:
-        ...

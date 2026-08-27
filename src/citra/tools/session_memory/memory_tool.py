@@ -5,6 +5,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Generic, TypeVar
 from weakref import WeakKeyDictionary
 
+from citra.agent import AgentSession
+from citra.context import ExecutionContext
+
 from ..session_tool import SessionTool
 
 
@@ -46,8 +49,11 @@ class ConversationMemoryState:
         turn: int,
     ) -> WorkingStateExtract:
         content = content.strip()
+
         if not content:
-            raise ValueError("Working-state content cannot be empty.")
+            raise ValueError(
+                "Working-state content cannot be empty."
+            )
 
         working_state = WorkingStateExtract(
             id=self._next_working_state_id,
@@ -55,10 +61,15 @@ class ConversationMemoryState:
             created_turn=turn,
             updated_turn=turn,
         )
+
         self._next_working_state_id += 1
-        self._working_states[working_state.id] = _WorkingStateRecord(
+
+        self._working_states[
+            working_state.id
+        ] = _WorkingStateRecord(
             extract=working_state,
         )
+
         return working_state
 
     def get_working_state(
@@ -67,19 +78,29 @@ class ConversationMemoryState:
         *,
         require_active: bool = True,
     ) -> WorkingStateExtract:
-        record = self._working_states.get(working_state_id)
+        record = self._working_states.get(
+            working_state_id
+        )
+
         if record is None:
             raise ValueError(
                 f"Working state [W{working_state_id}] does not exist."
             )
-        if require_active and record.status != "active":
+
+        if (
+            require_active
+            and record.status != "active"
+        ):
             raise ValueError(
-                f"Working state [W{working_state_id}] is {record.status} and "
-                "cannot be promoted or modified."
+                f"Working state [W{working_state_id}] is "
+                f"{record.status} and cannot be promoted or modified."
             )
+
         return record.extract
 
-    def active_working_states(self) -> list[WorkingStateExtract]:
+    def active_working_states(
+        self,
+    ) -> list[WorkingStateExtract]:
         return [
             record.extract
             for record in self._working_states.values()
@@ -93,17 +114,27 @@ class ConversationMemoryState:
         *,
         turn: int,
     ) -> WorkingStateExtract:
-        current = self.get_working_state(working_state_id)
+        current = self.get_working_state(
+            working_state_id
+        )
+
         content = content.strip()
+
         if not content:
-            raise ValueError("Working-state content cannot be empty.")
+            raise ValueError(
+                "Working-state content cannot be empty."
+            )
 
         updated = replace(
             current,
             content=content,
             updated_turn=turn,
         )
-        self._working_states[working_state_id].extract = updated
+
+        self._working_states[
+            working_state_id
+        ].extract = updated
+
         return updated
 
     def register_promotion(
@@ -113,11 +144,15 @@ class ConversationMemoryState:
         kind: str,
         memory_id: int,
     ) -> None:
-        current = self.get_working_state(working_state_id)
+        current = self.get_working_state(
+            working_state_id
+        )
+
         ref = PromotionRef(
             kind=kind,
             memory_id=memory_id,
         )
+
         if ref in current.promotions:
             raise ValueError(
                 f"Working state [W{working_state_id}] already records "
@@ -126,9 +161,15 @@ class ConversationMemoryState:
 
         updated = replace(
             current,
-            promotions=(*current.promotions, ref),
+            promotions=(
+                *current.promotions,
+                ref,
+            ),
         )
-        self._working_states[working_state_id].extract = updated
+
+        self._working_states[
+            working_state_id
+        ].extract = updated
 
     def unregister_promotion(
         self,
@@ -137,16 +178,24 @@ class ConversationMemoryState:
         kind: str,
         memory_id: int,
     ) -> None:
-        record = self._working_states.get(working_state_id)
+        record = self._working_states.get(
+            working_state_id
+        )
+
         if record is None:
             return
 
-        ref = PromotionRef(kind=kind, memory_id=memory_id)
+        ref = PromotionRef(
+            kind=kind,
+            memory_id=memory_id,
+        )
+
         record.extract = replace(
             record.extract,
             promotions=tuple(
                 existing
-                for existing in record.extract.promotions
+                for existing
+                in record.extract.promotions
                 if existing != ref
             ),
         )
@@ -155,95 +204,160 @@ class ConversationMemoryState:
         self,
         working_state_id: int,
     ) -> WorkingStateExtract:
-        current = self.get_working_state(working_state_id)
+        current = self.get_working_state(
+            working_state_id
+        )
+
         if not current.promotions:
             raise ValueError(
                 f"Working state [W{working_state_id}] has no promotions. "
-                "Promote any durable consequences first, or discard it if no "
-                "durable memory is warranted."
+                "Promote any durable consequences first, or discard it "
+                "if no durable memory is warranted."
             )
-        self._working_states[working_state_id].status = "resolved"
+
+        self._working_states[
+            working_state_id
+        ].status = "resolved"
+
         return current
 
     def discard_working_state(
         self,
         working_state_id: int,
     ) -> WorkingStateExtract:
-        current = self.get_working_state(working_state_id)
+        current = self.get_working_state(
+            working_state_id
+        )
+
         if current.promotions:
             rendered = ", ".join(
                 f"{ref.kind.upper()} [{ref.memory_id}]"
                 for ref in current.promotions
             )
+
             raise ValueError(
-                f"Working state [W{working_state_id}] has durable promotions "
-                f"({rendered}) and cannot be discarded. Remove those memories "
-                "first or resolve the working state."
+                f"Working state [W{working_state_id}] has durable "
+                f"promotions ({rendered}) and cannot be discarded. "
+                "Remove those memories first or resolve the working state."
             )
-        self._working_states[working_state_id].status = "discarded"
+
+        self._working_states[
+            working_state_id
+        ].status = "discarded"
+
         return current
 
 
-_SESSION_STATES: WeakKeyDictionary[Any, ConversationMemoryState] = WeakKeyDictionary()
-_FALLBACK_SESSION_STATES: dict[int, tuple[Any, ConversationMemoryState]] = {}
+_SESSION_STATES: WeakKeyDictionary[
+    Any,
+    ConversationMemoryState,
+] = WeakKeyDictionary()
+
+_FALLBACK_SESSION_STATES: dict[
+    int,
+    tuple[Any, ConversationMemoryState],
+] = {}
 
 
-def conversation_memory_state(session: Any) -> ConversationMemoryState:
-    """Return the shared memory state for a session.
+def conversation_memory_state(
+    session: Any,
+) -> ConversationMemoryState:
+    """
+    Return the shared memory state for a session.
 
-    Weak-key storage is preferred. A strong-reference fallback supports session
-    implementations that are unhashable or cannot be weak-referenced.
+    Weak-key storage is preferred. A strong-reference fallback supports
+    session implementations that are unhashable or cannot be weak-referenced.
     """
 
     try:
-        state = _SESSION_STATES.get(session)
+        state = _SESSION_STATES.get(
+            session
+        )
     except TypeError:
         state = None
+
     else:
         if state is not None:
             return state
 
         try:
             state = ConversationMemoryState()
-            _SESSION_STATES[session] = state
+
+            _SESSION_STATES[
+                session
+            ] = state
+
             return state
+
         except TypeError:
             pass
 
-    key = id(session)
-    existing = _FALLBACK_SESSION_STATES.get(key)
-    if existing is not None and existing[0] is session:
+    key = id(
+        session
+    )
+
+    existing = _FALLBACK_SESSION_STATES.get(
+        key
+    )
+
+    if (
+        existing is not None
+        and existing[0] is session
+    ):
         return existing[1]
 
     state = ConversationMemoryState()
-    _FALLBACK_SESSION_STATES[key] = (session, state)
+
+    _FALLBACK_SESSION_STATES[
+        key
+    ] = (
+        session,
+        state,
+    )
+
     return state
 
 
-class MemoryTool(SessionTool, ABC, Generic[TExtract]):
+class MemoryTool(
+    SessionTool,
+    ABC,
+    Generic[TExtract],
+):
+    """
+    Base class for session-scoped memory tools.
+
+    All memory tools in the same AgentSession share one
+    ConversationMemoryState.
+    """
+
     INVALIDATES_TOOL_CACHE = False
 
     def __init__(
         self,
         *,
-        context: Any,
-        session: Any,
-        definition: Any,
+        context: ExecutionContext,
+        session: AgentSession,
     ) -> None:
         super().__init__(
             context=context,
             session=session,
-            definition=definition,
         )
-        self.memory_state = conversation_memory_state(session)
+
+        self.memory_state = conversation_memory_state(
+            session
+        )
 
     @property
     @abstractmethod
-    def heading(self) -> str:
+    def heading(
+        self,
+    ) -> str:
         ...
 
     @abstractmethod
-    def get_extracts(self) -> list[TExtract]:
+    def get_extracts(
+        self,
+    ) -> list[TExtract]:
         ...
 
     @abstractmethod
@@ -254,7 +368,9 @@ class MemoryTool(SessionTool, ABC, Generic[TExtract]):
         ...
 
     @abstractmethod
-    def should_offer_documentation(self) -> bool:
+    def should_offer_documentation(
+        self,
+    ) -> bool:
         """
         Return whether this memory type may contain information worth
         persisting into repository documentation at the end of the work.
@@ -296,7 +412,9 @@ class MemoryTool(SessionTool, ABC, Generic[TExtract]):
             memory_id=memory_id,
         )
 
-    def format_for_llm(self) -> str:
+    def format_for_llm(
+        self,
+    ) -> str:
         extracts = self.get_extracts()
 
         if not extracts:
@@ -306,7 +424,9 @@ class MemoryTool(SessionTool, ABC, Generic[TExtract]):
             [
                 f"## {self.heading}",
                 *(
-                    self.format_extract(extract)
+                    self.format_extract(
+                        extract
+                    )
                     for extract in extracts
                 ),
             ]

@@ -1,0 +1,3 @@
+# Copy this file to .citra/config/mode.toml.
+# Pressing Enter at the startup mode prompt selects this mode.
+default = "greenfield"

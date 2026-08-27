@@ -7,9 +7,7 @@ from pathlib import Path
 import selectors
 import subprocess
 import sys
-import json
 import os
-from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 
@@ -34,6 +32,7 @@ class BrowserManager:
         self._process: subprocess.Popen[bytes] | None = None
         self._lock = Lock()
         self._stderr = bytearray()
+        self._closed = False
 
     def request(self, action: str, **arguments: Any) -> dict[str, Any]:
         with self._lock:
@@ -65,15 +64,18 @@ class BrowserManager:
                 raise RuntimeError(str(response.get("error", "browser error")))
             return response
 
-    def close(self) -> None:
+    def close(self, *, force: bool = False) -> None:
         with self._lock:
+            self._closed = True
             process = self._process
             self._process = None
         if process is None:
             return
-        self._sandbox.terminate_process(process)
+        self._sandbox.terminate_process(process, force=force)
 
     def _ensure_process(self) -> subprocess.Popen[bytes]:
+        if self._closed:
+            raise RuntimeError("The browser manager is closing.")
         if self._process is not None and self._process.poll() is None:
             return self._process
 
@@ -129,13 +131,5 @@ class BrowserManager:
             path = Path(configured).expanduser()
 
         path = path.absolute()
-
-        if not path.is_dir():
-            raise FileNotFoundError(
-                "Playwright browser installation does not exist: "
-                f"{path}. Install Chromium with:\n"
-                f"PLAYWRIGHT_BROWSERS_PATH={path} "
-                f"{sys.executable} -m playwright install chromium"
-            )
 
         return path

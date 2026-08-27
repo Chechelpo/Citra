@@ -6,8 +6,6 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import re
 from threading import RLock
 from typing import Any, Iterable
@@ -20,7 +18,7 @@ from .client import LspClient
 from .config import LspConfig, ServerConfig
 from .diagnostics import format_diagnostics, json_fallback_diagnostics
 from .errors import LspDiagnosticsTimeout, LspError, LspStartupError, LspUnavailable
-from .installer import InstallResult, candidate_for, execute_install
+from .installer import InstallResult, available_managers, candidate_for, execute_install
 from .language import Language, detect_language, server_for_language, supports_language
 from .servers import SERVER_ALIASES, SERVERS
 from .servers.base import ServerDefinition
@@ -117,7 +115,10 @@ class LspManager:
         for definition in SERVERS.values():
             available, details = self._availability(definition)
             executable = details["executable"]
-            candidate = candidate_for(definition)
+            candidate = candidate_for(
+                definition,
+                managers=self._available_managers(),
+            )
             servers.append(
                 {
                     "id": definition.id,
@@ -254,7 +255,10 @@ class LspManager:
             definitions = [
                 definition
                 for definition in SERVERS.values()
-                if candidate_for(definition) is not None
+                if candidate_for(
+                    definition,
+                    managers=self._available_managers(),
+                ) is not None
             ]
         else:
             definitions = [self._definition_for_target(target)]
@@ -269,11 +273,14 @@ class LspManager:
                         dry_run=dry_run,
                         returncode=0,
                         output="already installed and available",
-                        executable_found=shutil.which(definition.executable),
+                        executable_found=self._which(definition.executable),
                     )
                 )
                 continue
-            candidate = candidate_for(definition)
+            candidate = candidate_for(
+                definition,
+                managers=self._available_managers(),
+            )
             if candidate is None:
                 results.append(
                     InstallResult(
@@ -282,14 +289,27 @@ class LspManager:
                         dry_run=dry_run,
                         returncode=None,
                         output="no supported installer configured for this system",
-                        executable_found=shutil.which(definition.executable),
+                        executable_found=self._which(definition.executable),
                     )
                 )
                 continue
-            results.append(execute_install(definition, candidate, dry_run=dry_run))
+            if not dry_run:
+                self.workspace.require_soft_capacity("env")
+            result = execute_install(
+                definition,
+                candidate,
+                dry_run=dry_run,
+                sandbox=self.sandbox,
+                cwd=self.workspace.workspace,
+                environment=self.workspace.environment(),
+                resolver=self._resolve_or_refresh,
+            )
+            results.append(result)
+            if not dry_run:
+                self.workspace.write_runtime_manifest()
         return tuple(results)
 
-    def close(self) -> None:
+    def close(self, *, force: bool = False) -> None:
         with self._lock:
             if self._closed:
                 return
@@ -298,7 +318,7 @@ class LspManager:
             self._clients.clear()
             self._typescript_vue_roots.clear()
         for client in clients:
-            self._shutdown_client(client)
+            self._shutdown_client(client, force=force)
 
     def _format_diagnostics(
         self,
@@ -317,9 +337,9 @@ class LspManager:
         if not self.config.enabled:
             raise LspUnavailable("LSP support is disabled by configuration.")
         definition = SERVERS[server_id]
-        executable = shutil.which(definition.executable)
+        executable = self._which(definition.executable)
         if definition.id == "jdtls" and executable is not None:
-            java = shutil.which("java")
+            java = self._which("java")
             if java is None:
                 raise LspUnavailable("jdtls is unavailable: Java 21 or newer is required.")
             major = self._java_major_version(java)
@@ -330,7 +350,7 @@ class LspManager:
                     f"jdtls is unavailable: Java 21 or newer is required (found Java {major})."
                 )
         if definition.id == "ruby":
-            if shutil.which("ruby") is None:
+            if self._which("ruby") is None:
                 raise LspUnavailable("Ruby LSP is unavailable: a Ruby runtime is required.")
             command = self._ruby_command(root, executable)
             if command is None:
@@ -340,7 +360,7 @@ class LspManager:
                 raise LspUnavailable(
                     f"Language server {definition.executable!r} is not installed. {definition.install_hint}"
                 )
-            missing = [dependency for dependency in definition.requires if shutil.which(dependency) is None]
+            missing = [dependency for dependency in definition.requires if self._which(dependency) is None]
             if missing:
                 raise LspUnavailable(
                     f"{definition.id} is unavailable; missing dependency: {', '.join(missing)}"
@@ -434,15 +454,15 @@ class LspManager:
         client.set_tsserver_bridge(bridge)
 
     def _ensure_vue_typescript(self, root: Path) -> None:
-        if shutil.which("vue-language-server") is None:
+        if self._which("vue-language-server") is None:
             raise LspUnavailable(
                 "Vue language server is unavailable: vue-language-server is not installed."
             )
-        if shutil.which("node") is None:
+        if self._which("node") is None:
             raise LspUnavailable(
                 "Vue language server is unavailable: a Node.js runtime is required."
             )
-        if shutil.which("typescript-language-server") is None:
+        if self._which("typescript-language-server") is None:
             raise LspUnavailable(
                 "Vue language server is unavailable: typescript-language-server is required for the Vue TypeScript bridge."
             )
@@ -489,7 +509,7 @@ class LspManager:
                     root / "node_modules" / "@vue" / "language-server",
                 ]
             )
-        vue_executable = shutil.which("vue-language-server")
+        vue_executable = self._which("vue-language-server")
         if vue_executable:
             resolved = Path(vue_executable).resolve()
             for parent in resolved.parents:
@@ -518,9 +538,12 @@ class LspManager:
                 return candidate.resolve()
         return None
 
-    @staticmethod
-    def _ruby_command(root: Path, executable: str | None) -> tuple[str, ...] | None:
-        bundle = shutil.which("bundle")
+    def _ruby_command(
+        self,
+        root: Path,
+        executable: str | None,
+    ) -> tuple[str, ...] | None:
+        bundle = self._which("bundle")
         if bundle and (root / "Gemfile").is_file():
             return (bundle, "exec", "ruby-lsp")
         if executable:
@@ -574,8 +597,12 @@ class LspManager:
         self._clients.pop(key, None)
         self._shutdown_client(client)
 
-    def _shutdown_client(self, client: LspClient) -> None:
+    def _shutdown_client(self, client: LspClient, *, force: bool = False) -> None:
         process = client.transport.process
+        if force:
+            self.sandbox.terminate_process(process, force=True)
+            client.transport.close()
+            return
         client.close()
         try:
             process.wait(timeout=2)
@@ -583,13 +610,13 @@ class LspManager:
             self.sandbox.terminate_process(process)
 
     def _availability(self, definition: ServerDefinition) -> tuple[bool, dict[str, Any]]:
-        executable = shutil.which(definition.executable)
-        dependencies = {dependency: shutil.which(dependency) for dependency in definition.requires}
+        executable = self._which(definition.executable)
+        dependencies = {dependency: self._which(dependency) for dependency in definition.requires}
         optional: dict[str, Any] = {"requirements": dependencies}
         available = executable is not None and all(dependencies.values())
 
         if definition.id == "jdtls":
-            java = dependencies.get("java") or shutil.which("java")
+            java = dependencies.get("java") or self._which("java")
             major = self._java_major_version(java) if java else None
             optional["java_major"] = major
             optional["java_compatible"] = major is not None and major >= 21
@@ -601,7 +628,7 @@ class LspManager:
                 or self._vue_plugin_location(getattr(self.workspace, "source_workspace", None))
                 or self._vue_plugin_location(None)
             )
-            optional["typescript_bridge"] = shutil.which("typescript-language-server")
+            optional["typescript_bridge"] = self._which("typescript-language-server")
             # status() is consumed directly by the model-facing LSP tool via
             # json.dumps(), so keep its public payload JSON-native. Internal
             # discovery helpers may use Path objects, but they must not leak
@@ -618,21 +645,34 @@ class LspManager:
             "optional_dependencies": optional,
         }
 
-    @staticmethod
-    def _java_major_version(java: str) -> int | None:
+    def _which(self, command: str) -> str | None:
+        path = self.workspace.resolve_command(command)
+        return str(path) if path is not None else None
+
+    def _resolve_or_refresh(self, command: str) -> str | None:
+        existing = self._which(command)
+        if existing is not None:
+            return existing
+        path = self.workspace.refresh_staged_command(command)
+        return str(path) if path is not None else None
+
+    def _available_managers(self) -> tuple[str, ...]:
+        return available_managers(self._which)
+
+    def _java_major_version(self, java: str) -> int | None:
         try:
-            completed = subprocess.run(
+            completed = self.sandbox.run(
                 [java, "-version"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
+                cwd=self.workspace.workspace,
                 timeout=5,
-                check=False,
+                network=False,
             )
-        except (OSError, subprocess.SubprocessError):
+        except Exception:
             return None
-        match = re.search(r'version\s+"(?P<version>[0-9]+(?:\.[0-9]+)?)', completed.stdout or "")
+        match = re.search(
+            r'version\s+"(?P<version>[0-9]+(?:\.[0-9]+)?)',
+            completed.output or "",
+        )
         if match is None:
             return None
         version = match.group("version")

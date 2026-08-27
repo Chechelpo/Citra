@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +24,13 @@ host_url = "http://search.invalid"
 [workspace]
 temporary_workspace = "{tmp_path / 'agent'}"
 permanent_workspace = "{source}"
+direct_source = true
+
+[memory]
+enabled = false
+
+[sandbox]
+global_network_disallow = true
 
 [lsp]
 enabled = true
@@ -77,6 +83,9 @@ def test_split_config_loads_all_three_domains(
     config_dir, config = _write_split_config(tmp_path, monkeypatch)
 
     assert config.web_search.host_url == "http://search.invalid"
+    assert config.workspace_context.direct_source is True
+    assert config.memory.enabled is False
+    assert config.sandbox.global_network_disallow is True
     assert config.lsp.enabled is True
     assert config.lint.enabled is True
     assert config.lint.rules[0].name == "ruff"
@@ -209,3 +218,35 @@ permanent_workspace = "{source}"
     assert config.model().name == "default"
     assert config.model().id == "legacy-model"
     assert config.model().decrypt_api_key() == "legacy-secret"
+    assert config.workspace_context.direct_source is False
+    assert config.memory.enabled is True
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "match"),
+    (
+        ("direct_source = true", 'direct_source = "yes"', "workspace.direct_source"),
+        ("enabled = false", 'enabled = "no"', "memory.enabled"),
+        (
+            "global_network_disallow = true",
+            'global_network_disallow = "yes"',
+            "sandbox.global_network_disallow",
+        ),
+    ),
+)
+def test_system_toggles_require_booleans(
+    old: str,
+    new: str,
+    match: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir, _config = _write_split_config(tmp_path, monkeypatch)
+    tools_path = config_dir / "tools.toml"
+    tools_path.write_text(
+        tools_path.read_text(encoding="utf-8").replace(old, new),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=match):
+        CitraConfig.load()

@@ -7,26 +7,21 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
-from ..tool import Tool
+from ..tool import Tool, ToolDefinition
 
 
 class Materialize(Tool):
-    """Copy selected source files into the isolated agent workspace."""
+    """Hidden migration compatibility tool for older embedders."""
+
+    TOOL_ID = "materialize"
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="materialize",
             description=(
-                "Preview or copy selected files from read-only @source into "
-                "the lifecycle-scoped agent workspace. Git is not required: "
-                "tracked, untracked, and non-repository files are eligible. "
-                "Calls are additive and never overwrite files already copied "
-                "or edited by the agent. Directory and glob expansion obeys "
-                "ignore files and built-in cache/build exclusions by default; "
-                "an exact file path overrides soft ignores. VCS internals and "
-                "special files are always excluded. Use preview before a "
-                "large expansion and ['.'] when the complete project is "
-                "needed for testing."
+                "Compatibility endpoint for clients predating the Agent "
+                "Runtime. The source workspace is already completely copied "
+                "into @workspace at startup, so this endpoint performs no copy."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -34,8 +29,8 @@ class Materialize(Tool):
                         name="action",
                         schema=JsonSchema.string(
                             description=(
-                                "'copy' materializes files; 'preview' only "
-                                "reports the eligible scope. Defaults to copy."
+                                "Legacy compatibility value. Both 'copy' and "
+                                "'preview' are no-ops. Defaults to copy."
                             ),
                             enum=(
                                 "copy",
@@ -49,9 +44,7 @@ class Materialize(Tool):
                         schema=JsonSchema.array(
                             JsonSchema.string(),
                             description=(
-                                "Source-relative files, directories, or glob "
-                                "patterns, such as 'src/app.py', 'tests', "
-                                "'**/*.py', or '.'."
+                                "Ignored legacy source-relative paths."
                             ),
                         ),
                     ),
@@ -59,9 +52,7 @@ class Materialize(Tool):
                         name="include_ignored",
                         schema=JsonSchema.boolean(
                             description=(
-                                "Include soft-ignored files during directory "
-                                "and glob expansion. Defaults to false. Exact "
-                                "file paths already override soft ignores."
+                                "Ignored legacy compatibility flag."
                             ),
                         ),
                         required=False,
@@ -70,8 +61,7 @@ class Materialize(Tool):
                         name="allow_large",
                         schema=JsonSchema.boolean(
                             description=(
-                                "Permit a copy above the normal file-count or "
-                                "byte limit. Defaults to false."
+                                "Ignored legacy compatibility flag."
                             ),
                         ),
                         required=False,
@@ -82,30 +72,66 @@ class Materialize(Tool):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
         )
-
 
     def is_cacheable(
         self,
         arguments: dict[str, Any],
     ) -> bool:
-        return arguments.get("action", "copy") == "preview"
+        return (
+            arguments.get(
+                "action",
+                "copy",
+            )
+            == "preview"
+        )
 
     def invalidates_tool_cache(
         self,
         arguments: dict[str, Any],
     ) -> bool:
-        return arguments.get("action", "copy") != "preview"
+        return (
+            arguments.get(
+                "action",
+                "copy",
+            )
+            != "preview"
+        )
 
     @override
     def _execute(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        del arguments
+
+        return (
+            "No action required: @workspace is the complete disposable "
+            "source snapshot created at Agent Runtime startup."
+        )
+
+    @override
+    def format_call_log(
         self,
         arguments: dict[str, Any],
     ) -> str:
@@ -113,46 +139,56 @@ class Materialize(Tool):
             "action",
             "copy",
         )
-        return self.context.workspace.changes.materialize(
-            arguments["paths"],
-            preview=action == "preview",
-            include_ignored=arguments.get(
-                "include_ignored",
-                False,
-            ),
-            allow_large=arguments.get(
-                "allow_large",
-                False,
-            ),
-        ).format()
 
-    @override
-    def format_call_log(
-        self,
-        arguments: dict[str, Any],
-    ) -> str:
-        action = arguments.get("action", "copy")
-        paths = arguments.get("paths", [])
+        paths = arguments.get(
+            "paths",
+            [],
+        )
 
-        preview = ", ".join(str(p) for p in paths[:3])
+        preview = ", ".join(
+            str(path)
+            for path in paths[:3]
+        )
+
         if len(paths) > 3:
-            preview += f", +{len(paths) - 3} more"
+            preview += (
+                f", +{len(paths) - 3} more"
+            )
 
-        parts = [f"action={action}", f"paths=[{preview}]"]
+        parts = [
+            f"action={action}",
+            f"paths=[{preview}]",
+        ]
 
-        if arguments.get("include_ignored"):
-            parts.append("include_ignored=true")
+        if arguments.get(
+            "include_ignored"
+        ):
+            parts.append(
+                "include_ignored=true"
+            )
 
-        if arguments.get("allow_large"):
-            parts.append("allow_large=true")
+        if arguments.get(
+            "allow_large"
+        ):
+            parts.append(
+                "allow_large=true"
+            )
 
-        return " | ".join(parts)
+        return " | ".join(
+            parts
+        )
 
     @override
     def format_result_log(
         self,
         result: Any,
     ) -> str:
-        text = str(result)
+        text = str(
+            result
+        )
+
         lines = text.splitlines()
-        return f"{len(lines)} lines"
+
+        return (
+            f"{len(lines)} lines"
+        )

@@ -1,5 +1,3 @@
-"""Optional provisional reasoning state for unresolved work."""
-
 from __future__ import annotations
 
 from typing import Any, override
@@ -13,25 +11,29 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..tool import ToolDefinition
 from .memory_tool import MemoryTool, WorkingStateExtract
 
 
 class WorkingStateTool(MemoryTool[WorkingStateExtract]):
     """Manage active hypotheses and provisional interpretations."""
 
+    TOOL_ID = "working_state"
+
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="working_state",
             description=(
-                "Manage optional provisional working state for unresolved reasoning that "
-                "must survive context trimming. Working state may contain "
-                "hypotheses, tentative interpretations, and immediate verification "
-                "plans; it is not authoritative. Durable TODO, FACT, DECISION, "
-                "and CONSTRAINT entries may be created directly without working "
-                "state. When a working state genuinely produces durable memory, "
-                "the corresponding tool may still promote it and preserve "
-                "provenance. Resolve it after promoted consequences are captured, "
-                "or discard it when no durable memory is warranted."
+                "Manage optional provisional working state for unresolved "
+                "reasoning that must survive context trimming. Working state "
+                "may contain hypotheses, tentative interpretations, and "
+                "immediate verification plans; it is not authoritative. "
+                "Durable TODO, FACT, DECISION, and CONSTRAINT entries may be "
+                "created directly without working state. When a working state "
+                "genuinely produces durable memory, the corresponding tool may "
+                "promote it and preserve provenance. Resolve it after promoted "
+                "consequences are captured, or discard it when no durable "
+                "memory is warranted."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -39,15 +41,21 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
                         name="action",
                         schema=JsonSchema.string(
                             description="Working-state operation.",
-                            enum=("create", "update", "resolve", "discard"),
+                            enum=(
+                                "create",
+                                "update",
+                                "resolve",
+                                "discard",
+                            ),
                         ),
                     ),
                     JsonProperty(
                         name="content",
                         schema=JsonSchema.string(
                             description=(
-                                "Working-state content for create/update. Use "
-                                "'contents' to create several states at once."
+                                "Working-state content for create/update. "
+                                "Use 'contents' to create several states "
+                                "at once."
                             ),
                         ),
                         required=False,
@@ -56,7 +64,9 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
                         name="contents",
                         schema=JsonSchema.array(
                             items=JsonSchema.string(),
-                            description="Batch of working states for create.",
+                            description=(
+                                "Batch of working states for create."
+                            ),
                         ),
                         required=False,
                     ),
@@ -64,8 +74,8 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
                         name="id",
                         schema=JsonSchema.integer(
                             description=(
-                                "Single working-state ID for update, resolve, "
-                                "or discard."
+                                "Single working-state ID for update, "
+                                "resolve, or discard."
                             ),
                         ),
                         required=False,
@@ -86,6 +96,20 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
@@ -94,7 +118,6 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         super().__init__(
             context=context,
             session=session,
-            definition=self.DEFINITION,
         )
 
     @property
@@ -103,23 +126,39 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         return "Working state"
 
     @override
-    def get_extracts(self) -> list[WorkingStateExtract]:
+    def get_extracts(
+        self,
+    ) -> list[WorkingStateExtract]:
         return self.memory_state.active_working_states()
 
     @override
-    def format_extract(self, extract: WorkingStateExtract) -> str:
-        line = f"- [W{extract.id}] {extract.content}"
+    def format_extract(
+        self,
+        extract: WorkingStateExtract,
+    ) -> str:
+        line = (
+            f"- [W{extract.id}] "
+            f"{extract.content}"
+        )
+
         if extract.promotions:
             promoted = ", ".join(
                 f"{ref.kind.upper()} [{ref.memory_id}]"
                 for ref in extract.promotions
             )
-            line += f"\n  - promoted: {promoted}"
+
+            line += (
+                f"\n  - promoted: {promoted}"
+            )
+
         return line
 
     @override
-    def should_offer_documentation(self) -> bool:
+    def should_offer_documentation(
+        self,
+    ) -> bool:
         return False
+
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:

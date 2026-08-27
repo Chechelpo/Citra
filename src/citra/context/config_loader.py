@@ -65,9 +65,17 @@ class NotificationConfig:
 
 @dataclass(frozen=True)
 class WorkspaceContextConfig:
-    temporary_workspace: str | None
-    permanent_workspace: str | None
-    library: str | None
+    temporary_workspace: str | None = None
+    permanent_workspace: str | None = None
+    library: str | None = None
+    direct_source: bool = False
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    """Controls whether durable model-facing memory is available."""
+
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -101,7 +109,14 @@ class LintContextConfig:
 class SandboxContextConfig:
     """Operator-controlled Bubblewrap policy with secure defaults."""
 
-    base_readonly_binds: tuple[str, ...] = ("/",)
+    # Operator policy can further restrict a mode, but cannot grant network
+    # access when the selected mode disallows it.
+    global_network_disallow: bool = False
+
+    # The Agent Runtime starts from an empty sandbox root.  Broad host-root
+    # compatibility binds remain opt-in for installations that explicitly
+    # require them.
+    base_readonly_binds: tuple[str, ...] = ()
 
     masked_host_dirs: tuple[str, ...] = (
         "/home",
@@ -123,30 +138,16 @@ class SandboxContextConfig:
 
     private_files: tuple[str, ...] = ()
 
-    auto_bind_citra_runtime: bool = True
+    auto_bind_citra_runtime: bool = False
     auto_bind_citra_config: bool = True
 
     citra_config_exclude: tuple[str, ...] = (
         "config.toml",
     )
 
-    auto_bind_masked_path_entries: bool = True
+    auto_bind_masked_path_entries: bool = False
 
-    auto_bind_env_paths: tuple[str, ...] = (
-        "SSL_CERT_FILE",
-        "SSL_CERT_DIR",
-        "REQUESTS_CA_BUNDLE",
-        "CURL_CA_BUNDLE",
-        "NODE_EXTRA_CA_CERTS",
-        "VIRTUAL_ENV",
-        "JAVA_HOME",
-        "GOROOT",
-        "NVM_BIN",
-        "NVM_DIR",
-        "PYTHONPATH",
-        "PYENV_ROOT",
-        "RUSTUP_HOME",
-    )
+    auto_bind_env_paths: tuple[str, ...] = ()
 
     auto_bind_resolv_conf_target: bool = True
 
@@ -175,6 +176,243 @@ class SandboxContextConfig:
 
 
 @dataclass(frozen=True)
+class RuntimeStorageConfig:
+    """Agent Runtime storage policy.
+
+    ``provisioning_copy_budget_bytes`` is a hard pre-copy budget for duplicated
+    host tool/runtime assets.  The remaining values are explicitly soft
+    limits for Citra-controlled allocations and diagnostics; arbitrary child
+    writes require filesystem quotas for strict enforcement.
+    """
+
+    provisioning_copy_budget_bytes: int = 4 * 1024**3
+    env_soft_limit_bytes: int = 4 * 1024**3
+    cache_soft_limit_bytes: int = 4 * 1024**3
+    tmp_soft_limit_bytes: int = 2 * 1024**3
+
+
+@dataclass(frozen=True)
+class RuntimeEnvironmentConfig:
+    aggressive_normalization: bool = True
+    overrides: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class RuntimeCleanupConfig:
+    remove_stale_process_roots: bool = True
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    storage: RuntimeStorageConfig = RuntimeStorageConfig()
+    environment: RuntimeEnvironmentConfig = RuntimeEnvironmentConfig()
+    cleanup: RuntimeCleanupConfig = RuntimeCleanupConfig()
+
+
+_RUNTIME_RESERVED_ENVIRONMENT_KEYS = frozenset(
+    {
+        "HOME",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_RUNTIME_DIR",
+        "VIRTUAL_ENV",
+        "CITRA_WORKSPACE",
+        "CITRA_SOURCE",
+        "CITRA_LIBRARY",
+        "CITRA_AGENT_ROOT",
+        "CITRA_RUNTIME",
+        "CITRA_ENV",
+        "CITRA_TMP",
+        "CITRA_CACHE",
+    }
+)
+
+
+def _runtime_table(
+    table: dict[str, object],
+    name: str,
+) -> dict[str, object]:
+    value = table.get(name, {})
+    if not isinstance(value, dict):
+        raise ValueError(f"'runtime.{name}' must be a TOML table.")
+    return value
+
+
+def _runtime_bool(
+    table: dict[str, object],
+    name: str,
+    *,
+    section: str,
+    default: bool,
+) -> bool:
+    value = table.get(name, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"'{section}.{name}' must be a boolean.")
+    return value
+
+
+def _runtime_positive_int(
+    table: dict[str, object],
+    name: str,
+    *,
+    section: str,
+    default: int,
+) -> int:
+    value = table.get(name, default)
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"'{section}.{name}' must be a positive integer.")
+    return value
+
+
+def _runtime_nonnegative_int(
+    table: dict[str, object],
+    name: str,
+    *,
+    section: str,
+    default: int,
+) -> int:
+    value = table.get(name, default)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"'{section}.{name}' must be a non-negative integer.")
+    return value
+
+
+def _reject_runtime_unknown_keys(
+    table: dict[str, object],
+    allowed: set[str],
+    *,
+    section: str,
+) -> None:
+    unexpected = sorted(set(table) - allowed)
+    if unexpected:
+        raise ValueError(
+            f"Unexpected key(s) in '{section}': {', '.join(unexpected)}"
+        )
+
+
+def _parse_runtime_config(raw: object) -> RuntimeConfig:
+    """Parse runtime policy strictly so isolation settings cannot be mistyped."""
+    if raw is None:
+        return RuntimeConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("'runtime' must be a TOML table.")
+
+    _reject_runtime_unknown_keys(
+        raw,
+        {"storage", "environment", "cleanup"},
+        section="runtime",
+    )
+    storage_raw = _runtime_table(raw, "storage")
+    environment_raw = _runtime_table(raw, "environment")
+    cleanup_raw = _runtime_table(raw, "cleanup")
+    _reject_runtime_unknown_keys(
+        storage_raw,
+        {
+            "provisioning_copy_budget_bytes",
+            "env_soft_limit_bytes",
+            "cache_soft_limit_bytes",
+            "tmp_soft_limit_bytes",
+        },
+        section="runtime.storage",
+    )
+    _reject_runtime_unknown_keys(
+        environment_raw,
+        {"aggressive_normalization", "overrides"},
+        section="runtime.environment",
+    )
+    _reject_runtime_unknown_keys(
+        cleanup_raw,
+        {"remove_stale_process_roots"},
+        section="runtime.cleanup",
+    )
+
+    storage_defaults = RuntimeStorageConfig()
+    storage = RuntimeStorageConfig(
+        provisioning_copy_budget_bytes=_runtime_nonnegative_int(
+            storage_raw,
+            "provisioning_copy_budget_bytes",
+            section="runtime.storage",
+            default=storage_defaults.provisioning_copy_budget_bytes,
+        ),
+        env_soft_limit_bytes=_runtime_positive_int(
+            storage_raw,
+            "env_soft_limit_bytes",
+            section="runtime.storage",
+            default=storage_defaults.env_soft_limit_bytes,
+        ),
+        cache_soft_limit_bytes=_runtime_positive_int(
+            storage_raw,
+            "cache_soft_limit_bytes",
+            section="runtime.storage",
+            default=storage_defaults.cache_soft_limit_bytes,
+        ),
+        tmp_soft_limit_bytes=_runtime_positive_int(
+            storage_raw,
+            "tmp_soft_limit_bytes",
+            section="runtime.storage",
+            default=storage_defaults.tmp_soft_limit_bytes,
+        ),
+    )
+
+    overrides_raw = environment_raw.get("overrides", {})
+    if not isinstance(overrides_raw, dict):
+        raise ValueError("'runtime.environment.overrides' must be a TOML table.")
+    overrides: list[tuple[str, str]] = []
+    for name, value in overrides_raw.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or "=" in name
+            or "\x00" in name
+        ):
+            raise ValueError(
+                "Runtime environment override names must be non-empty "
+                "environment variable names."
+            )
+        if name in _RUNTIME_RESERVED_ENVIRONMENT_KEYS:
+            raise ValueError(
+                f"'runtime.environment.overrides.{name}' is reserved by "
+                "the Agent Runtime isolation boundary."
+            )
+        if not isinstance(value, str) or "\x00" in value:
+            raise ValueError(
+                f"'runtime.environment.overrides.{name}' must be a string."
+            )
+        overrides.append((name, value))
+
+    environment_defaults = RuntimeEnvironmentConfig()
+    environment = RuntimeEnvironmentConfig(
+        aggressive_normalization=_runtime_bool(
+            environment_raw,
+            "aggressive_normalization",
+            section="runtime.environment",
+            default=environment_defaults.aggressive_normalization,
+        ),
+        overrides=tuple(overrides),
+    )
+
+    cleanup_defaults = RuntimeCleanupConfig()
+    cleanup = RuntimeCleanupConfig(
+        remove_stale_process_roots=_runtime_bool(
+            cleanup_raw,
+            "remove_stale_process_roots",
+            section="runtime.cleanup",
+            default=cleanup_defaults.remove_stale_process_roots,
+        )
+    )
+    return RuntimeConfig(
+        storage=storage,
+        environment=environment,
+        cleanup=cleanup,
+    )
+
+
+@dataclass(frozen=True)
 class CitraConfig:
     """Load Citra configuration.
 
@@ -190,6 +428,7 @@ class CitraConfig:
     model_config_store: ModelConfigStore
     web_search: WebSearchConfig
     workspace_context: WorkspaceContextConfig
+    memory: MemoryConfig
 
     bash: BashConfig = BashConfig()
     subprocess: SubprocessConfig = SubprocessConfig()
@@ -199,6 +438,7 @@ class CitraConfig:
     lsp: LspContextConfig = LspContextConfig()
     lint: LintContextConfig = LintContextConfig()
     sandbox: SandboxContextConfig = SandboxContextConfig()
+    runtime: RuntimeConfig = RuntimeConfig()
 
     @classmethod
     def _config_path(cls) -> Path:
@@ -317,6 +557,10 @@ class CitraConfig:
 
             web_search_raw = raw["web-search"]
             workspace_context_raw = raw["workspace"]
+            memory_raw = raw.get(
+                "memory",
+                {},
+            )
 
             lsp_raw = raw.get(
                 "lsp",
@@ -358,6 +602,21 @@ class CitraConfig:
                 {},
             )
 
+            runtime_raw = raw.get(
+                "runtime",
+                {},
+            )
+
+            if not isinstance(workspace_context_raw, dict):
+                raise ValueError(
+                    "'workspace' must be a TOML table."
+                )
+
+            if not isinstance(memory_raw, dict):
+                raise ValueError(
+                    "'memory' must be a TOML table."
+                )
+
             if not isinstance(lsp_raw, dict):
                 raise ValueError(
                     "'lsp' must be a TOML table."
@@ -397,6 +656,8 @@ class CitraConfig:
                 raise ValueError(
                     "'sandbox' must be a TOML table."
                 )
+
+            runtime = _parse_runtime_config(runtime_raw)
 
             sandbox_defaults = SandboxContextConfig()
             browser_defaults = BrowserConfig()
@@ -455,7 +716,22 @@ class CitraConfig:
                 ),
                 library= workspace_context_raw.get(
                     "library"
-                )
+                ),
+                direct_source=_runtime_bool(
+                    workspace_context_raw,
+                    "direct_source",
+                    section="workspace",
+                    default=False,
+                ),
+            )
+
+            memory = MemoryConfig(
+                enabled=_runtime_bool(
+                    memory_raw,
+                    "enabled",
+                    section="memory",
+                    default=True,
+                ),
             )
 
             lsp = LspContextConfig(
@@ -739,6 +1015,12 @@ class CitraConfig:
             )
 
             sandbox = SandboxContextConfig(
+                global_network_disallow=_runtime_bool(
+                    sandbox_raw,
+                    "global_network_disallow",
+                    section="sandbox",
+                    default=sandbox_defaults.global_network_disallow,
+                ),
                 base_readonly_binds=string_tuple(
                     sandbox_raw,
                     section="sandbox",
@@ -941,6 +1223,7 @@ class CitraConfig:
             model_config_store=model,
             web_search=web_search,
             workspace_context=workspace_context,
+            memory=memory,
             bash=bash,
             subprocess=subprocess_config,
             browser=browser,
@@ -949,6 +1232,7 @@ class CitraConfig:
             lsp=lsp,
             lint=lint,
             sandbox=sandbox,
+            runtime=runtime,
         )
   
     def model(self, name: str | None = None) -> ModelConfig:

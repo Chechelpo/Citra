@@ -12,6 +12,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
 
@@ -35,32 +36,43 @@ class FactExtract:
 class FactTool(MemoryTool[FactExtract]):
     """Manage verified facts, optionally promoted from working state."""
 
+    TOOL_ID = "fact"
+
     CITATION_SCHEMA = JsonSchema.object(
         properties=(
             JsonProperty(
                 name="type",
                 schema=JsonSchema.string(
                     description="Citation source type.",
-                    enum=("file", "url"),
+                    enum=(
+                        "file",
+                        "url",
+                    ),
                 ),
             ),
             JsonProperty(
                 name="source",
                 schema=JsonSchema.string(
-                    description="Workspace-relative file path or source URL.",
+                    description=(
+                        "Workspace-relative file path or source URL."
+                    ),
                 ),
             ),
             JsonProperty(
                 name="line",
                 schema=JsonSchema.integer(
-                    description="Starting line number for a file citation."
+                    description=(
+                        "Starting line number for a file citation."
+                    ),
                 ),
                 required=False,
             ),
             JsonProperty(
                 name="end_line",
                 schema=JsonSchema.integer(
-                    description="Ending line number for a file citation."
+                    description=(
+                        "Ending line number for a file citation."
+                    ),
                 ),
                 required=False,
             ),
@@ -68,8 +80,8 @@ class FactTool(MemoryTool[FactExtract]):
                 name="reference",
                 schema=JsonSchema.string(
                     description=(
-                        "Optional symbol, heading, field, anchor, or other "
-                        "locator within the source."
+                        "Optional symbol, heading, field, anchor, "
+                        "or other locator within the source."
                     ),
                 ),
                 required=False,
@@ -82,14 +94,16 @@ class FactTool(MemoryTool[FactExtract]):
         properties=(
             JsonProperty(
                 name="content",
-                schema=JsonSchema.string(description="Fact text."),
+                schema=JsonSchema.string(
+                    description="Fact text.",
+                ),
             ),
             JsonProperty(
                 name="working_state_id",
                 schema=JsonSchema.integer(
                     description=(
-                        "Working-state ID for promote. Omit when adding a fact "
-                        "directly."
+                        "Working-state ID for promote. Omit when "
+                        "adding a fact directly."
                     ),
                 ),
                 required=False,
@@ -98,7 +112,9 @@ class FactTool(MemoryTool[FactExtract]):
                 name="citations",
                 schema=JsonSchema.array(
                     items=CITATION_SCHEMA,
-                    description="Supporting citations for this fact.",
+                    description=(
+                        "Supporting citations for this fact."
+                    ),
                 ),
                 required=False,
             ),
@@ -111,10 +127,10 @@ class FactTool(MemoryTool[FactExtract]):
             name="fact",
             description=(
                 "Manage verified facts retained for the current conversation. "
-                "Use 'add' when a fact is already established and does not need "
-                "provisional working state. Use 'promote' when an active working "
-                "state produced the fact and provenance is useful. Use 'remove' "
-                "when a fact is stale, incorrect, or superseded."
+                "Use 'add' when a fact is already established and does not "
+                "need provisional working state. Use 'promote' when an active "
+                "working state produced the fact and provenance is useful. "
+                "Use 'remove' when a fact is stale, incorrect, or superseded."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -122,13 +138,19 @@ class FactTool(MemoryTool[FactExtract]):
                         name="action",
                         schema=JsonSchema.string(
                             description="Fact operation.",
-                            enum=("add", "promote", "remove"),
+                            enum=(
+                                "add",
+                                "promote",
+                                "remove",
+                            ),
                         ),
                     ),
                     JsonProperty(
                         name="working_state_id",
                         schema=JsonSchema.integer(
-                            description="Single working-state ID to promote.",
+                            description=(
+                                "Single working-state ID to promote."
+                            ),
                         ),
                         required=False,
                     ),
@@ -146,7 +168,9 @@ class FactTool(MemoryTool[FactExtract]):
                         name="citations",
                         schema=JsonSchema.array(
                             items=CITATION_SCHEMA,
-                            description="Supporting citations for a single fact.",
+                            description=(
+                                "Supporting citations for a single fact."
+                            ),
                         ),
                         required=False,
                     ),
@@ -155,8 +179,9 @@ class FactTool(MemoryTool[FactExtract]):
                         schema=JsonSchema.array(
                             items=FACT_SCHEMA,
                             description=(
-                                "Batch of facts. For add, omit working_state_id. "
-                                "For promote, each entry requires working_state_id."
+                                "Batch of facts. For add, omit "
+                                "working_state_id. For promote, each entry "
+                                "requires working_state_id."
                             ),
                         ),
                         required=False,
@@ -164,7 +189,9 @@ class FactTool(MemoryTool[FactExtract]):
                     JsonProperty(
                         name="id",
                         schema=JsonSchema.integer(
-                            description="Single fact ID for remove.",
+                            description=(
+                                "Single fact ID for remove."
+                            ),
                         ),
                         required=False,
                     ),
@@ -172,7 +199,9 @@ class FactTool(MemoryTool[FactExtract]):
                         name="ids",
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
-                            description="Fact IDs to remove as a batch.",
+                            description=(
+                                "Fact IDs to remove as a batch."
+                            ),
                         ),
                         required=False,
                     ),
@@ -182,6 +211,20 @@ class FactTool(MemoryTool[FactExtract]):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
@@ -189,9 +232,9 @@ class FactTool(MemoryTool[FactExtract]):
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
             session=session,
         )
+
         self.__extracts: list[FactExtract] = []
         self.__next_id = 1
 
@@ -201,36 +244,74 @@ class FactTool(MemoryTool[FactExtract]):
         return "Facts"
 
     @override
-    def get_extracts(self) -> list[FactExtract]:
-        return list(self.__extracts)
+    def get_extracts(
+        self,
+    ) -> list[FactExtract]:
+        return list(
+            self.__extracts
+        )
 
     @override
-    def format_extract(self, extract: FactExtract) -> str:
-        lines = [f"- [{extract.id}] {extract.content}"]
+    def format_extract(
+        self,
+        extract: FactExtract,
+    ) -> str:
+        lines = [
+            f"- [{extract.id}] {extract.content}",
+        ]
+
         if extract.working_state_id is not None:
-            lines.append(f"  - origin: working state W{extract.working_state_id}")
+            lines.append(
+                "  - origin: working state "
+                f"W{extract.working_state_id}"
+            )
+
         for citation in extract.citations:
             if citation.type == "file":
                 location = citation.source
+
                 if citation.line is not None:
-                    location += f":{citation.line}"
+                    location += (
+                        f":{citation.line}"
+                    )
+
                     if (
                         citation.end_line is not None
                         and citation.end_line != citation.line
                     ):
-                        location += f"-{citation.end_line}"
+                        location += (
+                            f"-{citation.end_line}"
+                        )
+
                 if citation.reference:
-                    location += f" ({citation.reference})"
-                lines.append(f"  - source: {location}")
+                    location += (
+                        f" ({citation.reference})"
+                    )
+
+                lines.append(
+                    f"  - source: {location}"
+                )
+
             elif citation.type == "url":
                 location = citation.source
+
                 if citation.reference:
-                    location += f" ({citation.reference})"
-                lines.append(f"  - source: {location}")
-        return "\n".join(lines)
+                    location += (
+                        f" ({citation.reference})"
+                    )
+
+                lines.append(
+                    f"  - source: {location}"
+                )
+
+        return "\n".join(
+            lines
+        )
 
     @override
-    def should_offer_documentation(self) -> bool:
+    def should_offer_documentation(
+        self,
+    ) -> bool:
         return False
 
     @override

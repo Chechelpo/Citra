@@ -1,21 +1,26 @@
+from __future__ import annotations
+
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
 import os
 import platform
-import shutil
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from citra.context.turn_workspace import WorkspaceContext
-from citra.utils.sandbox import WorkspaceSandbox
-from citra.utils.sandboxed_filesystem import SandboxedFilesystem
+from citra.tools.linting import LintRunner
+from citra.tools.skills.skill_registry import SkillRegistry
 from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
-from citra.utils.repo_map import RepoMap
 from citra.utils.model_tokenizer import tokenize
-from citra.tools.skills.skill_registry import SkillRegistry
-from citra.tools.linting import LintRunner
+from citra.utils.repo_map import RepoMap
+from citra.utils.sandbox import WorkspaceSandbox
+from citra.utils.sandboxed_filesystem import SandboxedFilesystem
 
 from .config_loader import CitraConfig
+
+if TYPE_CHECKING:
+    from citra.modes import Mode
+    from citra.tools.lsp import LspManager
 
 
 DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
@@ -27,9 +32,17 @@ class ExecutionContext:
     skills: SkillRegistry
     logger = logging.getLogger(__name__)
 
-    lsp_manager: object | None = None
+    lsp_manager: LspManager | None = None
     user_interactions: object | None = None
     provided_config: CitraConfig | None = field(
+        default=None,
+        repr=False,
+    )
+    provided_mode: Mode | None = field(
+        default=None,
+        repr=False,
+    )
+    provided_sandbox: WorkspaceSandbox | None = field(
         default=None,
         repr=False,
     )
@@ -37,6 +50,9 @@ class ExecutionContext:
         init=False,
     )
     __config: CitraConfig = field(
+        init=False,
+    )
+    __mode: Mode = field(
         init=False,
     )
     __sandbox: WorkspaceSandbox = field(
@@ -73,10 +89,24 @@ class ExecutionContext:
 
             config = CitraConfig.load()
 
-        sandbox = WorkspaceSandbox(
+        mode = self.provided_mode
+        if mode is None:
+            from citra.modes import ModeRegistry
+
+            mode = ModeRegistry(
+                config_path=os.environ.get("CITRA_CONFIG_PATH"),
+            ).active_mode
+
+        sandbox = self.provided_sandbox or WorkspaceSandbox(
             self.workspace,
             config=config.sandbox,
+            mode_config=mode.sandbox_config,
         )
+        self.workspace.provisioning.health_check_tools(
+            sandbox,
+            cwd=self.workspace.workspace,
+        )
+        self.workspace.write_runtime_manifest()
         filesystem = SandboxedFilesystem(
             sandbox
         )
@@ -85,6 +115,10 @@ class ExecutionContext:
             sandbox,
             self.workspace.workspace,
             request_timeout=config.browser.request_timeout,
+            browsers_path=(
+                self.workspace.provisioning.asset_path("playwright-browsers")
+                or self.workspace.cache / "playwright"
+            ),
         )
         repo_map = RepoMap(self.workspace)
         lint_runner = LintRunner(
@@ -103,6 +137,12 @@ class ExecutionContext:
             self,
             "_ExecutionContext__config",
             config,
+        )
+
+        object.__setattr__(
+            self,
+            "_ExecutionContext__mode",
+            mode,
         )
 
         object.__setattr__(
@@ -146,6 +186,10 @@ class ExecutionContext:
         return self.__config
 
     @property
+    def mode(self) -> Mode:
+        return self.__mode
+
+    @property
     def sandbox(
         self,
     ) -> WorkspaceSandbox:
@@ -169,13 +213,21 @@ class ExecutionContext:
     def repo_map(self) -> RepoMap:
         return self.__repo_map
 
-    def close(self) -> None:
+    def close(self, *, force: bool = False) -> None:
+        self.workspace.begin_closing()
+        if force:
+            # Hard shutdown has one aggregate process bound. Individual
+            # service close calls below then become bookkeeping operations.
+            self.workspace.processes.terminate_all(force=True)
         manager = self.lsp_manager
         close_lsp = getattr(manager, "close", None)
         if callable(close_lsp):
-            close_lsp()
-        self.__browser.close()
-        self.__subprocesses.close()
+            try:
+                close_lsp(force=force)
+            except TypeError:
+                close_lsp()
+        self.__browser.close(force=force)
+        self.__subprocesses.close(force=force)
 
     @property
     def model_config(
@@ -193,9 +245,14 @@ class ExecutionContext:
         self,
         cmd: str,
     ) -> bool:
-        return shutil.which(
-            cmd
-        ) is not None
+        return self.workspace.resolve_command(cmd) is not None
+
+    def resolve_command(self, cmd: str) -> str | None:
+        path = self.workspace.resolve_command(cmd)
+        return str(path) if path is not None else None
+
+    def ensure_active(self) -> None:
+        self.workspace.ensure_active()
 
     def truncate_output(
         self,

@@ -8,8 +8,6 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
-import subprocess
 from typing import TYPE_CHECKING, Any, Iterable
 
 from citra.utils.model_tokenizer import tokenize
@@ -18,8 +16,8 @@ if TYPE_CHECKING:
     from citra.context.turn_workspace import WorkspaceContext
 
 
-DEFAULT_MAP_TOKENS = 1_500
-MAX_MAP_TOKENS = 2_000
+DEFAULT_MAP_TOKENS = 2_0000
+MAX_MAP_TOKENS = 4_000
 MAX_SOURCE_FILE_BYTES = 1_000_000
 _MAX_RENDERED_LINE_LENGTH = 160
 
@@ -125,9 +123,10 @@ class RepoMap:
     """
     Build a compact structural map of the effective Citra project.
 
-    Source files are indexed with grep-ast's tree-sitter parsers. Materialized
-    or newly-created workspace files override the corresponding @source file.
-    Parsed tags are cached by path/mtime/size for the ExecutionContext lifetime.
+    Files are indexed from the complete disposable Agent Runtime workspace.
+    ``@source`` remains an explicit authoritative view and is not overlaid into
+    the normal project map. Parsed tags are cached by path/mtime/size for the
+    ExecutionContext lifetime.
     """
 
     def __init__(self, workspace: WorkspaceContext) -> None:
@@ -285,31 +284,6 @@ class RepoMap:
         if subtree_text == ".":
             subtree_text = ""
 
-        source_root = self.workspace.source_workspace
-        workspace_root = self.workspace.workspace
-
-        for relative in self._source_inventory():
-            if not self._within_subtree(relative, subtree_text):
-                continue
-            source = source_root / relative
-            if self._safe_regular_file(source, source_root):
-                files[relative] = source
-
-        # A materialized file which was subsequently deleted must mask the
-        # permanent source copy rather than allowing the old definition back
-        # into the map.
-        materialized_paths = getattr(
-            self.workspace.changes,
-            "materialized_paths",
-            (),
-        )
-        for relative in materialized_paths:
-            if not self._within_subtree(relative, subtree_text):
-                continue
-            workspace_path = workspace_root / relative
-            if not workspace_path.exists():
-                files.pop(relative, None)
-
         for relative, physical in self._walk_workspace_files():
             if not self._within_subtree(relative, subtree_text):
                 continue
@@ -323,71 +297,22 @@ class RepoMap:
             return True
         return relative == subtree or relative.startswith(subtree + "/")
 
-    def _source_inventory(self) -> tuple[str, ...]:
-        root = self.workspace.source_workspace
-        git = shutil.which("git")
-
-        if git is not None and (root / ".git").exists():
-            try:
-                result = subprocess.run(
-                    [
-                        git,
-                        "-C",
-                        str(root),
-                        "ls-files",
-                        "--cached",
-                        "--others",
-                        "--exclude-standard",
-                        "-z",
-                    ],
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=10,
-                )
-                values = result.stdout.decode(
-                    "utf-8",
-                    errors="surrogateescape",
-                ).split("\0")
-                return tuple(
-                    sorted(
-                        value
-                        for value in values
-                        if value and not self._skip_relative(value)
-                    )
-                )
-            except (OSError, subprocess.SubprocessError):
-                pass
-
-        discovered: list[str] = []
-        for directory, dirnames, filenames in os.walk(root):
-            dirnames[:] = [
-                name
-                for name in dirnames
-                if name not in _SKIP_DIRECTORIES
-            ]
-            base = Path(directory)
-            for filename in filenames:
-                path = base / filename
-                try:
-                    relative = path.relative_to(root).as_posix()
-                except ValueError:
-                    continue
-                if not self._skip_relative(relative):
-                    discovered.append(relative)
-        return tuple(sorted(discovered))
-
     def _walk_workspace_files(self) -> Iterable[tuple[str, Path]]:
         root = self.workspace.workspace
         for directory, dirnames, filenames in os.walk(root):
+            base = Path(directory)
             dirnames[:] = [
                 name
                 for name in dirnames
                 if name not in _SKIP_DIRECTORIES and name != "@source"
+                and not self.workspace.is_controller_private_source_path(
+                    base / name
+                )
             ]
-            base = Path(directory)
             for filename in filenames:
                 path = base / filename
+                if self.workspace.is_controller_private_source_path(path):
+                    continue
                 try:
                     relative = path.relative_to(root).as_posix()
                 except ValueError:
@@ -667,8 +592,12 @@ class RepoMap:
                 continue
             source_rank = ranks.get(source, 0.0)
             for edge in source_edges:
-                ranked_definitions[(edge.destination, edge.identifier)] += (
-                    source_rank * edge.weight / total
+                ranked_definitions.update(
+                    {
+                        (edge.destination, edge.identifier): (
+                            source_rank * edge.weight / total
+                        )
+                    }
                 )
 
         result: list[Definition] = []
@@ -739,7 +668,7 @@ class RepoMap:
             if edge.weight <= 0:
                 continue
             outgoing[edge.source].append((edge.destination, edge.weight))
-            totals[edge.source] += edge.weight
+            totals.update({edge.source: edge.weight})
 
         for _ in range(max_iterations):
             next_rank = {

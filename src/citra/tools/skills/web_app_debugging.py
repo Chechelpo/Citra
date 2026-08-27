@@ -30,7 +30,22 @@ class WebAppDebugging(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
+        if not bool(
+            getattr(
+                getattr(context.config, "memory", None),
+                "enabled",
+                True,
+            )
+        ):
+            return _PROMPT.replace(_MEMORY_INSTRUCTION, "")
         return _PROMPT
+
+
+_MEMORY_INSTRUCTION = """\
+Record the important conditions of the reproduction in session memory when the
+task is non-trivial and those conditions will matter during later verification.
+
+"""
 
 _PROMPT: str = """
 # Debugging web applications

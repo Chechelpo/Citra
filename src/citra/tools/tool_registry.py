@@ -1,6 +1,7 @@
 # src/citra/tools/registry.py
 
 from dataclasses import dataclass
+from typing import Protocol, cast
 
 from citra.agent import AgentSession
 
@@ -15,6 +16,28 @@ class ToolRegistration:
     tool_type: type[Tool]
     deferred: bool = False
     summary: str = ""
+
+
+class _ToolFactory(Protocol):
+    def __call__(self, *, context: ExecutionContext) -> Tool: ...
+
+
+class _SessionToolFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        context: ExecutionContext,
+        session: AgentSession,
+    ) -> SessionTool: ...
+
+
+class _MemoryToolFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        context: ExecutionContext,
+        session: AgentSession,
+    ) -> MemoryTool: ...
 
 
 class ToolRegistry:
@@ -65,6 +88,9 @@ class ToolRegistry:
             summary=summary,
         )
 
+    def get_with_id(self, id:str) -> ToolRegistration:
+        return self.__tools[id] 
+
     def instantiate(
         self,
         context: ExecutionContext,
@@ -87,6 +113,15 @@ class ToolRegistry:
 
             tool_type = registration.tool_type
             if issubclass(tool_type, MemoryTool):
+                configured_memory = getattr(
+                    getattr(context, "config", None),
+                    "memory",
+                    None,
+                )
+                if not session.memory_enabled or not bool(
+                    getattr(configured_memory, "enabled", True)
+                ):
+                    continue
                 tool = self._get_memory_tool(
                     tool_id=tool_id,
                     tool_type=tool_type,
@@ -95,13 +130,13 @@ class ToolRegistry:
                 )
 
             elif issubclass(tool_type, SessionTool):
-                tool = tool_type(
+                tool = cast(_SessionToolFactory, tool_type)(
                     context=context,
                     session=session,
                 )
 
             else:
-                tool = tool_type(
+                tool = cast(_ToolFactory, tool_type)(
                     context=context,
                 )
 
@@ -119,7 +154,7 @@ class ToolRegistry:
     ) -> MemoryTool:
         tool = session.memory.get_or_create(
             tool_id,
-            lambda: tool_type(
+            lambda: cast(_MemoryToolFactory, tool_type)(
                 context=context,
                 session=session,
             ),
@@ -140,6 +175,13 @@ class ToolRegistry:
         # Retain this method for callers written against the old registry API.
         del session
 
+    def all_tool_types(self, is_deffered: bool) -> tuple[type[Tool], ...]:
+        return tuple(
+            registration.tool_type
+            for registration in self.__tools.values()
+            if registration.deferred == is_deffered
+        )
+    
     def contains(
         self,
         tool_id: str,
@@ -166,6 +208,8 @@ class ToolRegistry:
             if registration.deferred
         )
 
+
+    
     @property
     def deferred_catalog(self) -> dict[str, str]:
         return {

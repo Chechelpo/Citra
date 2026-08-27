@@ -17,7 +17,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
@@ -66,11 +66,25 @@ class ScopedFilesystem:
         self.home = self._required_path("HOME")
         self.tmp = self._required_path("CITRA_TMP")
         self.cache = self._required_path("CITRA_CACHE")
+        env_raw = os.environ.get("CITRA_ENV")
+        self.env = (
+            Path(env_raw).resolve()
+            if env_raw
+            else self.workspace.parent / "env"
+        )
         self.config = self._required_path("XDG_CONFIG_HOME")
         self.data = self._required_path("XDG_DATA_HOME")
-        self.runtime = self._required_path("XDG_RUNTIME_DIR")
-        self.library = self._required_path(
-            "CITRA_LIBRARY"
+        runtime_raw = os.environ.get("CITRA_RUNTIME")
+        self.runtime = (
+            Path(runtime_raw).resolve()
+            if runtime_raw
+            else self._required_path("XDG_RUNTIME_DIR")
+        )
+        library_raw = os.environ.get("CITRA_LIBRARY")
+        self.library = (
+            Path(library_raw).resolve()
+            if library_raw
+            else self.workspace.parent / "library"
         )
 
         self._denied_roots = (self.library,)
@@ -81,6 +95,7 @@ class ScopedFilesystem:
             "home": self.home,
             "tmp": self.tmp,
             "cache": self.cache,
+            "env": self.env,
             "config": self.config,
             "data": self.data,
             "runtime": self.runtime,
@@ -92,7 +107,7 @@ class ScopedFilesystem:
         self._write_roots = tuple(
             root
             for name, root in self._aliases.items()
-            if name != "source"
+            if name not in {"source", "runtime"}
         )
 
     @staticmethod
@@ -211,6 +226,7 @@ class ScopedFilesystem:
             ("tmp", self.tmp),
             ("home", self.home),
             ("cache", self.cache),
+            ("env", self.env),
             ("config", self.config),
             ("data", self.data),
             ("runtime", self.runtime),
@@ -314,7 +330,9 @@ def _convert_readable(fs: ScopedFilesystem, path: Path) -> Path:
     if path.suffix.lower() not in {".pdf", ".ipynb"}:
         return path
     from citra.utils.converters import convert
-    return fs.require_allowed_path(convert(path, workspace=fs))
+    # ScopedFilesystem implements the conversion workspace contract inside
+    # the sandbox worker without importing controller lifecycle state.
+    return fs.require_allowed_path(convert(path, workspace=cast(Any, fs)))
 
 
 def _read(arguments: dict[str, Any], fs: ScopedFilesystem) -> str:

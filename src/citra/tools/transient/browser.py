@@ -7,7 +7,7 @@ from typing import Any, override
 from urllib.parse import urlparse
 
 from ...context import ExecutionContext
-from ..tool import Tool
+from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -18,6 +18,7 @@ from .prompt_user import PromptUser
 
 
 class Browser(Tool):
+    TOOL_ID = "browser"
     SAFE_ACTIONS = frozenset(
         {
             "open",
@@ -57,10 +58,7 @@ class Browser(Tool):
                 "Test web applications with a lifecycle-scoped headless "
                 "Chromium browser. Use snapshot to obtain stable element "
                 "references for interaction. Supported safe actions include "
-                "navigation, snapshot, click, double-click, hover, fill, "
-                "keyboard input, checkbox interaction, select controls, "
-                "scrolling, waits, downloads, screenshots, console inspection, "
-                "and navigation history. Open requires a network reason and "
+                f"{SAFE_ACTIONS}. Open requires a network reason and "
                 "user approval unless configured otherwise. Capabilities that "
                 "can expose local data or execute arbitrary page JavaScript, "
                 "such as upload and evaluate, are disabled by default and must "
@@ -74,13 +72,7 @@ class Browser(Tool):
                         name="action",
                         schema=JsonSchema.string(
                             description=(
-                                "Browser action. Safe actions include open, "
-                                "snapshot, click, dblclick, hover, fill, press, "
-                                "check, uncheck, select, scroll_into_view, "
-                                "wait_for, download, screenshot, console, "
-                                "errors, reload, back, forward, and close. "
-                                "Unsafe actions such as evaluate and upload "
-                                "must be enabled by configuration."
+                                "Browser action."
                             ),
                         ),
                     ),
@@ -180,12 +172,22 @@ class Browser(Tool):
             ),
         )
     )
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
 
-    def __init__(self, context: ExecutionContext) -> None:
-        super().__init__(
-            context=context,
-            definition=self.DEFINITION,
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
         )
+    
+    def __init__(self, context: ExecutionContext) -> None:
+        super().__init__(context)
 
     @override
     def _execute(

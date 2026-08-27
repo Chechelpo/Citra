@@ -12,10 +12,11 @@ summary for each. It exercises:
    and checks for a valid ``choices`` array.
 3. Web-search (SearXNG) connectivity — issues a trivial query and
    checks for an HTTP 200 / JSON response.
-4. Bash availability — confirms ``bash`` is on PATH.
-5. Workspace access — confirms the configured workspace exists and is
-   readable.
-6. Language servers — confirms both built-in LSP adapters have executables.
+4. Bash provisioning — confirms ``bash`` resolves through the Agent Runtime.
+5. Workspace access — confirms the complete runtime workspace is readable.
+6. Agent Runtime diagnostics — reports identity, copy budget, and mutable
+   storage usage.
+7. Language servers — reports provisioned LSP executables/dependencies.
 
 Each check is independent: a failure in one does not prevent the
 others from running.
@@ -24,7 +25,6 @@ others from running.
 from __future__ import annotations
 
 import json
-import shutil
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -99,7 +99,11 @@ class TestCommand(Command):
 
         return (
             f"model={model.id}, "
-            f"searxng={web.host_url}"
+            f"searxng={web.host_url}, "
+            "project="
+            f"{'direct-source' if self.context.workspace.direct_source else 'isolated-copy'}, "
+            "memory="
+            f"{'enabled' if self.context.config.memory.enabled else 'disabled'}"
         )
 
     def _check_model_api(self) -> str:
@@ -180,12 +184,39 @@ class TestCommand(Command):
         return f"{len(results)} result(s)"
 
     def _check_bash(self) -> str:
-        path = shutil.which("bash")
+        path = self.context.resolve_command("bash")
 
         if not path:
             raise RuntimeError("bash not found on PATH.")
 
         return path
+
+    def _check_agent_runtime(self) -> str:
+        runtime = self.context.workspace.runtime_diagnostics()
+        storage = runtime["storage"]
+        tools = runtime.get("tools", {})
+        modes: dict[str, int] = {}
+        unhealthy: list[str] = []
+        if isinstance(tools, dict):
+            for tool_id, raw in tools.items():
+                if not isinstance(raw, dict):
+                    continue
+                mode = str(raw.get("mode", "unknown"))
+                modes[mode] = modes.get(mode, 0) + 1
+                if not raw.get("available", False):
+                    unhealthy.append(str(tool_id))
+        warnings = runtime.get("warnings", [])
+        return (
+            f"id={runtime['runtime_id']}, "
+            f"project={runtime['workspace_mode']}, "
+            f"copied={runtime['provisioning_copied_bytes']}/"
+            f"{runtime['provisioning_budget_bytes']} bytes, "
+            f"env={runtime['dependency_environment']}, "
+            f"normalization={runtime['aggressive_normalization']}, "
+            f"storage={storage}, modes={modes}, "
+            f"unavailable={unhealthy or 'none'}, "
+            f"warnings={warnings or 'none'}"
+        )
 
     def _check_workspace(self) -> str:
         self.context.filesystem.execute(
@@ -234,6 +265,7 @@ class TestCommand(Command):
         runner.run("Web Search (SearXNG)", self._check_web_search)
         runner.run("Bash", self._check_bash)
         runner.run("Workspace", self._check_workspace)
+        runner.run("Agent Runtime", self._check_agent_runtime)
         runner.run("Language Servers", self._check_language_servers)
 
         header = f"{BOLD}Running diagnostics…{RESET}\n\n"

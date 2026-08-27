@@ -12,6 +12,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
 
@@ -25,15 +26,18 @@ class DecisionExtract:
 class DecisionTool(MemoryTool[DecisionExtract]):
     """Manage durable decisions, optionally promoted from working state."""
 
+    TOOL_ID = "decision"
+
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="decision",
             description=(
                 "Manage durable decisions for the current conversation. Use "
-                "'add' for established implementation, architectural, behavioral, or design choices that do not "
-                "need provisional working state, 'promote' when an active working "
-                "state produced the decision, and 'remove' when it becomes "
-                "stale, incorrect, or obsolete."
+                "'add' for established implementation, architectural, "
+                "behavioral, or design choices that do not need provisional "
+                "working state, 'promote' when an active working state "
+                "produced the decision, and 'remove' when it becomes stale, "
+                "incorrect, or obsolete."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -41,15 +45,19 @@ class DecisionTool(MemoryTool[DecisionExtract]):
                         name="action",
                         schema=JsonSchema.string(
                             description="Decision operation.",
-                            enum=("add", "promote", "remove"),
+                            enum=(
+                                "add",
+                                "promote",
+                                "remove",
+                            ),
                         ),
                     ),
                     JsonProperty(
                         name="content",
                         schema=JsonSchema.string(
                             description=(
-                                "Decision text for direct add, or optional polished "
-                                "text for a single promotion."
+                                "Decision text for direct add, or optional "
+                                "polished text for a single promotion."
                             ),
                         ),
                         required=False,
@@ -58,14 +66,18 @@ class DecisionTool(MemoryTool[DecisionExtract]):
                         name="contents",
                         schema=JsonSchema.array(
                             items=JsonSchema.string(),
-                            description="Decisions to add directly as a batch.",
+                            description=(
+                                "Decisions to add directly as a batch."
+                            ),
                         ),
                         required=False,
                     ),
                     JsonProperty(
                         name="working_state_id",
                         schema=JsonSchema.integer(
-                            description="Single working-state ID to promote.",
+                            description=(
+                                "Single working-state ID to promote."
+                            ),
                         ),
                         required=False,
                     ),
@@ -74,8 +86,8 @@ class DecisionTool(MemoryTool[DecisionExtract]):
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
                             description=(
-                                "Working-state IDs to promote as a batch. Their "
-                                "contents become the decisions."
+                                "Working-state IDs to promote as a batch. "
+                                "Their contents become the decisions."
                             ),
                         ),
                         required=False,
@@ -83,7 +95,9 @@ class DecisionTool(MemoryTool[DecisionExtract]):
                     JsonProperty(
                         name="id",
                         schema=JsonSchema.integer(
-                            description="Single decision ID for remove.",
+                            description=(
+                                "Single decision ID for remove."
+                            ),
                         ),
                         required=False,
                     ),
@@ -91,7 +105,9 @@ class DecisionTool(MemoryTool[DecisionExtract]):
                         name="ids",
                         schema=JsonSchema.array(
                             items=JsonSchema.integer(),
-                            description="Decision IDs to remove as a batch.",
+                            description=(
+                                "Decision IDs to remove as a batch."
+                            ),
                         ),
                         required=False,
                     ),
@@ -101,6 +117,20 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         ),
     )
 
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.DEFINITION,
+            ),
+        )
+
     def __init__(
         self,
         context: ExecutionContext,
@@ -108,9 +138,9 @@ class DecisionTool(MemoryTool[DecisionExtract]):
     ) -> None:
         super().__init__(
             context=context,
-            definition=self.DEFINITION,
             session=session,
         )
+
         self.__extracts: list[DecisionExtract] = []
         self.__next_id = 1
 
@@ -120,19 +150,40 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         return "Decisions"
 
     @override
-    def get_extracts(self) -> list[DecisionExtract]:
-        return list(self.__extracts)
+    def get_extracts(
+        self,
+    ) -> list[DecisionExtract]:
+        return list(
+            self.__extracts
+        )
 
     @override
-    def format_extract(self, extract: DecisionExtract) -> str:
-        text = f"- [{extract.id}] {extract.content}"
+    def format_extract(
+        self,
+        extract: DecisionExtract,
+    ) -> str:
+        text = (
+            f"- [{extract.id}] "
+            f"{extract.content}"
+        )
+
         if extract.working_state_id is not None:
-            text += f" (from working state W{extract.working_state_id})"
+            text += (
+                " (from working state "
+                f"W{extract.working_state_id})"
+            )
+
         return text
 
     @override
-    def should_offer_documentation(self) -> bool:
-        return bool(self.__extracts)
+    def should_offer_documentation(
+        self,
+    ) -> bool:
+        return bool(
+            self.__extracts
+        )
+
+    # Everything below this point can remain unchanged.
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:

@@ -24,20 +24,19 @@ from ..lsp.language import detect_language
 from ..lsp.manager import LspManager
 from ..lsp.positions import SourcePosition
 from ..lsp.protocol import uri_to_path
-from ..tool import Tool
+from ..tool import Tool, ToolDefinition
 
 
 class Lsp(Tool):
+    TOOL_ID = "lsp"
+
     INVALIDATES_TOOL_CACHE = False
 
-    def is_cacheable(
-        self,
-        arguments: dict[str, Any],
-    ) -> bool:
-        return arguments.get("action") != "status"
+    """
+    Expose high-value language intelligence without raw JSON-RPC.
+    """
 
-    """Expose high-value language intelligence without raw JSON-RPC."""
-
+    # Citra-internal action names.
     POSITION_ACTIONS = frozenset(
         {
             "hover",
@@ -49,6 +48,7 @@ class Lsp(Tool):
             "references",
         }
     )
+
     ACTIONS = (
         "status",
         "diagnostics",
@@ -62,17 +62,56 @@ class Lsp(Tool):
         "document_symbols",
     )
 
-    DEFINITION = ChatCompletionTool(
+    # Model-facing names for the Claude/Qwen/OpenCode-style LSP tool.
+    #
+    # The operations not normally present in a given native harness
+    # (status, diagnostics, declaration, typeDefinition) are Citra
+    # extensions backed by real execution semantics.
+    NATIVE_ACTIONS = (
+        "status",
+        "diagnostics",
+        "hover",
+        "goToDefinition",
+        "declaration",
+        "typeDefinition",
+        "goToImplementation",
+        "findReferences",
+        "documentSymbol",
+    )
+
+    NATIVE_ACTION_MAP = {
+        "status": "status",
+        "diagnostics": "diagnostics",
+        "hover": "hover",
+        "goToDefinition": "go_to_definition",
+        "declaration": "declaration",
+        "typeDefinition": "type_definition",
+        "goToImplementation": "implementation",
+        "findReferences": "references",
+        "documentSymbol": "document_symbols",
+    }
+
+    # ------------------------------------------------------------------
+    # Citra-native fallback
+    #
+    # lsp(
+    #     action,
+    #     path?,
+    #     line?,
+    #     character?,
+    #     include_declaration?,
+    # )
+    # ------------------------------------------------------------------
+
+    CITRA_DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="lsp",
             description=(
-                "Use a persistent sandboxed language server for semantic code "
-                "intelligence across Citra's configured language catalog. "
-                "Actions include diagnostics, hover, document symbols, "
-                "references, and go-to-definition (plus declaration, type "
-                "definition, and implementation). line and character are "
-                "1-based. Use status to inspect installed and optional "
-                "language-server dependencies."
+                "Use a persistent sandboxed language server for semantic "
+                "code intelligence. Supports diagnostics, hover, document "
+                "symbols, references, definitions, declarations, type "
+                "definitions, and implementations. line and character are "
+                "1-based. Use status to inspect available language servers."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -87,8 +126,8 @@ class Lsp(Tool):
                         name="path",
                         schema=JsonSchema.string(
                             description=(
-                                "Source path in any allowed Citra filesystem root "
-                                "(including @source and @tmp). Required except for status."
+                                "Source path in any allowed Citra filesystem "
+                                "root. Required except for status."
                             ),
                         ),
                         required=False,
@@ -96,21 +135,28 @@ class Lsp(Tool):
                     JsonProperty(
                         name="line",
                         schema=JsonSchema.integer(
-                            description="1-based source line for position actions.",
+                            description=(
+                                "1-based source line for position operations."
+                            ),
                         ),
                         required=False,
                     ),
                     JsonProperty(
                         name="character",
                         schema=JsonSchema.integer(
-                            description="1-based character/column for position actions.",
+                            description=(
+                                "1-based character/column for position operations."
+                            ),
                         ),
                         required=False,
                     ),
                     JsonProperty(
                         name="include_declaration",
                         schema=JsonSchema.boolean(
-                            description="Include the declaration in reference results.",
+                            description=(
+                                "Include the declaration itself in reference "
+                                "results. Defaults to true."
+                            ),
                         ),
                         required=False,
                     ),
@@ -120,96 +166,472 @@ class Lsp(Tool):
         ),
     )
 
-    def __init__(self, context: ExecutionContext) -> None:
-        super().__init__(context=context, definition=self.DEFINITION)
+    # ------------------------------------------------------------------
+    # Claude Code
+    #
+    # LSP(
+    #     operation,
+    #     filePath?,
+    #     line?,
+    #     character?,
+    #     includeDeclaration?,
+    # )
+    # ------------------------------------------------------------------
+
+    CLAUDE_CODE_DEFINITION = ChatCompletionTool(
+        function=FunctionDefinition(
+            name="LSP",
+            description=(
+                "Interact with a language server for semantic code "
+                "intelligence including definitions, references, hover "
+                "information, symbols, diagnostics, and implementations. "
+                "Line and character positions are 1-based."
+            ),
+            parameters=JsonSchema.object(
+                properties=(
+                    JsonProperty(
+                        name="operation",
+                        schema=JsonSchema.string(
+                            description="LSP operation to perform.",
+                            enum=NATIVE_ACTIONS,
+                        ),
+                    ),
+                    JsonProperty(
+                        name="filePath",
+                        schema=JsonSchema.string(
+                            description=(
+                                "Path of the source file. Required for "
+                                "file-based operations."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="line",
+                        schema=JsonSchema.integer(
+                            description="1-based source line.",
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="character",
+                        schema=JsonSchema.integer(
+                            description="1-based character offset.",
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="includeDeclaration",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Whether reference results should include "
+                                "the declaration itself."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                ),
+                additional_properties=False,
+            ),
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Qwen Code
+    #
+    # lsp(
+    #     operation,
+    #     filePath?,
+    #     line?,
+    #     character?,
+    #     includeDeclaration?,
+    # )
+    #
+    # Qwen has an even larger native LSP surface, including workspace
+    # symbols, workspace diagnostics, code actions, and call hierarchy.
+    # Only advertise operations Citra can actually execute here.
+    # ------------------------------------------------------------------
+
+    QWEN_CODE_DEFINITION = ChatCompletionTool(
+        function=FunctionDefinition(
+            name="lsp",
+            description=(
+                "Use Language Server Protocol code intelligence for precise "
+                "semantic navigation, references, diagnostics, symbols, "
+                "hover information, and implementations."
+            ),
+            parameters=CLAUDE_CODE_DEFINITION.function.parameters,
+        ),
+    )
+
+    # Current OpenCode's experimental LSP tool has essentially the same
+    # core schema as the Qwen profile:
+    #
+    #   lsp(operation, filePath, line, character, ...)
+    #
+    # Keep this for future harness-aware resolution.
+    OPENCODE_DEFINITION = QWEN_CODE_DEFINITION
+
+    @classmethod
+    @override
+    def definitions_for_context(
+        cls,
+        context: ExecutionContext,
+    ) -> tuple[ToolDefinition, ...]:
+        del context
+
+        return (
+            ToolDefinition(
+                definition=cls.CLAUDE_CODE_DEFINITION,
+                model_family_matchers=(
+                    "claude",
+                ),
+            ),
+            ToolDefinition(
+                definition=cls.QWEN_CODE_DEFINITION,
+                model_family_matchers=(
+                    "qwen",
+                ),
+            ),
+
+            # Gemini, Kimi, GPT/Codex, and GLM/ZCode currently have no
+            # sufficiently established native model-facing LSP tool to
+            # imitate, so they use Citra's own schema.
+            ToolDefinition(
+                definition=cls.CITRA_DEFINITION,
+            ),
+        )
+
+    def __init__(
+        self,
+        context: ExecutionContext,
+    ) -> None:
+        super().__init__(
+            context=context,
+        )
+
+    # ------------------------------------------------------------------
+    # Cache policy
+    # ------------------------------------------------------------------
+
+    def is_cacheable(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
+        action = arguments.get(
+            "action",
+            arguments.get("operation"),
+        )
+
+        return action != "status"
+
+    # ------------------------------------------------------------------
+    # Argument normalization
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _normalize_arguments(
+        cls,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw_action = arguments.get(
+            "action",
+            arguments.get("operation"),
+        )
+
+        if raw_action is None:
+            raise ValueError(
+                "LSP invocation contained no action or operation."
+            )
+
+        action = cls.NATIVE_ACTION_MAP.get(
+            str(raw_action),
+            str(raw_action),
+        )
+
+        normalized: dict[str, Any] = {
+            "action": action,
+        }
+
+        path = arguments.get(
+            "path",
+            arguments.get("filePath"),
+        )
+
+        if path is not None:
+            normalized["path"] = path
+
+        if "line" in arguments:
+            normalized["line"] = arguments["line"]
+
+        if "character" in arguments:
+            normalized["character"] = arguments["character"]
+
+        include_declaration = arguments.get(
+            "include_declaration",
+            arguments.get("includeDeclaration"),
+        )
+
+        if include_declaration is not None:
+            normalized["include_declaration"] = (
+                include_declaration
+            )
+
+        return normalized
+
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
 
     @override
-    def _execute(self, arguments: dict[str, Any]) -> str:
+    def _execute(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        arguments = self._normalize_arguments(
+            arguments
+        )
+
         manager = self.context.lsp_manager
-        if not isinstance(manager, LspManager):
-            return "unavailable: LSP services are disabled in this execution context"
+
+        if not isinstance(
+            manager,
+            LspManager,
+        ):
+            return (
+                "unavailable: LSP services are disabled "
+                "in this execution context"
+            )
+
         action = arguments["action"]
+
         if action == "status":
-            # Status is path-independent. Treat stale/default path or position
-            # fields as harmless rather than turning an introspection request
-            # into an operational error. Model tool callers commonly retain a
-            # path from the preceding semantic action.
-            return json.dumps(manager.status(), indent=2, ensure_ascii=False)
-        path_raw = arguments.get("path")
+            return json.dumps(
+                manager.status(),
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        path_raw = arguments.get(
+            "path"
+        )
+
         if not path_raw:
-            raise ValueError("'path' is required for this LSP action.")
-        path = self.context.workspace.resolve_path(path_raw)
-        language = detect_language(path)
+            raise ValueError(
+                "'path' is required for this LSP action."
+            )
+
+        path = self.context.workspace.resolve_path(
+            path_raw
+        )
+
+        language = detect_language(
+            path
+        )
+
         if language is None:
-            return f"unsupported: no language server is configured for {path.suffix or 'this file'}"
-        text = self.context.filesystem.execute("read_raw", {"path": str(path)})
+            return (
+                "unsupported: no language server is configured for "
+                f"{path.suffix or 'this file'}"
+            )
+
+        text = self.context.filesystem.execute(
+            "read_raw",
+            {
+                "path": str(path),
+            },
+        )
 
         try:
             if action == "diagnostics":
-                self._reject(arguments, "line", "character", "include_declaration")
-                rendered = format_diagnostics(
-                    manager.diagnostics(path, text),
-                    path=path,
-                    display_path=self.context.workspace.display_path,
+                self._reject(
+                    arguments,
+                    "line",
+                    "character",
+                    "include_declaration",
                 )
+
+                rendered = format_diagnostics(
+                    manager.diagnostics(
+                        path,
+                        text,
+                    ),
+                    path=path,
+                    display_path=(
+                        self.context.workspace.display_path
+                    ),
+                )
+
                 return rendered or "none"
 
-            handle = manager.client_for(path)
+            handle = manager.client_for(
+                path
+            )
+
             client = handle.client
-            uri = client.sync_document(path, text, handle.language)
+
+            uri = client.sync_document(
+                path,
+                text,
+                handle.language,
+            )
+
             if action == "document_symbols":
-                self._reject(arguments, "line", "character", "include_declaration")
-                return self._format_symbols(client.document_symbols(uri), path)
+                self._reject(
+                    arguments,
+                    "line",
+                    "character",
+                    "include_declaration",
+                )
+
+                return self._format_symbols(
+                    client.document_symbols(
+                        uri
+                    ),
+                    path,
+                )
+
             if action not in self.POSITION_ACTIONS:
-                raise ValueError(f"Unsupported LSP action: {action}")
-            position = self._position(arguments, text)
+                raise ValueError(
+                    f"Unsupported LSP action: {action}"
+                )
+
+            position = self._position(
+                arguments,
+                text,
+            )
+
             if action == "hover":
-                self._reject(arguments, "include_declaration")
-                return self._format_hover(client.hover(uri, position))
+                self._reject(
+                    arguments,
+                    "include_declaration",
+                )
+
+                return self._format_hover(
+                    client.hover(
+                        uri,
+                        position,
+                    )
+                )
+
             if action == "references":
                 return self._format_locations(
                     client.references(
                         uri,
                         position,
-                        include_declaration=arguments.get("include_declaration", True),
+                        include_declaration=arguments.get(
+                            "include_declaration",
+                            True,
+                        ),
                     )
                 )
-            self._reject(arguments, "include_declaration")
-            definition_kind = "definition" if action == "go_to_definition" else action
-            return self._format_locations(client.definitions(definition_kind, uri, position))
+
+            self._reject(
+                arguments,
+                "include_declaration",
+            )
+
+            definition_kind = (
+                "definition"
+                if action == "go_to_definition"
+                else action
+            )
+
+            return self._format_locations(
+                client.definitions(
+                    definition_kind,
+                    uri,
+                    position,
+                )
+            )
+
         except LspUnavailable as error:
-            return f"unavailable: {error}"
+            return (
+                f"unavailable: {error}"
+            )
+
         except LspUnsupportedCapability as error:
-            return f"unsupported: {error}"
+            return (
+                f"unsupported: {error}"
+            )
+
         except LspDiagnosticsTimeout as error:
-            # A diagnostics timeout is operational unavailability, not a Citra
-            # internal failure; report it concisely without a traceback.
-            return f"unavailable: {error}"
+            return (
+                f"unavailable: {error}"
+            )
+
         except LspError as error:
-            self.context.logger.exception("LSP operation failed for %s", path_raw)
-            return f"unavailable: language server operation failed: {error}"
+            self.context.logger.exception(
+                "LSP operation failed for %s",
+                path_raw,
+            )
+
+            return (
+                "unavailable: language server operation failed: "
+                f"{error}"
+            )
+
         except Exception as error:
-            self.context.logger.exception("Unexpected LSP failure for %s", path_raw)
-            return f"unavailable: language server operation failed: {error}"
+            self.context.logger.exception(
+                "Unexpected LSP failure for %s",
+                path_raw,
+            )
+
+            return (
+                "unavailable: language server operation failed: "
+                f"{error}"
+            )
+
+    # ------------------------------------------------------------------
+    # Logging
+    # ------------------------------------------------------------------
 
     @override
     def format_call_log(
         self,
         arguments: dict[str, Any],
     ) -> str:
-        action = arguments.get("action", "?")
-        path = arguments.get("path")
-        parts = [f"action={action}"]
+        normalized = self._normalize_arguments(
+            arguments
+        )
+
+        action = normalized.get(
+            "action",
+            "?",
+        )
+
+        path = normalized.get(
+            "path"
+        )
+
+        parts = [
+            f"action={action}",
+        ]
 
         if path is not None:
-            parts.append(f"path={path}")
+            parts.append(
+                f"path={path}"
+            )
 
-        line = arguments.get("line")
-        character = arguments.get("character")
-        if line is not None and character is not None:
-            parts.append(f"pos={line}:{character}")
+        line = normalized.get(
+            "line"
+        )
 
-        return " | ".join(parts)
+        character = normalized.get(
+            "character"
+        )
+
+        if (
+            line is not None
+            and character is not None
+        ):
+            parts.append(
+                f"pos={line}:{character}"
+            )
+
+        return " | ".join(
+            parts
+        )
 
     @override
     def format_result_log(

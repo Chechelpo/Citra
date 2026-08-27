@@ -1,28 +1,32 @@
-"""Explicit host-side language-server installation helpers."""
+"""Sandboxed Agent Runtime language-server installation helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import shutil
-import subprocess
-from typing import Iterable
+from pathlib import Path
+from typing import Callable, Iterable, Protocol, Sequence
 
 from .servers.base import InstallCandidate, ServerDefinition
 
 
 _MANAGER_PRIORITY = (
-    "pacman",
-    "paru",
-    "yay",
-    "apt",
-    "apt-get",
-    "dnf",
-    "brew",
     "npm",
     "gem",
     "go",
     "cargo",
 )
+
+
+class _Sandbox(Protocol):
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        cwd: str | Path | None,
+        timeout: int,
+        network: bool,
+        environment: dict[str, str] | None = None,
+    ) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -41,15 +45,17 @@ class InstallResult:
         return self.returncode == 0 and self.executable_found is not None
 
 
-def available_managers() -> tuple[str, ...]:
-    return tuple(manager for manager in _MANAGER_PRIORITY if shutil.which(manager) is not None)
+def available_managers(
+    resolver: Callable[[str], str | None],
+) -> tuple[str, ...]:
+    return tuple(manager for manager in _MANAGER_PRIORITY if resolver(manager) is not None)
 
 
 def candidate_for(
     definition: ServerDefinition,
     managers: Iterable[str] | None = None,
 ) -> InstallCandidate | None:
-    available = set(managers if managers is not None else available_managers())
+    available = set(managers or ())
     candidates = {candidate.manager: candidate for candidate in definition.install_candidates}
     for manager in _MANAGER_PRIORITY:
         if manager in available and manager in candidates:
@@ -62,6 +68,11 @@ def execute_install(
     candidate: InstallCandidate,
     *,
     dry_run: bool,
+    resolver: Callable[[str], str | None],
+    sandbox: _Sandbox | None = None,
+    cwd: Path | None = None,
+    environment: dict[str, str] | None = None,
+    timeout: int = 300,
 ) -> InstallResult:
     command = candidate.command
     if dry_run:
@@ -71,34 +82,35 @@ def execute_install(
             dry_run=True,
             returncode=None,
             output="dry-run: " + " ".join(command),
-            executable_found=shutil.which(definition.executable),
+            executable_found=resolver(definition.executable),
         )
 
-    output_parts: list[str] = []
+    if sandbox is None or cwd is None:
+        raise RuntimeError(
+            "Language-server installation requires an Agent Runtime sandbox."
+        )
+
     print("$ " + " ".join(command), flush=True)
     try:
-        process = subprocess.Popen(
+        completed = sandbox.run(
             command,
-            stdin=None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            cwd=cwd,
+            timeout=timeout,
+            network=True,
+            environment=environment,
         )
-        assert process.stdout is not None
-        for line in process.stdout:
-            output_parts.append(line)
-        returncode = process.wait()
-    except OSError as error:
+        returncode = int(getattr(completed, "returncode", 1))
+        output = str(getattr(completed, "output", ""))
+    except Exception as error:
         returncode = 127
-        output_parts.append(str(error))
+        output = str(error)
 
-    executable = shutil.which(definition.executable)
+    executable = resolver(definition.executable)
     return InstallResult(
         server_id=definition.id,
         command=command,
         dry_run=False,
         returncode=returncode,
-        output="".join(output_parts).strip(),
+        output=output.strip(),
         executable_found=executable,
     )
