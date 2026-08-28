@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-Model-specific conversation-history policies.
+Model-specific conversation-history policies mantained by LLMs.
 
 The policy layer decides whether model reasoning metadata should survive when
 Citra replays conversation history.
@@ -68,6 +68,31 @@ direct Meta Chat Completions API this is normally a no-op; on compatible
 gateways it avoids deleting state that may be required for continuation.
 
 
+MiniMax M3
+~~~~~~~~~~
+Sources (verified 2026-08-28):
+- MiniMax API Docs: "OpenAI SDK"
+- OpenRouter documentation: "Reasoning Tokens"
+
+Relevant behavior:
+- MiniMax M3 supports interleaved thinking during tool use.
+- In multi-turn function-call conversations, MiniMax requires the complete
+  assistant response to be appended to history to preserve reasoning-chain
+  continuity.
+- With MiniMax's native OpenAI-compatible API and reasoning_split=False,
+  thinking is embedded in content as <think>...</think> and must be preserved
+  completely.
+- With reasoning_split=True, thinking is separated into reasoning_content and
+  reasoning_details, and reasoning_details must be preserved completely.
+- OpenRouter likewise recommends replaying reasoning_details unmodified when
+  continuing reasoning/tool interactions.
+
+Therefore this history layer MUST NOT destructively remove MiniMax M3
+reasoning metadata or rewrite assistant content. The request/transport layer
+should decide whether thinking is enabled and which wire representation is
+accepted.
+
+
 Kimi K2
 ~~~~~~~
 The existing Citra behavior is retained:
@@ -80,11 +105,12 @@ Transport-layer note
 This module is deliberately about HISTORY semantics, not wire-schema
 normalization. A provider adapter may still need to translate or omit fields
 that its particular endpoint does not accept. In particular:
-
 - DeepSeek direct primarily uses reasoning_content.
 - OpenRouter commonly uses reasoning_details, with reasoning and
   reasoning_content supported as aliases/forms.
 - Meta Responses uses its own reasoning-item representation.
+- MiniMax's native OpenAI-compatible API can embed thinking in content or,
+  with reasoning_split=True, expose reasoning_content/reasoning_details.
 
 Do not normalize one representation into another here; reasoning_details may
 contain structured or encrypted provider state that must remain byte-for-byte
@@ -92,6 +118,7 @@ unchanged.
 """
 
 import re
+
 from collections.abc import Callable, Iterable
 
 from citra.agent.chat_message import ChatMessage
@@ -129,20 +156,14 @@ def _strip_assistant_fields(
     Individual message mappings are copied before modification, so the stored
     conversation is never mutated by a history policy.
     """
-
     fields = tuple(fields)
-
     result: list[ChatMessage] = []
-
     for message in messages:
         current = dict(message)
-
         if current.get("role") == "assistant":
             for field in fields:
                 current.pop(field, None)
-
         result.append(current)  # type: ignore[arg-type]
-
     return result
 
 
@@ -154,10 +175,8 @@ def _kimi_k2_policy(
     Keep Kimi K2 reasoning while the active turn is still running, but remove
     reasoning metadata once the turn becomes ordinary conversation history.
     """
-
     if current_turn:
         return list(messages)
-
     return _strip_assistant_fields(
         messages,
         _REASONING_FIELDS,
@@ -189,7 +208,6 @@ def _glm_5_policy(
     break an interleaved tool continuation, while preserving it remains safe
     when clear_thinking=True because the provider performs the clearing.
     """
-
     del current_turn
     return list(messages)
 
@@ -214,7 +232,6 @@ def _deepseek_v4_policy(
     OpenAI-compatible gateways may use those representations for the same
     model.
     """
-
     del current_turn
     return list(messages)
 
@@ -236,7 +253,30 @@ def _muse_spark_policy(
     itself does not reliably identify the transport, preserving available
     metadata is safer than destructively stripping it here.
     """
+    del current_turn
+    return list(messages)
 
+
+def _minimax_m3_policy(
+    messages: list[ChatMessage],
+    current_turn: bool,
+) -> list[ChatMessage]:
+    """
+    Preserve all MiniMax M3 reasoning state and assistant content.
+
+    MiniMax M3 uses interleaved thinking for tool workflows. Its native
+    OpenAI-compatible API requires the complete assistant response to remain
+    in multi-turn function-call history so the reasoning chain can continue.
+
+    Depending on `reasoning_split`, thinking may be embedded directly in the
+    assistant `content` as <think>...</think> or exposed separately through
+    `reasoning_content` / `reasoning_details`. OpenAI-compatible gateways may
+    also carry replayable state in `reasoning_details`.
+
+    Because model_id does not identify the transport or output representation,
+    the history layer must preserve the complete message. Transport adapters
+    remain responsible for endpoint-specific schema normalization.
+    """
     del current_turn
     return list(messages)
 
@@ -247,6 +287,8 @@ def _muse_spark_policy(
 #   openrouter/z-ai/glm-5.3
 #   deepseek/deepseek-v4-pro
 #   meta/muse-spark-1.2
+#   minimax/minimax-m3
+#   openrouter/minimax/minimax-m3-20260531
 #   moonshot/kimi-k2
 #
 # Accept common provider/model separators while still requiring a model-family
@@ -287,6 +329,14 @@ _MUSE_SPARK_RE = re.compile(
 )
 
 
+_MINIMAX_M3_RE = re.compile(
+    rf"(?i)"
+    rf"(?:^|{_MODEL_SEP})"
+    rf"minimax{_MODEL_SEP}*m3"
+    rf"(?=$|{_MODEL_SEP})"
+)
+
+
 def resolve_history_policy(
     model_id: str,
 ) -> HistoryPolicy:
@@ -296,19 +346,16 @@ def resolve_history_policy(
     Matching is intentionally based on model family rather than one exact
     release so dated/provider-qualified model IDs continue to work.
     """
-
     if _KIMI_K2_RE.search(model_id):
         return _kimi_k2_policy
-
     if _GLM_5_RE.search(model_id):
         return _glm_5_policy
-
     if _DEEPSEEK_V4_RE.search(model_id):
         return _deepseek_v4_policy
-
     if _MUSE_SPARK_RE.search(model_id):
         return _muse_spark_policy
-
+    if _MINIMAX_M3_RE.search(model_id):
+        return _minimax_m3_policy
     return _default_policy
 
 
@@ -322,7 +369,6 @@ def apply_history_policy(
     Apply the model-specific history policy without mutating the caller's
     message-list object.
     """
-
     return resolve_history_policy(model_id)(
         messages,
         current_turn,

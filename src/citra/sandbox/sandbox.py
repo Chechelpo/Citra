@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from enum import IntEnum
 
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ import signal
 import subprocess
 import sys
 from typing import Any, TYPE_CHECKING, Iterable, Mapping, Sequence
+
+from citra.sandbox.runtime_discovery import *
 
 if TYPE_CHECKING:
     from ..context.turn_workspace import WorkspaceContext
@@ -198,10 +201,72 @@ class WorkspaceSandbox:
         *,
         config: object | None = None,
         mode_config: object | None = None,
+        runtime_discovery: Sequence[type[RuntimeDiscovery]] | None = None,
     ) -> None:
         self.__workspace = workspace
         self.__config = config
         self.__mode_config = mode_config
+        self.__runtime_discovery = tuple(
+            RUNTIME_DISCOVERY
+            if runtime_discovery is None
+            else runtime_discovery
+        )
+        self.__runtime_discovery_result = self._run_runtime_discovery()
+
+    def _run_runtime_discovery(self) -> RuntimeDiscoveryResult:
+        """Run the configured runtime-discovery classes exactly once."""
+        readonly_binds: list[Path] = []
+
+        for discovery in self.__runtime_discovery:
+            if not isinstance(discovery, type) or not issubclass(
+                discovery,
+                RuntimeDiscovery,
+            ):
+                raise TypeError(
+                    "Runtime discovery entries must be RuntimeDiscovery classes."
+                )
+
+            result = discovery.discover(self.__workspace)
+            if not isinstance(result, RuntimeDiscoveryResult):
+                raise TypeError(
+                    f"{discovery.__name__}.discover() must return "
+                    "RuntimeDiscoveryResult."
+                )
+
+            for path in result.readonly_binds:
+                if not isinstance(path, Path):
+                    raise TypeError(
+                        f"{discovery.__name__}.discover() returned a non-Path "
+                        "readonly bind."
+                    )
+                readonly_binds.append(path)
+
+        return RuntimeDiscoveryResult(
+            readonly_binds=self._minimal_existing_bind_paths(readonly_binds),
+        )
+
+    def _effective_extra_readonly_binds(self) -> tuple[Path, ...]:
+        """Merge mode/operator read-only binds with runtime discovery."""
+        configured = tuple(
+            self._expand_host_path(path)
+            for path in self._string_setting(
+                "extra_readonly_binds",
+                EXTRA_READONLY_BINDS,
+            )
+        )
+        return tuple(
+            dict.fromkeys(
+                (
+                    *configured,
+                    *self.__runtime_discovery_result.readonly_binds,
+                )
+            )
+        )
+
+    @property
+    def runtime_discovery_result(self) -> RuntimeDiscoveryResult:
+        """Return the immutable runtime requirements captured at creation."""
+        return self.__runtime_discovery_result
 
     @property
     def mode(self) -> SandboxMode:
@@ -444,18 +509,8 @@ class WorkspaceSandbox:
     def environment_info(
         self,
     ) -> SandboxEnvironmentInfo:
-        extra_readonly_binds = tuple(
-            self._expand_host_path(
-                path
-            )
-            for path in self._string_setting(
-                "extra_readonly_binds",
-                EXTRA_READONLY_BINDS,
-            )
-        )
-
         return SandboxEnvironmentInfo(
-            extra_readonly_binds=extra_readonly_binds,
+            extra_readonly_binds=self._effective_extra_readonly_binds(),
         )
     def popen(
         self,
@@ -731,13 +786,7 @@ class WorkspaceSandbox:
                     )
                 ),
                 *self._compatibility_readonly_binds(env),
-                *(
-                    self._expand_host_path(path)
-                    for path in self._string_setting(
-                        "extra_readonly_binds",
-                        EXTRA_READONLY_BINDS,
-                    )
-                ),
+                *self._effective_extra_readonly_binds(),
             ]
             if self._bool_setting("auto_bind_citra_runtime", False):
                 same_path.extend(self._citra_runtime_readonly_binds())
@@ -1097,13 +1146,7 @@ class WorkspaceSandbox:
                 )
             ),
             *self._compatibility_readonly_binds(env),
-            *(
-                self._expand_host_path(path)
-                for path in self._string_setting(
-                    "extra_readonly_binds",
-                    EXTRA_READONLY_BINDS,
-                )
-            ),
+            *self._effective_extra_readonly_binds(),
         ]
         if self._bool_setting("auto_bind_citra_runtime", False):
             same_path_candidates.extend(self._citra_runtime_readonly_binds())

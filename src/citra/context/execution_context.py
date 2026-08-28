@@ -320,17 +320,8 @@ class ExecutionContext:
 
         if manager is None:
             return None
-
-        collect = getattr(
-            manager,
-            "diagnostics_for_path",
-            None,
-        )
-        if not callable(collect):
-            return None
-
         try:
-            result = collect(
+            result = manager.diagnostics_for_path(
                 path_raw,
                 filesystem=self.filesystem,
             )
