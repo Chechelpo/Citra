@@ -112,6 +112,6 @@ Use the following map to orient yourself before doing any path-argument tool cal
     1. Prefer the Tree and Glob tools over reading the source files directly. 
     2. Prefer focusing on different files before reading files
     3. Once a particular chain of functions is detected, you can read files
-
+    4. Add facts as you work, not at the end
 """
 

@@ -35,14 +35,24 @@ class LongTaskHorizon(StaticMode):
     _AVAILABLE_SKILLS = (
         ArchitectureDesign(),
         CitraDocsSkill(),
-        CodingConventions()
+        CodingConventions(),
     )
 
     _TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=10,
         content= """
-        Take the next couple turns to review your plan. Check that you're sticking to it, update it. Once you're ready, go on
+        Take the next couple turns to review your plan.
+        In your review, ask yourself:
+    
+            1. Do my TODOs accurately represent the task I'm carrying on? Are they too coarse or to fine-grained? Once they're all checked, does that mean my task is over?
+            2. Are all my relevant decisions documented?
+            3. Are all the facts that make my assumptions declared and their sources cited?
+            4. Are all the constraints I've encountered documented?
+        
+        The final and most important question is: **Can a new developer read my memory and carry on with my work, exactly how I would want it to be carried out?**
+        
+        Check that your session memory correctly answers all these questions. Take your time to update them if not, then, and only then, carry on with your task.
         """,
     )
 
