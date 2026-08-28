@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import os
-from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import subprocess
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
 
 class WorkspaceConflictError(RuntimeError):
@@ -43,8 +43,8 @@ class MaterializationResult:
             else "Materialized"
         )
         lines = [
-            f"{verb} {len(selected)} file(s) "
-            f"({_format_bytes(self.total_bytes)}).",
+            (f"{verb} {len(selected)} file(s) "
+            f"({_format_bytes(self.total_bytes)})."),
         ]
 
         if selected:
@@ -763,6 +763,76 @@ class WorkspaceChanges:
         )
         return self.status()
 
+    def stage_deletions(
+        self,
+        paths: Sequence[str],
+    ) -> str:
+        """Stage removal of one or more ``@source`` files.
+
+        Unlike :meth:`stage`, which only removes a path from ``@source`` when
+        the file is also present in the agent workspace, this method stages
+        deletions directly against the private staging index using
+        ``git rm --cached``. This is the right primitive for stale source
+        files the agent never copied locally: every file in ``@source`` is
+        present in the startup baseline commit, so the path is in the index
+        even when it was never materialized.
+
+        The hard-exclusion list (``.git``, ``@source``, ...) still applies,
+        and the path must be in the baseline snapshot. The standard
+        ``status``/``diff``/``unstage``/``apply`` pipeline reports and
+        reverses staged deletions as expected.
+        """
+        normalized = self._validate_source_pathspecs(paths)
+        deletions: list[str] = []
+        not_in_source: list[str] = []
+
+        for raw in normalized:
+            if self._has_pathspec_magic(raw):
+                raise ValueError(
+                    "delete paths must be exact @source-relative files; "
+                    f"glob patterns are not supported: {raw!r}"
+                )
+
+            relative = self._validate_repository_path(raw)
+
+            if self._is_hard_excluded(relative):
+                raise ValueError(
+                    "delete paths cannot address protected filesystem "
+                    f"entries: {raw!r}"
+                )
+
+            if raw not in self.__source_snapshots:
+                not_in_source.append(raw)
+                continue
+
+            deletions.append(raw)
+
+        if not_in_source:
+            sample = ", ".join(not_in_source[:5])
+            if len(not_in_source) > 5:
+                sample += f", ... {len(not_in_source) - 5} more"
+            raise ValueError(
+                "Cannot stage deletion because the following paths are not "
+                "in the Agent Runtime @source baseline: " + sample
+            )
+
+        if not deletions:
+            raise ValueError(
+                "'paths' must contain at least one deletable source file."
+            )
+
+        self._private_git(
+            [
+                "rm",
+                "--cached",
+                "-f",
+                "--",
+                *deletions,
+            ],
+            index=self.__staging_index,
+        )
+        return self.status()
+
     def stage_patch(
         self,
         patch: str,
@@ -1305,10 +1375,8 @@ class WorkspaceChanges:
             if (
                 pure.is_absolute()
                 or normalized == ".."
-                or normalized.startswith("../")
+                or normalized.startswith(("./", "@source", ":"))
                 or "/../" in normalized
-                or normalized.startswith("@source")
-                or normalized.startswith(":")
                 or any(
                     part in cls.HARD_EXCLUDED_PARTS
                     for part in pure.parts
@@ -1361,10 +1429,8 @@ class WorkspaceChanges:
             if (
                 pure.is_absolute()
                 or normalized == ".."
-                or normalized.startswith("../")
+                or normalized.startswith(("../", "@source", ":"))
                 or "/../" in normalized
-                or normalized.startswith("@source")
-                or normalized.startswith(":")
             ):
                 raise ValueError(
                     "Source paths must remain inside @source and use plain "
@@ -1445,8 +1511,7 @@ class WorkspaceChanges:
             ],
             env=env,
             input=input_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=text,
             check=False,
             cwd=cwd,

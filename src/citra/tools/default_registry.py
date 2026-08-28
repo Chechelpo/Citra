@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import TypeVar
-from citra.tools.transient import Materialize
 
 from .session_memory import (
     CheckpointTool,
@@ -33,7 +32,6 @@ from .transient import (
     WebSearch,
     Write,
 )
-
 
 __all__ = ["ToolSet", "all_tools", "memory_tools"]
 
@@ -136,7 +134,6 @@ _CORE_TOOL_TYPES: tuple[type[Tool], ...] = (
     Edit,
     Glob,
     Tree,
-    Materialize,
     Commit,
     Bash,
     PromptUser,

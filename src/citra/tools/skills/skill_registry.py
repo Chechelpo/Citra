@@ -40,7 +40,7 @@ class SkillRegistry:
         self.skills: dict[str, Skill] = {}
         self.mode = mode
         
-        built_in_skills: tuple[Skill, ...] = (mode.skills)
+        built_in_skills: tuple[Skill, ...] = mode.skills
         if memory_enabled:
             built_in_skills = (TaskRecognition(), *built_in_skills)
         self._register(built_in_skills)

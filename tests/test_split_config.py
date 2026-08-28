@@ -7,7 +7,7 @@ import pytest
 
 from citra.context import CitraConfig
 from citra.context.config import ModelConfigStore
-from citra.sandbox.sandbox import WorkspaceSandbox
+from citra.sandbox import WorkspaceSandbox
 
 
 def _write_split_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, CitraConfig]:

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from citra.tools.transient import Edit, Glob, Grep, Read, Tree, Write
-from citra.sandbox.sandbox import WorkspaceSandbox
+from citra.sandbox import WorkspaceSandbox
 from citra.sandbox.filesystem import ScopedFilesystem
 
 

@@ -8,7 +8,7 @@ import pytest
 from citra.context import CitraConfig, LintContextConfig, LintRuleConfig
 from citra.tools.linting import LintRunner
 from citra.tools.transient import Edit, Write
-from citra.utils.sandbox import SandboxResult
+from citra.sandbox import SandboxResult
 
 
 class FakeWorkspace:

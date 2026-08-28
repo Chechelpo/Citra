@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from citra.utils.sandbox import WorkspaceSandbox
+from citra.sandbox import WorkspaceSandbox
 
 
 class SandboxConfigTests(unittest.TestCase):

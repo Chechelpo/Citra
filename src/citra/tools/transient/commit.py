@@ -7,7 +7,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
-from ..tool import Tool,ToolDefinition
+from ..tool import Tool, ToolDefinition
 
 
 class Commit(Tool):
@@ -19,6 +19,7 @@ class Commit(Tool):
         "status",
         "diff",
         "stage",
+        "delete",
         "stage_patch",
         "unstage",
         "apply",
@@ -31,10 +32,14 @@ class Commit(Tool):
                 "Inspect and stage changes in the isolated agent workspace, "
                 "then apply only staged file updates to @source. This tool "
                 "never creates a Git commit and never changes the source "
-                "repository's index or history. Actions: status, diff, stage, "
-                "stage_patch, unstage, and apply. Apply performs a conflict "
-                "check against the complete source baseline captured when the "
-                "Agent Runtime started or last applied changes."
+                "repository's index or history. Actions: status, diff, "
+                "stage, delete, stage_patch, unstage, and apply. `delete` "
+                "stages the removal of @source files (including files never "
+                "materialized into the workspace); `stage` already covers "
+                "workspace-side deletions of files that were materialized. "
+                "Apply performs a conflict check against the complete source "
+                "baseline captured when the Agent Runtime started or last "
+                "applied changes."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -159,6 +164,16 @@ class Commit(Tool):
                 "patch",
             )
             return changes.stage(
+                self._required_paths(arguments)
+            )
+
+        if action == "delete":
+            self._reject_unused(
+                arguments,
+                "staged",
+                "patch",
+            )
+            return changes.stage_deletions(
                 self._required_paths(arguments)
             )
 

@@ -192,6 +192,7 @@ class SandboxEnvironmentInfo:
     Describes information that might be relevant to the agent/tool
     """
 
+    mode: SandboxMode
     extra_readonly_binds: tuple[Path, ...]
 
 class WorkspaceSandbox:
@@ -510,6 +511,7 @@ class WorkspaceSandbox:
         self,
     ) -> SandboxEnvironmentInfo:
         return SandboxEnvironmentInfo(
+            mode=self.mode,
             extra_readonly_binds=self._effective_extra_readonly_binds(),
         )
     def popen(

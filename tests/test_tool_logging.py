@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from citra.tools.session_memory import (
     CheckpointTool,
     ConstraintTool,
@@ -18,11 +16,10 @@ from citra.tools.transient import (
     Commit,
     Curl,
     Edit,
-    Glob,
     Git,
+    Glob,
     Grep,
     Lsp,
-    Materialize,
     PromptUser,
     Read,
     RepoLibrary,
@@ -32,7 +29,6 @@ from citra.tools.transient import (
     WebSearch,
     Write,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -447,29 +443,6 @@ class TestPromptUser:
 
         log = PromptUser(_ctx()).format_result_log(USER_UNAVAILABLE_MESSAGE)
         assert "user-unavailable" in log
-
-
-# ---------------------------------------------------------------------------
-# Materialize
-# ---------------------------------------------------------------------------
-
-class TestMaterialize:
-    def test_call_log_copy(self) -> None:
-        log = Materialize(_ctx()).format_call_log(
-            {"action": "copy", "paths": ["src/app.py"]}
-        )
-        assert "action=copy" in log
-        assert "paths=" in log
-
-    def test_call_log_preview(self) -> None:
-        log = Materialize(_ctx()).format_call_log(
-            {"action": "preview", "paths": ["src/**/*.py"]}
-        )
-        assert "action=preview" in log
-
-    def test_result_log(self) -> None:
-        log = Materialize(_ctx()).format_result_log("copied 3 files\n")
-        assert "lines" in log
 
 
 # ---------------------------------------------------------------------------

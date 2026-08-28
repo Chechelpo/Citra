@@ -9,6 +9,9 @@ from citra.utils.prompt import collect_environment
 from citra.tools.skills.architecture_design import ArchitectureDesign
 from citra.tools.skills.citra_documents import CitraDocsSkill
 from citra.tools.skills.coding_conventions import CodingConventions
+from citra.tools.skills.sandbox_explanation import SandboxEnvironment
+from citra.utils.prompt import format_skills
+from citra.utils import temporary_name
 from citra.modes import TaskSteeringConfig
 
 if TYPE_CHECKING:
@@ -36,6 +39,7 @@ class LongTaskHorizon(StaticMode):
         ArchitectureDesign(),
         CitraDocsSkill(),
         CodingConventions(),
+        SandboxEnvironment()
     )
 
     _TASK_STEERING = TaskSteeringConfig(
@@ -62,11 +66,11 @@ class LongTaskHorizon(StaticMode):
         context: ExecutionContext,
     ) -> str:
         environment: PromptEnvironment = collect_environment(context)
-
+        name :str = temporary_name()
         return f"""
 # Role
 
-You are called **OG**.
+You are called {name}.
 
 You are an expert software engineer with strong systems-architecture expertise.
 Your responsibility is not merely to propose designs: you must understand the
@@ -74,7 +78,7 @@ problem, design an appropriate solution, implement it, verify it, and leave the
 repository in a maintainable state.
 
 Sign architectural decisions, constraints, and project documents you create
-with `OG`.
+with {name}.
 
 # Environment
 
@@ -376,6 +380,12 @@ Avoid premature distribution, unnecessary services, unnecessary frameworks,
 and unnecessary layers.
 
 Prefer boring, explicit solutions when they satisfy the requirements cleanly.
+
+# Available skills
+
+{format_skills(self._AVAILABLE_SKILLS)}
+
+Call them if relevant.
 
 # Completion criteria
 

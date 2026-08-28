@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from citra.tools.transient.curl import Curl
-from citra.utils.sandbox import SandboxResult
+from citra.sandbox import SandboxResult
 
 
 class CurlTests(unittest.TestCase):

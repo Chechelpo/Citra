@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
-from threading import Event
-from threading import Lock
 import time
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
+from citra.tools.lsp.installer import execute_install
+from citra.tools.lsp.servers import SERVERS
 
 from citra.agent import AgentSession
 from citra.agent.runner import _configured_tools
-from citra.cli.repl import HardShutdownRequested, run_turn_with_steering
 from citra.application import CitraApplication
+from citra.cli.repl import HardShutdownRequested, run_turn_with_steering
 from citra.context.config_loader import (
     RuntimeConfig,
     RuntimeEnvironmentConfig,
@@ -29,9 +30,9 @@ from citra.context.config_loader import (
 from citra.context.runtime import (
     CopyPolicy,
     RuntimeAsset,
-    RuntimeProvisionError,
-    RuntimeProvisioner,
     RuntimeProcessSupervisor,
+    RuntimeProvisioner,
+    RuntimeProvisionError,
     ToolDefinition,
 )
 from citra.context.turn_workspace import (
@@ -39,9 +40,7 @@ from citra.context.turn_workspace import (
     WorkspaceContext,
 )
 from citra.context.workspace_changes import WorkspaceConflictError
-from citra.utils.sandbox import WorkspaceSandbox
-from citra.tools.lsp.installer import execute_install
-from citra.tools.lsp.servers import SERVERS
+from citra.sandbox import WorkspaceSandbox
 from citra.tools.session_memory import TodoTool
 from citra.tools.skills.skill_registry import SkillRegistry
 from citra.tools.tool_registry import ToolRegistry
@@ -160,7 +159,7 @@ def test_direct_source_mode_skips_copy_and_writes_authoritative_source(
         assert context.workspace == source.resolve()
         assert not (root / "workspace").exists()
         assert context.changes is None
-        assert context.disabled_tool_ids == frozenset({"commit", "materialize"})
+        assert context.disabled_tool_ids == frozenset({"commit"})
         assert context.environment()["CITRA_WORKSPACE"] == str(source.resolve())
         assert context.environment()["CITRA_SOURCE"] == str(source.resolve())
         assert context.require_writable_path("@source/project.txt") == project_file
@@ -196,16 +195,14 @@ def test_direct_source_mode_skips_copy_and_writes_authoritative_source(
 def test_direct_source_mode_filters_workspace_bridge_tools() -> None:
     context = SimpleNamespace(
         workspace=SimpleNamespace(
-            disabled_tool_ids=frozenset({"commit", "materialize"})
+            disabled_tool_ids=frozenset({"commit"})
         )
     )
     core, deferred = _configured_tools(context)
 
     assert "read" in core
     assert "commit" not in core
-    assert "materialize" not in core
     assert "commit" not in deferred
-    assert "materialize" not in deferred
 
 
 def test_disabled_memory_is_not_instantiated_or_prompted(tmp_path: Path) -> None:

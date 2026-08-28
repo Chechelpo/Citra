@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 from citra.tools.transient.bash import Bash
-from citra.utils.sandbox import SandboxResult
+from citra.sandbox import SandboxResult
 
 
 class BashNetworkTests(unittest.TestCase):

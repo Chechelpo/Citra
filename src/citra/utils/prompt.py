@@ -9,6 +9,8 @@ while individual tool definitions remain responsible for explaining
 their own detailed behavior.
 """
 
+from citra.tools.skills.skill import Skill
+from collections.abc import Iterable
 import platform
 from dataclasses import dataclass
 from datetime import datetime
@@ -56,7 +58,11 @@ class PromptEnvironment:
         )
 
 
-
+def format_skills(skills: Iterable[Skill]) -> str:
+    return "\n".join(
+        f"- **{skill.name}**: {skill.description}"
+        for skill in skills
+    )
 def build_system_prompt(
     context: ExecutionContext,
 ) -> str:

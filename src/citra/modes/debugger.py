@@ -1,28 +1,30 @@
 
-from citra.tools.transient import Lsp
-from citra.tools.default_registry import memory_tools
-from citra.tools.transient import Subprocess
-from citra.tools.transient import Bash
-from citra.tools.transient import PromptUser
-from citra.tools.transient import WebSearch
-from citra.tools.transient import Browser
-from citra.tools.transient import Git
-from citra.tools.transient import Glob
-from citra.tools.transient import Tree
-from citra.tools.transient import Edit
-from citra.tools.transient import Write
-from citra.tools.transient import Read
-from citra.tools.default_registry import ToolSet
-from citra.utils.directory_tree import render_tree
-from citra.utils.repo_map import RepoMap
-from citra.utils import temporary_name
 from typing import override
 
 from citra.context import ExecutionContext
 from citra.modes.mode import SandboxConfig, SandboxMode, StaticMode
-from citra.tools.default_registry import all_tools
-from citra.tools.transient import Commit, Diagram, Document
+from citra.tools.default_registry import ToolSet, memory_tools
+from citra.tools.transient import (
+    Bash,
+    Browser,
+    Diagram,
+    Document,
+    Edit,
+    Git,
+    Glob,
+    Lsp,
+    PromptUser,
+    Read,
+    Subprocess,
+    Tree,
+    WebSearch,
+    Write,
+)
+from citra.utils import temporary_name
+from citra.utils.directory_tree import render_tree
 from citra.utils.prompt import PromptEnvironment, collect_environment
+from citra.utils.repo_map import RepoMap
+
 
 class DebuggerMode(StaticMode):
 
@@ -81,7 +83,7 @@ Read the files from your exploration while diagnosing them (LSP will type-check 
 As you read, collect apparent bugs in your todo list.
 
 #### Test
-Materialize the source files and write your own tests to verify every one of your candidate bugs (unless they're apparent). 
+The agent workspace already contains a complete disposable copy of the source. Read the files you are investigating, write your own tests, and verify every one of your candidate bugs (unless they're apparent).
 Do not stop at the first bug, rather check every single one in your debugs. Check them as you test them.
 Do not stop after checking that the bug exists, rather try correcting the source in order to make them dissapear. If you manage to do it, point the user to your workspace to download the corrected versions.
 

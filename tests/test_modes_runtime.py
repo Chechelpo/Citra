@@ -11,7 +11,7 @@ from citra.cli import repl as repl_module
 from citra.cli.repl import select_startup_mode
 from citra.modes import ModeRegistry, SandboxConfig, TaskSteeringConfig, UserMode
 from citra.utils.prompt import build_system_prompt
-from citra.utils.sandbox import SandboxMode, WorkspaceSandbox
+from citra.sandbox import SandboxMode, WorkspaceSandbox
 
 
 class _Input:

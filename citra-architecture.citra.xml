@@ -17,7 +17,6 @@
             <entry name="tool-grep" />
             <entry name="tool-tree" />
             <entry name="tool-git" />
-            <entry name="tool-materialize" />
             <entry name="tool-commit" />
             <entry name="tool-bash" />
             <entry name="tool-prompt-user" />
@@ -239,7 +238,7 @@ Deferred registrations require a summary and stay out of model calls until enabl
 
 ## Default registrations
 
-Core: `read`, `write`, `edit`, `glob`, `grep`, `git`, `tree`, `materialize`, `commit`, `bash`, `prompt_user`, `lsp`, `skill`, plus the six memory tools (`src/citra/tools/default_registry.py:10`).
+Core: `read`, `write`, `edit`, `glob`, `grep`, `git`, `tree`, `commit`, `bash`, `prompt_user`, `lsp`, `skill`, plus the six memory tools (`src/citra/tools/default_registry.py:10`).
 
 Deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram` (`default_registry.py:25`). The `EnableTools` tool itself is constructed by the runner with the deferred catalog and an `enabled_tool_ids` set scoped to the turn (`src/citra/tools/enable_tools.py:14`).
 
@@ -247,7 +246,7 @@ Deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_sea
 
 - `bash` runs commands inside the Bubblewrap sandbox; network access must be requested per call with a reason and is subject to config approval (`config-template.toml:22`).
 - `git` offers status/diff/log/show/blame plus clone/ls_remote against allowed remotes; it cannot mutate history or index.
-- `materialize` and `commit` are thin wrappers over `WorkspaceChanges.materialize/stage/apply` (`src/citra/tools/transient/materialize.py:13`, `src/citra/tools/transient/commit.py:13`), implementing Citra's read-only-source → staged → applied workflow.
+- `commit` is a thin wrapper over `WorkspaceChanges.stage/stage_deletions/stage_patch/apply` (`src/citra/tools/transient/commit.py:13`), implementing Citra's read-only-source → staged → applied workflow.
 - `prompt_user` surfaces open-ended or option-list questions through the foreground interaction broker.
 
 Per-tool usage reference: see the subsections below. Memory tools are detailed under *memory-tools*.</section>
@@ -270,7 +269,7 @@ Useful capabilities:
 `WorkspaceChanges` owns the private baseline + staging index for one lifecycle, stored *outside* the model-visible working directory; it never writes the source repository's index or history (`src/citra/context/workspace_changes.py:137`). Key operations:
 
 - `materialize(...)` copies selected source files into the workspace, respecting ignore files, hard exclusions, byte limits, and preview mode; results are reported as a `MaterializationResult` with per-category counts (`workspace_changes.py:22`, method at `workspace_changes.py:243`).
-- `stage(...)`, `stage_patch(...)`, and `apply(...)` implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (`workspace_changes.py:718`, `workspace_changes.py:738`, `workspace_changes.py:800`).
+- `stage(...)`, `stage_deletions(...)`, `stage_patch(...)`, and `apply(...)` implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (`workspace_changes.py:746`, `workspace_changes.py:766`, `workspace_changes.py:836`, `workspace_changes.py:898`).
 - Conflicts surface as `WorkspaceConflictError`; internal git failures as `GitCommandError` (`workspace_changes.py:13`). A `SourceSnapshot` records the baseline state for conflict detection (`workspace_changes.py:102`).</section>
         <section name="lsp-subsystem">The LSP stack lives under `src/citra/tools/lsp/` and is exposed to the model as the single `lsp` tool plus managed by `/lsp` commands.
 
@@ -496,16 +495,9 @@ The map ranks definitions and references so a task-specific view stays small. Ca
 **Key arguments:** `action` (required); `path` (repository; defaults to `@source`), `ref`/`file` for log/show/blame/diff targets, `staged` to diff the index without touching it, `limit` for logs (default 30, max 200). `clone` takes a HTTPS `url` (network access), shallow `depth` (default 1), and an optional `destination` under `@tmp/repos`; it defaults to an ephemeral directory. `timeout` caps execution (default 30s).
 
 Mutating classification is conservative (invalidates the tool cache) even though repository state is never changed.</section>
-        <section name="tool-materialize">**Purpose:** Preview or copy selected files from read-only `@source` into the lifecycle agent workspace. Git is not required: tracked, untracked, and non-repository files are all eligible.
-
-**Actions:** `preview` (report eligible scope without copying) and `copy` (default; additive — never overwrites files already copied or edited by the agent).
-
-**Key arguments:** `paths` (source-relative files, directories, or globs; `'.'` copies the complete project), `include_ignored` to include soft-ignored files, `allow_large` to permit copies above the normal file/byte limits.
-
-Directory and glob expansion obey ignore files by default; an exact file path overrides soft ignores. VCS internals are always excluded. Mutating.</section>
         <section name="tool-commit">**Purpose:** Inspect and stage changes in the agent workspace, then apply only staged file updates to `@source`. This is the sole path for verified changes to reach the read-only source repository.
 
-**Actions:** `status` (staged + unstaged overview), `diff` (unstaged, or staged with `staged=true`), `stage` (stage workspace paths/pathspecs), `stage_patch` (add part of a unified diff to the private staging index), `unstage`, and `apply` (conflict-check against content originally materialized this process, then write back to `@source`).
+**Actions:** `status` (staged + unstaged overview), `diff` (unstaged, or staged with `staged=true`), `stage` (stage workspace paths/pathspecs), `delete` (stage removal of `@source` files, including files never copied into the workspace), `stage_patch` (add part of a unified diff to the private staging index), `unstage`, and `apply` (conflict-check against content originally materialized this process, then write back to `@source`).
 
 The private Git repository lives outside the model-visible working directory; this tool never creates commits or touches the source repository's index. Mutating.</section>
         <section name="tool-bash">**Purpose:** Execute one or more Bash commands inside the local sandbox.

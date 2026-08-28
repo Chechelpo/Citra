@@ -11,8 +11,8 @@ from unittest import mock
 
 from citra.context.config_loader import WorkspaceContextConfig
 from citra.context.turn_workspace import WorkspaceContext
-from citra.sandbox.sandbox import WorkspaceSandbox
-from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
+from citra.sandbox import WorkspaceSandbox
+from citra.sandbox import SandboxedFilesystem
 
 
 class MockCitraFilesystemUseCaseTests(unittest.TestCase):
@@ -80,7 +80,7 @@ class MockCitraFilesystemUseCaseTests(unittest.TestCase):
                 filesystem = SandboxedFilesystem(sandbox)
 
                 with mock.patch(
-                    "citra.utils.sandbox.MASKED_HOST_DIRS",
+                    "citra.sandbox.sandbox.MASKED_HOST_DIRS",
                     (
                         str(host_home),
                         str(host_mnt),
@@ -88,7 +88,7 @@ class MockCitraFilesystemUseCaseTests(unittest.TestCase):
                         str(missing_media),
                     ),
                 ), mock.patch(
-                    "citra.utils.sandbox.shutil.which",
+                    "citra.sandbox.sandbox.shutil.which",
                     return_value=str(fake_bwrap),
                 ), mock.patch.object(
                     WorkspaceSandbox,
@@ -98,7 +98,7 @@ class MockCitraFilesystemUseCaseTests(unittest.TestCase):
                         virtual_environment,
                     ),
                 ), mock.patch(
-                    "citra.utils.sandboxed_filesystem.sys.executable",
+                    "citra.sandbox.sandboxed_filesystem.sys.executable",
                     str(mock_python),
                 ):
                     read_result = filesystem.execute(

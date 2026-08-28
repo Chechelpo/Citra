@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+
+from citra.context.libraries import Libraries
 
 from citra.agent import AgentSession
 from citra.application import CitraApplication
 from citra.context import CitraConfig, ExecutionContext, WorkspaceContext
-from citra.context.libraries import Libraries
 from citra.tools.default_registry import TOOL_REGISTRY
 from citra.tools.session_memory import TodoTool
 from citra.tools.skills.skill_registry import SkillRegistry
@@ -144,7 +145,7 @@ permanent_workspace = "{self.source}"
             workspace.cleanup()
 
     def test_workspace_and_lsp_tools_are_registered(self) -> None:
-        for tool_id in ("materialize", "commit", "lsp", "checkpoint"):
+        for tool_id in ("commit", "lsp", "checkpoint"):
             self.assertTrue(TOOL_REGISTRY.contains(tool_id))
 
 
