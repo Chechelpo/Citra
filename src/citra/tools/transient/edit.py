@@ -442,7 +442,7 @@ class Edit(Tool):
         )
 
         result: str = self.context.filesystem.execute(
-            EditInput.parse(arguments)
+            EditInput.parse(filesystem_arguments)
         ).to_budgeted(model_id=self.context.model_config().id, token_count=4_000)
 
         if result != "ok":

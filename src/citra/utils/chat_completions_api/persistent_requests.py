@@ -20,7 +20,7 @@ from ...tools.session_memory import MemoryTool
 from ...tools.tool import Tool
 from ..api import chat_completions_url
 from ..prompt import build_system_prompt
-from .model_normalization import normalize_kimi_tool_calls
+from .model_normalization import normalize_model_response
 
 if TYPE_CHECKING:
     from ...context import ModelConfig
@@ -1777,6 +1777,7 @@ def call_api(
                 decoded = normalize_model_response(
                     decoded,
                     tools=tools,
+                    model_id=model.id
                 )
 
                 _log_finish_reasons(decoded)
@@ -2177,140 +2178,4 @@ def normalize_message_content(
 
     return normalized
 
-import json
-import re
-from typing import Any
 
-
-_KIMI_TOOL_CALL_RE = re.compile(
-    r"functions\.([A-Za-z_][A-Za-z0-9_.-]*):(\d+)"
-)
-
-
-def normalize_model_response(
-    response: dict[str, Any],
-    *,
-    tools: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Detect leaked Kimi native tool calls in assistant content and convert
-    them into OpenAI-compatible tool_calls.
-
-    Normal responses are returned unchanged.
-    """
-    choices = response.get("choices")
-
-    if not isinstance(choices, list):
-        return response
-
-    decoder = json.JSONDecoder()
-
-    for choice in choices:
-        if not isinstance(choice, dict):
-            continue
-
-        message = choice.get("message")
-
-        if not isinstance(message, dict):
-            continue
-
-        # Provider already returned proper structured tool calls.
-        if message.get("tool_calls"):
-            continue
-
-        content = message.get("content")
-
-        if not isinstance(content, str):
-            continue
-
-        first_match = _KIMI_TOOL_CALL_RE.search(content)
-
-        # Not Kimi native tool-call output.
-        if first_match is None:
-            continue
-
-        tool_calls: list[dict[str, Any]] = []
-        position = first_match.start()
-        leading_content = content[:position].rstrip()
-
-        while position < len(content):
-            # Allow whitespace between calls.
-            while (
-                position < len(content)
-                and content[position].isspace()
-            ):
-                position += 1
-
-            match = _KIMI_TOOL_CALL_RE.match(
-                content,
-                position,
-            )
-
-            if match is None:
-                break
-
-            function_name = match.group(1)
-            call_index = match.group(2)
-
-            # Don't reinterpret arbitrary text as an executable tool.
-            if function_name not in tools:
-                break
-
-            position = match.end()
-
-            while (
-                position < len(content)
-                and content[position].isspace()
-            ):
-                position += 1
-
-            try:
-                arguments, end = decoder.raw_decode(
-                    content,
-                    position,
-                )
-            except json.JSONDecodeError:
-                break
-
-            if not isinstance(arguments, dict):
-                break
-
-            tool_calls.append(
-                {
-                    "id": (
-                        f"functions."
-                        f"{function_name}:"
-                        f"{call_index}"
-                    ),
-                    "type": "function",
-                    "function": {
-                        "name": function_name,
-                        "arguments": json.dumps(
-                            arguments,
-                            separators=(",", ":"),
-                            ensure_ascii=False,
-                        ),
-                    },
-                }
-            )
-
-            position = end
-
-        if not tool_calls:
-            continue
-
-        # If garbage/non-tool text follows, don't partially reinterpret
-        # the response.
-        if content[position:].strip():
-            continue
-
-        message["content"] = leading_content or ""
-        message["tool_calls"] = tool_calls
-
-        if choice.get("finish_reason") in {
-            None,
-            "stop",
-        }:
-            choice["finish_reason"] = "tool_calls"
-
-    return response

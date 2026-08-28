@@ -153,7 +153,7 @@ class Read(Tool):
     ) -> str:
         result: str = self.context.filesystem.execute(
             ReadInput.parse(arguments)
-        ).to_budgeted(model_id=self.context.model_config().id, token_count=2_000)
+        ).to_budgeted(model_id=self.context.model_config().id, token_count=4_000)
 
         diagnostic_results = self._run_diagnostics(
             arguments

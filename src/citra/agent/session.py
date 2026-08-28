@@ -31,17 +31,13 @@ from openai.types.chat import (
 
 from .steering import SteeringInbox
 from .conversation_memory import ConversationMemory
-
+from citra.agent.model_context_policies.model_context_policy import apply_history_policy
+from citra.agent.chat_message import ChatMessage
 
 __all__ = [
     "AgentSession",
-    "ChatMessage",
     "MessageGroup",
 ]
-
-
-ChatMessage = ChatCompletionMessageParam
-
 
 @dataclass(frozen=True)
 class CachedToolResult:
@@ -199,11 +195,6 @@ class AgentSession:
         model_id: str,
         length: int,
     ) -> list[ChatMessage]:
-        """
-        Return the most recent messages fitting within ``length`` tokens.
-
-        Protocol-safe message groups are never split.
-        """
         if length < 0:
             raise ValueError(
                 "'length' must be zero or greater."
@@ -211,16 +202,34 @@ class AgentSession:
 
         if length == 0:
             self._turn_cache_context_complete = (
-                len(self.message_groups) <= self._turn_start_group_index
+                len(self.message_groups)
+                <= self._turn_start_group_index
             )
             return []
 
-        selected: list[MessageGroup] = []
+        selected: list[list[ChatMessage]] = []
         used_tokens = 0
 
-        for group in reversed(self.message_groups):
+        for absolute_index in range(
+            len(self.message_groups) - 1,
+            -1,
+            -1,
+        ):
+            group = self.message_groups[
+                absolute_index
+            ]
+
+            projected = apply_history_policy(
+                list(group.messages),
+                model_id=model_id,
+                current_turn=(
+                    absolute_index
+                    >= self._turn_start_group_index
+                ),
+            )
+
             group_text = json.dumps(
-                group.messages,
+                projected,
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
@@ -233,22 +242,25 @@ class AgentSession:
             if used_tokens + tokens > length:
                 break
 
-            selected.append(group)
+            selected.append(projected)
             used_tokens += tokens
 
         selected.reverse()
 
         earliest_selected_index = (
-            len(self.message_groups) - len(selected)
+            len(self.message_groups)
+            - len(selected)
         )
+
         self._turn_cache_context_complete = (
-            earliest_selected_index <= self._turn_start_group_index
+            earliest_selected_index
+            <= self._turn_start_group_index
         )
 
         return [
             message
             for group in selected
-            for message in group.messages
+            for message in group
         ]
 
     def add_user_message(

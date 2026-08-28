@@ -122,7 +122,7 @@ class Tool(ABC):
     # Tool-result cache policy.
     CACHEABLE : ClassVar[bool] = False
     INVALIDATES_TOOL_CACHE: ClassVar[bool] = True
-    MAX_OUTPUT_TOKENS: ClassVar[int | None] = 4_000
+    MAX_OUTPUT_TOKENS: ClassVar[int | None] = 16_000
 
     def __init__(
         self,
