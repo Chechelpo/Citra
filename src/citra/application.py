@@ -60,6 +60,7 @@ class CitraApplication:
             self.skills = SkillRegistry(
                 agent_session=self.session,
                 memory_enabled=config.memory.enabled,
+                mode=self.mode,
                 skills_root=(
                     Path(
                         os.environ.get(

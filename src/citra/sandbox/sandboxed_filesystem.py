@@ -38,7 +38,7 @@ class SandboxedFilesystem:
             ensure_ascii=False,
         )
         result = self._sandbox.run(
-            [sys.executable, "-m", "citra.workers.filesystem"],
+            [sys.executable, "-m", "citra.sandbox.filesystem"],
             timeout=timeout,
             network=False,
             input_text=payload,

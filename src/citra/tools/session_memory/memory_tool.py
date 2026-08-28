@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import Any, Generic, TypeVar
 from weakref import WeakKeyDictionary
 
-from citra.agent import AgentSession
-from citra.context import ExecutionContext
 
 from ..session_tool import SessionTool
+
+if TYPE_CHECKING:
+    from citra.context import ExecutionContext
+    from citra.agent import AgentSession
+    from ..tool import ToolDefinition
 
 
 TExtract = TypeVar("TExtract")

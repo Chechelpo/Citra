@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from dataclasses import dataclass, replace
 from typing import Any, override
 
-from citra.agent import AgentSession
-from citra.context import ExecutionContext
+
 from citra.utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -15,6 +16,10 @@ from citra.utils.json_schema import (
 from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
+
+if TYPE_CHECKING:
+    from citra.agent import AgentSession
+    from citra.context import ExecutionContext
 
 @dataclass(frozen=True)
 class TodoExtract:

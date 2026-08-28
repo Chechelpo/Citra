@@ -38,9 +38,18 @@ class GlobInput(FilesystemInput[GlobOutput]):
 
     @classmethod
     def parse(cls, arguments: dict[str, Any]) -> "GlobInput":
+        pat = arguments.get("pat", arguments.get("pattern"))
+
+        if not isinstance(pat, str):
+            raise ValueError("'pat' or 'pattern' must be a string.")
+
         return cls(
-            pat=require_string(arguments, "pat"),
-            path=optional_string(arguments, "path", "."),
+            pat=pat,
+            path=optional_string(
+                arguments,
+                "path",
+                optional_string(arguments, "dir_path", "."),
+            ),
         )
 
     def to_arguments(self) -> dict[str, Any]:

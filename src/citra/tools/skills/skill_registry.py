@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-from citra.tools.skills.citra_documents import CitraDocsSkill
-
-from citra.tools.skills.translator import Translator
-from citra.tools.skills.web_app_debugging import WebAppDebugging
-from citra.tools.skills.coding_conventions import CodingConventions
 from collections.abc import Iterable
 
 import os
@@ -18,6 +13,7 @@ from citra.tools.skills.task_recognition import TaskRecognition
 from .skill import Skill
 
 if TYPE_CHECKING:
+    from citra.modes import Mode
     from citra.context import ExecutionContext
     from citra.agent import AgentSession
 
@@ -28,6 +24,7 @@ class SkillRegistry:
     def __init__(
         self,
         agent_session: AgentSession,
+        mode: Mode,
         skills_root: Path | None,
         *,
         memory_enabled: bool = True,
@@ -40,15 +37,10 @@ class SkillRegistry:
         
         self.agent_session = agent_session
         self.skills_root = skills_root
-        self.skills: dict[str, Skill] = dict()
+        self.skills: dict[str, Skill] = {}
+        self.mode = mode
         
-        built_in_skills: tuple[Skill, ...] = (
-            SandboxEnvironment(),
-            CodingConventions(),
-            WebAppDebugging(),
-            Translator(),
-            CitraDocsSkill(),
-        )
+        built_in_skills: tuple[Skill, ...] = (mode.skills)
         if memory_enabled:
             built_in_skills = (TaskRecognition(), *built_in_skills)
         self._register(built_in_skills)
@@ -57,24 +49,11 @@ class SkillRegistry:
         
     def _load(self) -> None:
         """
-        Discover valid skill directories and populate the registry.
+        Load the declarative filesystem skills enabled for this mode.
         """
         if not self.skills_root.is_dir():
             return
 
-        for directory in sorted(self.skills_root.iterdir()):
-            if not directory.is_dir():
-                continue
-
-            config_path = directory / "skill.toml"
-            markdown_path = directory / "SKILL.md"
-
-            if not config_path.is_file() or not markdown_path.is_file():
-                continue
-
-            skill = self._load_skill(directory, config_path)
-
-            self._register(skill)
     
 
     def _register(self, skill: Skill | Iterable[Skill]) -> None:

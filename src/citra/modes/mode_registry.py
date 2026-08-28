@@ -5,10 +5,11 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from .mode import Mode
+from citra.modes.greenfield import LongTaskHorizon
 
 
 MODE_CONFIG_FILE = "mode.toml"
-BUILTIN_DEFAULT_MODE = "greenfield"
+BUILTIN_DEFAULT_MODE = LongTaskHorizon._NAME
 
 
 class ModeRegistry:
@@ -23,11 +24,12 @@ class ModeRegistry:
     ) -> None:
         if modes is None:
             from citra.modes.debugger import DebuggerMode
-            from citra.modes.greenfield import GreenfieldMode
-
+            from citra.modes.greenfield import LongTaskHorizon
+            from citra.modes.simple_task import SimpleTask
             modes = (
                 DebuggerMode(),
-                GreenfieldMode(),
+                LongTaskHorizon(),
+                SimpleTask()
             )
         installed = tuple(modes)
         self._modes: dict[str, Mode] = {}

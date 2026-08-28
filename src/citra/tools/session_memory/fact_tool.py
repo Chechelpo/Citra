@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, override
+from typing import TYPE_CHECKING
 
-from citra.agent import AgentSession
-from citra.context import ExecutionContext
 from citra.utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -15,6 +14,10 @@ from citra.utils.json_schema import (
 from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
+if TYPE_CHECKING:
+    from citra.context import ExecutionContext
+    from citra.agent import AgentSession
+    from ..tool import ToolDefinition
 
 @dataclass(frozen=True)
 class Citation:

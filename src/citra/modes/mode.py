@@ -109,6 +109,9 @@ class Mode(ABC):
     def tool_set(self) -> ToolSet:
         ...
 
+    @property
+    def skills(self) -> tuple[Skill, ...]:
+        ...
     # -------------------------------------------------------------------------
     # Execution configuration
     # -------------------------------------------------------------------------
@@ -323,7 +326,7 @@ class StaticMode(Mode):
     _TOOLS: ClassVar[ToolSet]
 
     _AVAILABLE_SKILLS: ClassVar[
-        tuple[type[Skill], ...]
+        tuple[Skill, ...]
     ] = ()
 
     _SANDBOX_CONFIG: ClassVar[
@@ -356,6 +359,11 @@ class StaticMode(Mode):
 
     @property
     @final
+    def skills(self) -> tuple[Skill, ...]:
+        return self._AVAILABLE_SKILLS
+
+    @property
+    @final
     def sandbox_config(self) -> SandboxConfig:
         return self._SANDBOX_CONFIG
 
@@ -385,7 +393,7 @@ class UserMode(Mode):
         description: str | None = None,
         core_tools: tuple[type[Tool], ...] = (),
         allowed_tools: tuple[type[Tool], ...] = (),
-        available_skills: tuple[type[Skill], ...] = (),
+        available_skills: tuple[Skill, ...] = (),
         sandbox_config: SandboxConfig | None = None,
         task_steering: TaskSteeringConfig | None = None,
         initial_working_states: tuple[str, ...] = (),
@@ -422,25 +430,13 @@ class UserMode(Mode):
         return self._description
 
     @property
-    def core_tools(
-        self,
-    ) -> tuple[type[Tool], ...]:
-        return self._core_tools
-
-    @property
-    def allowed_tools(
-        self,
-    ) -> tuple[type[Tool], ...]:
-        return self._allowed_tools
-
-    @property
     def tool_set(self) -> ToolSet:
         return self._tool_set
 
     @property
-    def available_skills(
+    def skills(
         self,
-    ) -> tuple[type[Skill], ...]:
+    ) -> tuple[Skill, ...]:
         return self._available_skills
 
     @property

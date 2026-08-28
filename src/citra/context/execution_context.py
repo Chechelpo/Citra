@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from citra.modes import Mode
     from citra.utils.lsp import LspManager
 
-
 DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
 
 
