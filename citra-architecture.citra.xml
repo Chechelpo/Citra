@@ -38,6 +38,7 @@
                 <entry name="memory-constraint" />
                 <entry name="memory-checkpoint" />
             </entry>
+            <entry name="tool-subagent" />
         </entry>
         <entry name="context-layer" />
         <entry name="lsp-subsystem" />
@@ -258,7 +259,8 @@ Per-tool usage reference: see the subsections below. Memory tools are detailed u
 Useful capabilities:
 
 - `os`, `config`, `sandbox`, `filesystem`, `subprocesses`, `browser`, `repo_map` properties (`execution_context.py:124`).
-- `close()` shuts down LSP, browser, and subprocesses in order (`execution_context.py:160`).
+- `subagents` exposes the orchestrator-side `SubagentSupervisor` (see [tool-subagent](tool-subagent)). It is closed as part of `ExecutionContext.close()`.
+- `close()` shuts down subagents, LSP, browser, and subprocesses in order (`execution_context.py:160`).
 - `truncate_output()` caps model-facing text using the *active model's tokenizer*, cutting at a newline boundary and appending an explicit truncation notice (default limit 2 000 tokens, `execution_context.py:20`, method at `execution_context.py:188`).
 
 ## WorkspaceContext
@@ -616,5 +618,17 @@ Constraints are reintroduced into model context on subsequent iterations so the 
 **Actions:** `set` (`content` required, `next_step` optional), `clear`. Setting again replaces the previous checkpoint; there is at most one at any time.
 
 Use it when unfinished work may continue after context loss or a later turn.</section>
+        <section name="tool-subagent">**Purpose:** Delegate a well-defined component of the current task to an isolated worker subagent, observe its progress, steer it, and wait for it to finish. Subagents are the orchestrator's escape hatch for parallel, narrowly-scoped work that does not need the full orchestrator tool set.
+
+**Key arguments:** `action` (`create`, `poll`, `steer`, `sleep`); `task`; `write_path`; `readonly_binds`; `subagent_id` / `subagent_ids`; `message` (for `steer`); `answer` (for `poll`, to reply to a pending guidance request); `timeout_seconds` (for `sleep`, maximum 60).
+
+**Subagent environment:** A subagent gets a fresh, nested `WorkspaceContext` rooted under the orchestrator's runtime at `&lt;runtime&gt;/subagents/&lt;id&gt;/`. The subagent's mode (`SubagentMode`, `src/citra/tools/subagent/mode.py`) exposes only `read`, `write`, `edit`, `bash` and a dedicated `request_guidance` tool. The Bubblewrap sandbox adds the orchestrator's runtime binds plus the orchestrator's declared `readonly_binds` (read-only) and the subagent's `write_path` (writable) on top of the baseline writable set; `WorkspaceSandbox` keeps the rest of the host hidden. Network access is denied by default.
+
+**Communication:** Subagents and the orchestrator communicate through a single channel: a per-subagent JSONL transcript mirrored in memory and persisted at `&lt;runtime&gt;/subagents/&lt;id&gt;/transcript.jsonl`. The subagent's `request_guidance` tool appends a `guidance-request` entry and blocks on a `threading.Event`; the orchestrator's `subagent` tool with `action=poll` and `action=steer` answers the request and writes a `guidance-response` entry. The `subagent` tool also accepts a free-form `answer` argument on `poll` to reply without a separate `steer` call.
+
+**Lifecycle:** `SubagentSupervisor` (`src/citra/tools/subagent/supervisor.py`) is owned by the orchestrator's `ExecutionContext.subagents` field. It spawns one daemon thread per subagent, drives `AgentRunner.run_turn` against a nested `ExecutionContext`, sets a per-subagent completion `Event`, and cleans the runtime root on `close()`. The supervisor is closed as part of `ExecutionContext.close()`, which is called from `CitraApplication.close()`.
+
+**Enabled per turn via `enable_tools`**; declared as a deferred tool in `default_registry.py` so its schema does not pollute the prompt until the orchestrator needs it. The tool does not expose network, document/diagram, git, LSP, prompt-user, or memory tools to the subagent. Cross-subagent communication is intentionally unsupported; only the orchestrator can address subagents.
+</section>
     </sections>
 </citra-doc>

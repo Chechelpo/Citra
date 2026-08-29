@@ -41,11 +41,18 @@ Configuration uses frozen dataclasses, including:
 - **`ModelConfig` / `ModelConfigStore`** — named model profiles containing
   provider identity, limits, reasoning, credentials, and retry policy. The
   canonical model file is `.citra/config/models.toml`; its TOML layout is
-  `[models]` with one persisted `active` profile and any number of
-  `[models.<name>]` tables. `CitraConfig.model()` resolves the active profile,
-  while `CitraConfig.model(name)` resolves an explicit profile. Legacy single
-  `[model]` files remain readable when `CITRA_CONFIG_PATH` explicitly points at
-  an old monolithic config.
+  `[models]` with separate `orchestrator` and `subagent` selectors and any
+  number of `[models.<name>]` tables. The legacy `active` key remains
+  accepted as an alias for the orchestrator selector to keep older files
+  working. When `subagent` is omitted, subagents reuse the orchestrator
+  profile; set it to a different profile name to give subagents their own
+  model. `CitraConfig.model()` resolves the orchestrator profile for the
+  process owner and any context that has not been pinned, while
+  `CitraConfig.with_default_model_profile(name)` produces a copy of the
+  config that resolves to a different default — the subagent factory uses
+  this to honor `models.subagent`. Legacy single `[model]` files remain
+  readable when `CITRA_CONFIG_PATH` explicitly points at an old monolithic
+  config.
 - **`RetryConfig`** — attempts, request timeout, and backoff bounds.
 - **`WebSearchConfig`** — `host_url`.
 - **`WorkspaceContextConfig`** — source and temporary-root selection. Its

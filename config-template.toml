@@ -1,5 +1,41 @@
 # ./config-template.toml
 
+# ---------------------------------------------------------------------------
+# Modern model configuration. Replace the [model] table below with the
+# multi-profile [models] table to give the orchestrator and subagents
+# independent profiles. When the file is split into .citra/config/, this
+# section lives in models.toml.
+#
+# [models]
+#     # The orchestrator (interactive chat) profile. "active" is accepted as
+#     # a legacy alias.
+#     orchestrator = "primary"
+#     # Optional: dedicated profile for subagents. Omit to inherit the
+#     # orchestrator profile.
+#     subagent = "worker"
+#
+#     [models.primary]
+#         host = "https://nanogpt.com/v1"
+#         api_key = "key"
+#         id = "zai-org/glm-5.2:thinking"
+#         max_input_tokens = 8192
+#         max_output_tokens = 8192
+#         reasoning_effort = "max"
+#
+#         [models.primary.retry]
+#             max_attempts = 12
+#             request_timeout = 120.0
+#             initial_backoff = 1.0
+#             max_backoff = 30.0
+#
+#     [models.worker]
+#         host = "https://nanogpt.com/v1"
+#         api_key = "key"
+#         id = "zai-org/glm-5.2"
+#         max_input_tokens = 8192
+#         max_output_tokens = 8192
+# ---------------------------------------------------------------------------
+
 [model]
     host = "https://nanogpt.com/v1"
     api_key = "key"

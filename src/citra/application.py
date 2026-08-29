@@ -15,6 +15,7 @@ from .context import CitraConfig, ExecutionContext, WorkspaceContext
 from .modes import Mode, ModeRegistry
 from  citra.utils.lsp import LspConfig, LspManager
 from .tools.skills.skill_registry import SkillRegistry
+from .tools.subagent import SubagentSupervisor
 from .utils.chat_completions_api import call_api
 from  citra.sandbox import WorkspaceSandbox
 from .utils.terminal import RESET, YELLOW
@@ -89,11 +90,17 @@ class CitraApplication:
                     json_fallback=config.lsp.json_fallback,
                 ),
             )
+            self.subagent_supervisor = SubagentSupervisor(
+                parent_workspace=self.workspace,
+                parent_root=self.workspace.root,
+                api_call=api_call,
+            )
             self.context = ExecutionContext(
                 self.workspace,
                 skills=self.skills,
                 lsp_manager=self.lsp_manager,
                 user_interactions=self.interactions,
+                subagents=self.subagent_supervisor,
                 provided_config=config,
                 provided_mode=self.mode,
                 provided_sandbox=sandbox,

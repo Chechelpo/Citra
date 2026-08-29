@@ -127,7 +127,10 @@ class ModelConfigStore:
             )
         return normalized
 
-    def _layout(self, document) -> tuple[str, str, tuple[str, ...]]:
+    def _layout(
+        self,
+        document,
+    ) -> tuple[str, str, str, tuple[str, ...]]:
         models = document.get("models")
         legacy = document.get("model")
 
@@ -140,16 +143,9 @@ class ModelConfigStore:
             if not self._is_table(models):
                 raise RuntimeError("[models] must be a TOML table.")
 
-            active_raw = models.get("active")
-            if not isinstance(active_raw, str) or not active_raw.strip():
-                raise RuntimeError(
-                    "Missing required model selector: 'models.active'."
-                )
-            active = self._validate_profile_name(active_raw)
-
             names: list[str] = []
             for key, value in models.items():
-                if key == "active":
+                if key in {"active", "orchestrator", "subagent"}:
                     continue
                 raw_name = str(key)
                 profile_name = self._validate_profile_name(raw_name)
@@ -168,28 +164,102 @@ class ModelConfigStore:
                 raise RuntimeError(
                     "[models] must contain at least one model profile."
                 )
-            if active not in names:
-                raise RuntimeError(
-                    f"Active model profile '{active}' does not exist."
-                )
-            return "models", active, tuple(names)
+
+            orchestrator, subagent = self._resolve_role_selectors(
+                models, tuple(names)
+            )
+            return "models", orchestrator, subagent, tuple(names)
 
         if legacy is not None:
             if not self._is_table(legacy):
                 raise RuntimeError("[model] must be a TOML table.")
-            return "model", _LEGACY_PROFILE_NAME, (_LEGACY_PROFILE_NAME,)
+            return (
+                "model",
+                _LEGACY_PROFILE_NAME,
+                _LEGACY_PROFILE_NAME,
+                (_LEGACY_PROFILE_NAME,),
+            )
 
         raise RuntimeError(
             "Missing model configuration. Expected [models] or legacy [model]."
         )
+
+    @staticmethod
+    def _resolve_role_selectors(
+        models: Any,
+        names: tuple[str, ...],
+    ) -> tuple[str, str]:
+        """Resolve the orchestrator and subagent profile names.
+
+        ``orchestrator`` is the modern selector. ``active`` remains a
+        deprecated alias that is still accepted for backwards
+        compatibility. ``subagent`` defaults to the orchestrator profile
+        when omitted, which preserves the historical single-model
+        behavior.
+        """
+        active_raw = models.get("active")
+        orchestrator_raw = models.get("orchestrator", active_raw)
+        if orchestrator_raw is None:
+            raise RuntimeError(
+                "Missing required model selector: 'models.orchestrator' "
+                "(or legacy 'models.active')."
+            )
+        if not isinstance(orchestrator_raw, str) or not orchestrator_raw.strip():
+            raise RuntimeError(
+                "Missing required model selector: 'models.orchestrator' "
+                "(or legacy 'models.active')."
+            )
+        if orchestrator_raw is active_raw:
+            orchestrator = ModelConfigStore._validate_profile_name(
+                orchestrator_raw
+            )
+        else:
+            orchestrator = ModelConfigStore._validate_profile_name(
+                orchestrator_raw
+            )
+
+        subagent_raw = models.get("subagent")
+        if subagent_raw is None:
+            subagent = orchestrator
+        else:
+            if not isinstance(subagent_raw, str) or not subagent_raw.strip():
+                raise RuntimeError(
+                    "Missing required model selector: 'models.subagent'."
+                )
+            subagent = ModelConfigStore._validate_profile_name(subagent_raw)
+
+        if orchestrator not in names:
+            raise RuntimeError(
+                f"Orchestrator model profile '{orchestrator}' does not exist."
+            )
+        if subagent not in names:
+            raise RuntimeError(
+                f"Subagent model profile '{subagent}' does not exist."
+            )
+
+        if (
+            active_raw is not None
+            and orchestrator_raw is not active_raw
+            and str(active_raw).strip() != orchestrator
+        ):
+            raise RuntimeError(
+                "Citra config cannot declare both 'models.active' and "
+                "'models.orchestrator'."
+            )
+
+        return orchestrator, subagent
 
     def _profile_table(
         self,
         document,
         name: str | None = None,
     ) -> tuple[str, Any]:
-        layout, active, names = self._layout(document)
-        selected = active if name is None else self._validate_profile_name(name)
+        layout, orchestrator, _, names = self._layout(document)
+        selected = (
+            orchestrator
+            if name is None
+            else self._validate_profile_name(name)
+        )
 
         if selected not in names:
             raise KeyError(f"Unknown model profile: {selected}")
@@ -199,7 +269,7 @@ class ModelConfigStore:
         return selected, document["models"][selected]
 
     def _migrate_legacy(self, document):
-        layout, _, _ = self._layout(document)
+        layout, _, _, _ = self._layout(document)
         if layout == "models":
             return document["models"]
 
@@ -246,13 +316,32 @@ class ModelConfigStore:
         )
 
     def active_name(self) -> str:
-        """Return the persisted active profile name."""
-        _, active, _ = self._layout(self._load())
-        return active
+        """Return the persisted orchestrator profile name.
+
+        The orchestrator name is the modern selector; the legacy
+        ``active`` key is normalized to the orchestrator name on load.
+        """
+        _, orchestrator, _, _ = self._layout(self._load())
+        return orchestrator
+
+    def orchestrator_name(self) -> str:
+        """Return the orchestrator profile name."""
+        _, orchestrator, _, _ = self._layout(self._load())
+        return orchestrator
+
+    def subagent_name(self) -> str:
+        """Return the subagent profile name.
+
+        When ``models.subagent`` is omitted, the subagent profile is
+        the orchestrator profile. Operators can therefore opt into a
+        dedicated subagent model only when they want one.
+        """
+        _, _, subagent, _ = self._layout(self._load())
+        return subagent
 
     def names(self) -> tuple[str, ...]:
         """Return model profile names in configuration order."""
-        _, _, names = self._layout(self._load())
+        _, _, _, names = self._layout(self._load())
         return names
 
     def get(self, name: str | None = None) -> ModelConfig:
@@ -368,17 +457,55 @@ class ModelConfigStore:
             )
 
     def set_active(self, name: str) -> None:
+        """Set the orchestrator profile.
+
+        This is the legacy API; prefer :meth:`set_orchestrator` for new
+        callers. The persisted key remains ``orchestrator`` while the
+        deprecated ``active`` alias is also updated to keep existing
+        tools that read the legacy selector working.
+        """
         selected = self._validate_profile_name(name)
         document = self._load()
-        layout, active, names = self._layout(document)
+        layout, orchestrator, _, names = self._layout(document)
         if selected not in names:
             raise KeyError(f"Unknown model profile: {selected}")
-        if selected == active:
+        if selected == orchestrator:
             return
         if layout == "model":
             # A legacy file has only the implicit default profile.
             return
-        document["models"]["active"] = selected
+        models = document["models"]
+        models["orchestrator"] = selected
+        if "active" in models:
+            models["active"] = selected
+        self._save(document)
+
+    def set_orchestrator(self, name: str) -> None:
+        """Persist a new orchestrator profile."""
+        self.set_active(name)
+
+    def set_subagent(self, name: str) -> None:
+        """Persist a new subagent profile.
+
+        Passing the orchestrator profile name clears the dedicated
+        ``subagent`` selector so the configuration reflects that
+        subagents reuse the orchestrator's profile.
+        """
+        selected = self._validate_profile_name(name)
+        document = self._load()
+        layout, orchestrator, _, names = self._layout(document)
+        if layout == "model":
+            raise ValueError(
+                "Cannot set a dedicated subagent profile on a legacy "
+                "[model] config; migrate to [models] first."
+            )
+        if selected not in names:
+            raise KeyError(f"Unknown model profile: {selected}")
+        models = document["models"]
+        if selected == orchestrator:
+            models.pop("subagent", None)
+        else:
+            models["subagent"] = selected
         self._save(document)
 
     def add(
@@ -389,17 +516,18 @@ class ModelConfigStore:
     ) -> None:
         """Add a valid profile by cloning an existing profile.
 
-        When ``copy_from`` is omitted, the currently active profile is cloned.
-        This avoids persisting an unusable half-configured profile.
+        When ``copy_from`` is omitted, the orchestrator profile is
+        cloned. This avoids persisting an unusable half-configured
+        profile.
         """
         selected = self._validate_profile_name(name)
         document = self._load()
-        _, active, names = self._layout(document)
+        _, orchestrator, _, names = self._layout(document)
         if selected in names:
             raise ValueError(f"Model profile already exists: {selected}")
 
         source_name = (
-            active
+            orchestrator
             if copy_from is None
             else self._validate_profile_name(copy_from)
         )
@@ -417,17 +545,21 @@ class ModelConfigStore:
     def delete(self, name: str) -> None:
         selected = self._validate_profile_name(name)
         document = self._load()
-        layout, active, names = self._layout(document)
+        layout, orchestrator, subagent, names = self._layout(document)
         if selected not in names:
             raise KeyError(f"Unknown model profile: {selected}")
-        if selected == active:
+        if selected == orchestrator or selected == subagent:
             raise ValueError(
-                "Cannot delete the active model profile. Activate another "
-                "profile first."
+                "Cannot delete the active or subagent model profile. "
+                "Activate or assign another profile first."
             )
         if layout == "model":
             raise ValueError("Cannot delete the only model profile.")
         document["models"].pop(selected)
+        # If the subagent selector pointed at the deleted profile, fall
+        # back to the orchestrator profile so the layout remains valid.
+        if "subagent" in document["models"]:
+            del document["models"]["subagent"]
         self._save(document)
 
     def set_api_key(

@@ -33,6 +33,7 @@ class ExecutionContext:
 
     lsp_manager: LspManager | None = None
     user_interactions: object | None = None
+    subagents: object | None = None
     provided_config: CitraConfig | None = field(
         default=None,
         repr=False,
@@ -225,6 +226,15 @@ class ExecutionContext:
                 close_lsp(force=force)
             except TypeError:
                 close_lsp()
+        subagents = self.subagents
+        close_subagents = getattr(subagents, "close", None)
+        if callable(close_subagents):
+            try:
+                close_subagents()
+            except Exception:
+                self.logger.exception(
+                    "Failed to close subagent supervisor."
+                )
         self.__browser.close(force=force)
         self.__subprocesses.close(force=force)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .config import *
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import tomllib
@@ -439,6 +439,12 @@ class CitraConfig:
     lint: LintContextConfig = LintContextConfig()
     sandbox: SandboxContextConfig = SandboxContextConfig()
     runtime: RuntimeConfig = RuntimeConfig()
+
+    # Profile name that ``model()`` resolves to when no name is given.
+    # ``None`` keeps the canonical orchestrator profile; a subagent
+    # factory overrides this to point at the configured subagent
+    # profile without mutating the shared ``ModelConfigStore``.
+    default_model_profile: str | None = None
 
     @classmethod
     def _config_path(cls) -> Path:
@@ -1236,7 +1242,27 @@ class CitraConfig:
         )
   
     def model(self, name: str | None = None) -> ModelConfig:
+        if name is None:
+            name = self.default_model_profile
         return self.model_config_store.get(name)
+
+    def with_default_model_profile(self, name: str | None) -> CitraConfig:
+        """Return a copy of this config pinned to a different default profile.
+
+        The pinned name overrides the orchestrator selector for any
+        caller that asks for the implicit model (e.g. the AgentRunner
+        and the chat completions API). The underlying
+        ``ModelConfigStore`` is shared, so all profile mutations remain
+        visible to the new copy.
+        """
+        if name is None:
+            replacement = None
+        else:
+            validated = self.model_config_store._validate_profile_name(name)
+            if validated not in self.model_config_store.names():
+                raise KeyError(f"Unknown model profile: {validated}")
+            replacement = validated
+        return replace(self, default_model_profile=replacement)
 
     def models(self) -> tuple[str, ...]:
         return self.model_config_store.names()

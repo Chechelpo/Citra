@@ -12,6 +12,7 @@ from .session_memory import (
     TodoTool,
     WorkingStateTool,
 )
+from .subagent import SubagentTool
 from .tool import Tool
 from .transient import (
     Bash,
@@ -152,6 +153,7 @@ _DEFERRED_TOOL_TYPES: tuple[type[Tool], ...] = (
     Document,
     Diagram,
     ReadImage,
+    SubagentTool,
 )
 
 

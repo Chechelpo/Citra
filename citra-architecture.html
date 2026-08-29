@@ -100,6 +100,39 @@
             padding-left: 12px;
             border-left: 1px solid var(--border);
         }
+        .index-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .index-row-single { gap: 0; }
+        .index-toggle {
+            flex: none;
+            width: 18px;
+            height: 18px;
+            margin-left: -24px;
+            padding: 0;
+            border: 0;
+            border-radius: 4px;
+            background: none;
+            color: var(--muted);
+            font-size: 0.95rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+        .index-toggle:hover {
+            color: var(--accent);
+        }
+        /* Index toggles fold only the sidebar tree; section bodies in main
+           are never hidden by them. */
+        .document-index li.nav-branch-collapsed > ul {
+            display: none;
+        }
+        /* While searching, matches must remain reachable even inside a
+           folded branch. */
+        .document-index.index-searching li.nav-branch-collapsed > ul {
+            display: block;
+        }
         .document-index a {
             display: block;
             padding: 5px 7px;
@@ -286,7 +319,7 @@
             </label>
             <div class="search-status" id="search-status" hidden></div>
             <div class="contents-title">Contents</div>
-            <ul class="document-index"><li data-depth="0"><a href="#section-overview-bd445c462b">overview</a></li><li data-depth="0"><a href="#section-getting-started-0a895d7866">getting-started</a></li><li data-depth="0"><a href="#section-process-lifecycle-a2a567d59e">process-lifecycle</a></li><li data-depth="0"><a href="#section-agent-loop-27223aa478">agent-loop</a></li><li data-depth="0"><a href="#section-session-state-edb4517fc7">session-state</a></li><li data-depth="0"><a href="#section-conversation-memory-a041768813">conversation-memory</a></li><li data-depth="0"><a href="#section-tool-system-eedef13352">tool-system</a><ul><li data-depth="1"><a href="#section-tool-read-ec9f79dc9e">tool-read</a></li><li data-depth="1"><a href="#section-tool-write-3978b72f5d">tool-write</a></li><li data-depth="1"><a href="#section-tool-edit-b9123f7413">tool-edit</a></li><li data-depth="1"><a href="#section-tool-glob-78e72b5cf0">tool-glob</a></li><li data-depth="1"><a href="#section-tool-grep-0aa70468b6">tool-grep</a></li><li data-depth="1"><a href="#section-tool-tree-28c66bbc4e">tool-tree</a></li><li data-depth="1"><a href="#section-tool-git-6d5e68b688">tool-git</a></li><li data-depth="1"><a href="#section-tool-materialize-9a06c4be8c">tool-materialize</a></li><li data-depth="1"><a href="#section-tool-commit-2b9453609c">tool-commit</a></li><li data-depth="1"><a href="#section-tool-bash-4c4ec8dd8c">tool-bash</a></li><li data-depth="1"><a href="#section-tool-prompt-user-3619d7f6e7">tool-prompt-user</a></li><li data-depth="1"><a href="#section-tool-lsp-b21bfd2fd5">tool-lsp</a></li><li data-depth="1"><a href="#section-tool-skill-43ecd6941e">tool-skill</a></li><li data-depth="1"><a href="#section-tool-subprocess-01c4d90921">tool-subprocess</a></li><li data-depth="1"><a href="#section-tool-browser-97f0b9840f">tool-browser</a></li><li data-depth="1"><a href="#section-tool-curl-80b9c782a4">tool-curl</a></li><li data-depth="1"><a href="#section-tool-web-search-6a7677ecdb">tool-web-search</a></li><li data-depth="1"><a href="#section-tool-document-f14cc3002b">tool-document</a></li><li data-depth="1"><a href="#section-tool-diagram-19b2f1c7de">tool-diagram</a></li><li data-depth="1"><a href="#section-tool-enable-tools-d62c89f11c">tool-enable-tools</a></li><li data-depth="1"><a href="#section-memory-tools-e78cdc4e3d">memory-tools</a><ul><li data-depth="2"><a href="#section-memory-working-state-e6e67bebdf">memory-working-state</a></li><li data-depth="2"><a href="#section-memory-todo-eae807faa0">memory-todo</a></li><li data-depth="2"><a href="#section-memory-fact-620b5242aa">memory-fact</a></li><li data-depth="2"><a href="#section-memory-decision-7c75cd58e2">memory-decision</a></li><li data-depth="2"><a href="#section-memory-constraint-fa3ca67dbe">memory-constraint</a></li><li data-depth="2"><a href="#section-memory-checkpoint-ab5790dff4">memory-checkpoint</a></li></ul></li></ul></li><li data-depth="0"><a href="#section-context-layer-dd3f106fd7">context-layer</a></li><li data-depth="0"><a href="#section-lsp-subsystem-ab5d88f4b0">lsp-subsystem</a></li><li data-depth="0"><a href="#section-skills-32c1cf49a2">skills</a></li><li data-depth="0"><a href="#section-sandbox-and-workers-65d389e511">sandbox-and-workers</a></li><li data-depth="0"><a href="#section-slash-commands-5c9e1b5242">slash-commands</a><ul><li data-depth="1"><a href="#section-command-q-65714f7a35">command-q</a></li><li data-depth="1"><a href="#section-command-c-4f2401f52d">command-c</a></li><li data-depth="1"><a href="#section-command-help-ee9d666a3f">command-help</a></li><li data-depth="1"><a href="#section-command-test-5a6bde1cf5">command-test</a></li><li data-depth="1"><a href="#section-command-model-41c9cb5016">command-model</a></li><li data-depth="1"><a href="#section-command-lsp-64f9e583b1">command-lsp</a></li><li data-depth="1"><a href="#section-command-debug-e6fac25eb8">command-debug</a></li></ul></li><li data-depth="0"><a href="#section-supporting-utilities-30d6316128">supporting-utilities</a></li><li data-depth="0"><a href="#section-testing-cf80cd8aed">testing</a></li></ul>
+            <ul class="document-index"><li data-depth="0"><div class="index-row index-row-single"><a href="#section-overview-bd445c462b">overview</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-getting-started-0a895d7866">getting-started</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-process-lifecycle-a2a567d59e">process-lifecycle</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-agent-loop-27223aa478">agent-loop</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-session-state-edb4517fc7">session-state</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-conversation-memory-a041768813">conversation-memory</a></div></li><li data-depth="0"><div class="index-row"><button type="button" class="index-toggle" aria-expanded="true" aria-label="Collapse subsections">&minus;</button><a href="#section-tool-system-eedef13352">tool-system</a></div><ul><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-read-ec9f79dc9e">tool-read</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-write-3978b72f5d">tool-write</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-edit-b9123f7413">tool-edit</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-glob-78e72b5cf0">tool-glob</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-grep-0aa70468b6">tool-grep</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-tree-28c66bbc4e">tool-tree</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-git-6d5e68b688">tool-git</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-commit-2b9453609c">tool-commit</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-bash-4c4ec8dd8c">tool-bash</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-prompt-user-3619d7f6e7">tool-prompt-user</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-lsp-b21bfd2fd5">tool-lsp</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-skill-43ecd6941e">tool-skill</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-subprocess-01c4d90921">tool-subprocess</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-browser-97f0b9840f">tool-browser</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-curl-80b9c782a4">tool-curl</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-web-search-6a7677ecdb">tool-web-search</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-document-f14cc3002b">tool-document</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-diagram-19b2f1c7de">tool-diagram</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-read-image-a4b68e7b36">tool-read-image</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-enable-tools-d62c89f11c">tool-enable-tools</a></div></li><li data-depth="1"><div class="index-row"><button type="button" class="index-toggle" aria-expanded="true" aria-label="Collapse subsections">&minus;</button><a href="#section-memory-tools-e78cdc4e3d">memory-tools</a></div><ul><li data-depth="2"><div class="index-row index-row-single"><a href="#section-memory-working-state-e6e67bebdf">memory-working-state</a></div></li><li data-depth="2"><div class="index-row index-row-single"><a href="#section-memory-todo-eae807faa0">memory-todo</a></div></li><li data-depth="2"><div class="index-row index-row-single"><a href="#section-memory-fact-620b5242aa">memory-fact</a></div></li><li data-depth="2"><div class="index-row index-row-single"><a href="#section-memory-decision-7c75cd58e2">memory-decision</a></div></li><li data-depth="2"><div class="index-row index-row-single"><a href="#section-memory-constraint-fa3ca67dbe">memory-constraint</a></div></li><li data-depth="2"><div class="index-row index-row-single"><a href="#section-memory-checkpoint-ab5790dff4">memory-checkpoint</a></div></li></ul></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-tool-subagent-51537013c8">tool-subagent</a></div></li></ul></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-context-layer-dd3f106fd7">context-layer</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-lsp-subsystem-ab5d88f4b0">lsp-subsystem</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-skills-32c1cf49a2">skills</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-sandbox-and-workers-65d389e511">sandbox-and-workers</a></div></li><li data-depth="0"><div class="index-row"><button type="button" class="index-toggle" aria-expanded="true" aria-label="Collapse subsections">&minus;</button><a href="#section-slash-commands-5c9e1b5242">slash-commands</a></div><ul><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-q-65714f7a35">command-q</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-c-4f2401f52d">command-c</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-help-ee9d666a3f">command-help</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-test-5a6bde1cf5">command-test</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-model-41c9cb5016">command-model</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-lsp-64f9e583b1">command-lsp</a></div></li><li data-depth="1"><div class="index-row index-row-single"><a href="#section-command-debug-e6fac25eb8">command-debug</a></div></li></ul></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-supporting-utilities-30d6316128">supporting-utilities</a></div></li><li data-depth="0"><div class="index-row index-row-single"><a href="#section-testing-cf80cd8aed">testing</a></div></li></ul>
         </aside>
         <main>
             <article class="document-section" id="section-overview-bd445c462b" data-depth="0" data-search-text="overview
@@ -692,15 +725,15 @@ deferred registrations require a summary and stay out of model calls until enabl
 
 ## default registrations
 
-core: `read`, `write`, `edit`, `glob`, `grep`, `git`, `tree`, `materialize`, `commit`, `bash`, `prompt_user`, `lsp`, `skill`, plus the six memory tools (`src/citra/tools/default_registry.py:10`).
+core: `read`, `write`, `edit`, `glob`, `grep`, `git`, `tree`, `commit`, `bash`, `prompt_user`, `lsp`, `skill`, plus the six memory tools (`src/citra/tools/default_registry.py:10`).
 
-deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram` (`default_registry.py:25`). the `enabletools` tool itself is constructed by the runner with the deferred catalog and an `enabled_tool_ids` set scoped to the turn (`src/citra/tools/enable_tools.py:14`).
+deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`, `read_image` (`default_registry.py:25`). the `enabletools` tool itself is constructed by the runner with the deferred catalog and an `enabled_tool_ids` set scoped to the turn (`src/citra/tools/enable_tools.py:14`).
 
 ## notable transient tools
 
 - `bash` runs commands inside the bubblewrap sandbox; network access must be requested per call with a reason and is subject to config approval (`config-template.toml:22`).
 - `git` offers status/diff/log/show/blame plus clone/ls_remote against allowed remotes; it cannot mutate history or index.
-- `materialize` and `commit` are thin wrappers over `workspacechanges.materialize/stage/apply` (`src/citra/tools/transient/materialize.py:13`, `src/citra/tools/transient/commit.py:13`), implementing citra&#x27;s read-only-source → staged → applied workflow.
+- `commit` is a thin wrapper over `workspacechanges.stage/stage_deletions/stage_patch/apply` (`src/citra/tools/transient/commit.py:13`), implementing citra&#x27;s read-only-source → staged → applied workflow.
 - `prompt_user` surfaces open-ended or option-list questions through the foreground interaction broker.
 
 per-tool usage reference: see the subsections below. memory tools are detailed under *memory-tools*.">
@@ -729,13 +762,13 @@ per-tool usage reference: see the subsections below. memory tools are detailed u
 </ol>
 <p>Deferred registrations require a summary and stay out of model calls until enabled (<code>tool_registry.py:57</code>). <code>core_tool_ids</code>, <code>deferred_tool_ids</code>, and <code>deferred_catalog</code> feed the runner's fixed-order schema assembly (<code>tool_registry.py:153</code>).</p>
 <h2>Default registrations</h2>
-<p>Core: <code>read</code>, <code>write</code>, <code>edit</code>, <code>glob</code>, <code>grep</code>, <code>git</code>, <code>tree</code>, <code>materialize</code>, <code>commit</code>, <code>bash</code>, <code>prompt_user</code>, <code>lsp</code>, <code>skill</code>, plus the six memory tools (<code>src/citra/tools/default_registry.py:10</code>).</p>
-<p>Deferred (enabled via <code>enable_tools</code>): <code>subprocess</code>, <code>browser</code>, <code>curl</code>, <code>web_search</code>, <code>document</code>, <code>diagram</code> (<code>default_registry.py:25</code>). The <code>EnableTools</code> tool itself is constructed by the runner with the deferred catalog and an <code>enabled_tool_ids</code> set scoped to the turn (<code>src/citra/tools/enable_tools.py:14</code>).</p>
+<p>Core: <code>read</code>, <code>write</code>, <code>edit</code>, <code>glob</code>, <code>grep</code>, <code>git</code>, <code>tree</code>, <code>commit</code>, <code>bash</code>, <code>prompt_user</code>, <code>lsp</code>, <code>skill</code>, plus the six memory tools (<code>src/citra/tools/default_registry.py:10</code>).</p>
+<p>Deferred (enabled via <code>enable_tools</code>): <code>subprocess</code>, <code>browser</code>, <code>curl</code>, <code>web_search</code>, <code>document</code>, <code>diagram</code>, <code>read_image</code> (<code>default_registry.py:25</code>). The <code>EnableTools</code> tool itself is constructed by the runner with the deferred catalog and an <code>enabled_tool_ids</code> set scoped to the turn (<code>src/citra/tools/enable_tools.py:14</code>).</p>
 <h2>Notable transient tools</h2>
 <ul>
 <li><code>bash</code> runs commands inside the Bubblewrap sandbox; network access must be requested per call with a reason and is subject to config approval (<code>config-template.toml:22</code>).</li>
 <li><code>git</code> offers status/diff/log/show/blame plus clone/ls_remote against allowed remotes; it cannot mutate history or index.</li>
-<li><code>materialize</code> and <code>commit</code> are thin wrappers over <code>WorkspaceChanges.materialize/stage/apply</code> (<code>src/citra/tools/transient/materialize.py:13</code>, <code>src/citra/tools/transient/commit.py:13</code>), implementing Citra's read-only-source → staged → applied workflow.</li>
+<li><code>commit</code> is a thin wrapper over <code>WorkspaceChanges.stage/stage_deletions/stage_patch/apply</code> (<code>src/citra/tools/transient/commit.py:13</code>), implementing Citra's read-only-source → staged → applied workflow.</li>
 <li><code>prompt_user</code> surfaces open-ended or option-list questions through the foreground interaction broker.</li>
 </ul>
 <p>Per-tool usage reference: see the subsections below. Memory tools are detailed under <em>memory-tools</em>.</p>
@@ -885,33 +918,10 @@ mutating classification is conservative (invalidates the tool cache) even though
 </div>
 <a class="back-to-top" href="#document-top">Back to contents</a>
 </article>
-<article class="document-section" id="section-tool-materialize-9a06c4be8c" data-depth="1" data-search-text="tool-materialize
-**purpose:** preview or copy selected files from read-only `@source` into the lifecycle agent workspace. git is not required: tracked, untracked, and non-repository files are all eligible.
-
-**actions:** `preview` (report eligible scope without copying) and `copy` (default; additive — never overwrites files already copied or edited by the agent).
-
-**key arguments:** `paths` (source-relative files, directories, or globs; `&#x27;.&#x27;` copies the complete project), `include_ignored` to include soft-ignored files, `allow_large` to permit copies above the normal file/byte limits.
-
-directory and glob expansion obey ignore files by default; an exact file path overrides soft ignores. vcs internals are always excluded. mutating.">
-<header class="section-header">
-<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-materialize</div>
-<div class="section-heading-row section-heading-row-single">
-
-<h3>tool-materialize</h3>
-</div>
-</header>
-<div class="section-body">
-<p><strong>Purpose:</strong> Preview or copy selected files from read-only <code>@source</code> into the lifecycle agent workspace. Git is not required: tracked, untracked, and non-repository files are all eligible.</p>
-<p><strong>Actions:</strong> <code>preview</code> (report eligible scope without copying) and <code>copy</code> (default; additive — never overwrites files already copied or edited by the agent).</p>
-<p><strong>Key arguments:</strong> <code>paths</code> (source-relative files, directories, or globs; <code>'.'</code> copies the complete project), <code>include_ignored</code> to include soft-ignored files, <code>allow_large</code> to permit copies above the normal file/byte limits.</p>
-<p>Directory and glob expansion obey ignore files by default; an exact file path overrides soft ignores. VCS internals are always excluded. Mutating.</p>
-</div>
-<a class="back-to-top" href="#document-top">Back to contents</a>
-</article>
 <article class="document-section" id="section-tool-commit-2b9453609c" data-depth="1" data-search-text="tool-commit
 **purpose:** inspect and stage changes in the agent workspace, then apply only staged file updates to `@source`. this is the sole path for verified changes to reach the read-only source repository.
 
-**actions:** `status` (staged + unstaged overview), `diff` (unstaged, or staged with `staged=true`), `stage` (stage workspace paths/pathspecs), `stage_patch` (add part of a unified diff to the private staging index), `unstage`, and `apply` (conflict-check against content originally materialized this process, then write back to `@source`).
+**actions:** `status` (staged + unstaged overview), `diff` (unstaged, or staged with `staged=true`), `stage` (stage workspace paths/pathspecs), `delete` (stage removal of `@source` files, including files never copied into the workspace), `stage_patch` (add part of a unified diff to the private staging index), `unstage`, and `apply` (conflict-check against content originally materialized this process, then write back to `@source`).
 
 the private git repository lives outside the model-visible working directory; this tool never creates commits or touches the source repository&#x27;s index. mutating.">
 <header class="section-header">
@@ -923,7 +933,7 @@ the private git repository lives outside the model-visible working directory; th
 </header>
 <div class="section-body">
 <p><strong>Purpose:</strong> Inspect and stage changes in the agent workspace, then apply only staged file updates to <code>@source</code>. This is the sole path for verified changes to reach the read-only source repository.</p>
-<p><strong>Actions:</strong> <code>status</code> (staged + unstaged overview), <code>diff</code> (unstaged, or staged with <code>staged=true</code>), <code>stage</code> (stage workspace paths/pathspecs), <code>stage_patch</code> (add part of a unified diff to the private staging index), <code>unstage</code>, and <code>apply</code> (conflict-check against content originally materialized this process, then write back to <code>@source</code>).</p>
+<p><strong>Actions:</strong> <code>status</code> (staged + unstaged overview), <code>diff</code> (unstaged, or staged with <code>staged=true</code>), <code>stage</code> (stage workspace paths/pathspecs), <code>delete</code> (stage removal of <code>@source</code> files, including files never copied into the workspace), <code>stage_patch</code> (add part of a unified diff to the private staging index), <code>unstage</code>, and <code>apply</code> (conflict-check against content originally materialized this process, then write back to <code>@source</code>).</p>
 <p>The private Git repository lives outside the model-visible working directory; this tool never creates commits or touches the source repository's index. Mutating.</p>
 </div>
 <a class="back-to-top" href="#document-top">Back to contents</a>
@@ -1131,10 +1141,45 @@ enabled per turn via `enable_tools`. mutating.">
 </div>
 <a class="back-to-top" href="#document-top">Back to contents</a>
 </article>
+<article class="document-section" id="section-tool-read-image-a4b68e7b36" data-depth="1" data-search-text="tool-read-image
+**purpose:** read a local image and return it in a format suitable for sending to a vision-capable model. adapts the openai `image_url` content-part shape to citra&#x27;s text-based tool-result protocol.
+
+**key arguments:** `path` (file path; supports `@source`, `@tmp`, and other workspace aliases), `max_bytes` (optional positive integer; defaults to 20 mib). the file is read through a new sandbox filesystem op, `read_binary`, which streams the bytes and base64-encodes them inside the worker (`src/citra/sandbox/filesystem_ops/read_binary.py`). the op is the binary counterpart of the existing `read_raw` text op and reuses the same json-over-stdio protocol.
+
+**wire format:** the tool validates the file&#x27;s leading magic bytes (png, jpeg, gif, webp) and produces a json object with the openai vision content-part shape:
+
+```json
+{&quot;type&quot;: &quot;image_url&quot;, &quot;image_url&quot;: {&quot;url&quot;: &quot;data:image/png;base64,&lt;...&gt;&quot;}}
+```
+
+the agent runner serializes the result via `json.dumps` and forwards it as a `role=&quot;tool&quot;` message. the model client of the calling project is responsible for surfacing the data url to the vision input it actually uses (for example by extracting it and feeding it through a multimodal `role=&quot;user&quot;` message).
+
+**constraints:** result cache is disabled (large payloads, freshness matters); the `max_bytes` cap protects the worker and the per-tool token budget. a file that fails the magic-byte check raises a clear `not a supported image` error and falls back to the worker&#x27;s extension-based mime guess only when the file&#x27;s content also matches a whitelisted format.
+
+deferred (enabled via `enable_tools`); included in the `longtaskhorizon` mode&#x27;s deferred tools so vision-capable agents can opt in when the user needs to inspect or reason about images.">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-read-image</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-read-image</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Read a local image and return it in a format suitable for sending to a vision-capable model. Adapts the OpenAI <code>image_url</code> content-part shape to Citra's text-based tool-result protocol.</p>
+<p><strong>Key arguments:</strong> <code>path</code> (file path; supports <code>@source</code>, <code>@tmp</code>, and other workspace aliases), <code>max_bytes</code> (optional positive integer; defaults to 20 MiB). The file is read through a new sandbox filesystem op, <code>read_binary</code>, which streams the bytes and base64-encodes them inside the worker (<code>src/citra/sandbox/filesystem_ops/read_binary.py</code>). The op is the binary counterpart of the existing <code>read_raw</code> text op and reuses the same JSON-over-stdio protocol.</p>
+<p><strong>Wire format:</strong> the tool validates the file's leading magic bytes (PNG, JPEG, GIF, WebP) and produces a JSON object with the OpenAI vision content-part shape:</p>
+<pre><code class="language-json">{&quot;type&quot;: &quot;image_url&quot;, &quot;image_url&quot;: {&quot;url&quot;: &quot;data:image/png;base64,&lt;...&gt;&quot;}}
+</code></pre>
+<p>The agent runner serializes the result via <code>json.dumps</code> and forwards it as a <code>role="tool"</code> message. The model client of the calling project is responsible for surfacing the data URL to the vision input it actually uses (for example by extracting it and feeding it through a multimodal <code>role="user"</code> message).</p>
+<p><strong>Constraints:</strong> result cache is disabled (large payloads, freshness matters); the <code>max_bytes</code> cap protects the worker and the per-tool token budget. A file that fails the magic-byte check raises a clear <code>Not a supported image</code> error and falls back to the worker's extension-based mime guess only when the file's content also matches a whitelisted format.</p>
+<p>Deferred (enabled via <code>enable_tools</code>); included in the <code>LongTaskHorizon</code> mode's deferred tools so vision-capable agents can opt in when the user needs to inspect or reason about images.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
 <article class="document-section" id="section-tool-enable-tools-d62c89f11c" data-depth="1" data-search-text="tool-enable-tools
 **purpose:** enable one or more deferred tools for the remainder of the current agent turn. deferred tools stay registered but out of model calls until explicitly enabled (`src/citra/tools/enable_tools.py`).
 
-**key arguments:** `tools` — array of deferred tool ids from the fixed catalog: `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`.
+**key arguments:** `tools` — array of deferred tool ids from the fixed catalog: `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`, `read_image`.
 
 enable a tool only when its capability is actually needed; the enabled set is scoped to the current turn. mutating (changes the visible tool surface).">
 <header class="section-header">
@@ -1146,7 +1191,7 @@ enable a tool only when its capability is actually needed; the enabled set is sc
 </header>
 <div class="section-body">
 <p><strong>Purpose:</strong> Enable one or more deferred tools for the remainder of the current agent turn. Deferred tools stay registered but out of model calls until explicitly enabled (<code>src/citra/tools/enable_tools.py</code>).</p>
-<p><strong>Key arguments:</strong> <code>tools</code> — array of deferred tool ids from the fixed catalog: <code>subprocess</code>, <code>browser</code>, <code>curl</code>, <code>web_search</code>, <code>document</code>, <code>diagram</code>.</p>
+<p><strong>Key arguments:</strong> <code>tools</code> — array of deferred tool ids from the fixed catalog: <code>subprocess</code>, <code>browser</code>, <code>curl</code>, <code>web_search</code>, <code>document</code>, <code>diagram</code>, <code>read_image</code>.</p>
 <p>Enable a tool only when its capability is actually needed; the enabled set is scoped to the current turn. Mutating (changes the visible tool surface).</p>
 </div>
 <a class="back-to-top" href="#document-top">Back to contents</a>
@@ -1306,6 +1351,36 @@ use it when unfinished work may continue after context loss or a later turn.">
 </div>
 <a class="back-to-top" href="#document-top">Back to contents</a>
 </article>
+<article class="document-section" id="section-tool-subagent-51537013c8" data-depth="1" data-search-text="tool-subagent
+**purpose:** delegate a well-defined component of the current task to an isolated worker subagent, observe its progress, steer it, and wait for it to finish. subagents are the orchestrator&#x27;s escape hatch for parallel, narrowly-scoped work that does not need the full orchestrator tool set.
+
+**key arguments:** `action` (`create`, `poll`, `steer`, `sleep`); `task`; `write_path`; `readonly_binds`; `subagent_id` / `subagent_ids`; `message` (for `steer`); `answer` (for `poll`, to reply to a pending guidance request); `timeout_seconds` (for `sleep`, maximum 60).
+
+**subagent environment:** a subagent gets a fresh, nested `workspacecontext` rooted under the orchestrator&#x27;s runtime at `&lt;runtime&gt;/subagents/&lt;id&gt;/`. the subagent&#x27;s mode (`subagentmode`, `src/citra/tools/subagent/mode.py`) exposes only `read`, `write`, `edit`, `bash` and a dedicated `request_guidance` tool. the bubblewrap sandbox adds the orchestrator&#x27;s runtime binds plus the orchestrator&#x27;s declared `readonly_binds` (read-only) and the subagent&#x27;s `write_path` (writable) on top of the baseline writable set; `workspacesandbox` keeps the rest of the host hidden. network access is denied by default.
+
+**communication:** subagents and the orchestrator communicate through a single channel: a per-subagent jsonl transcript mirrored in memory and persisted at `&lt;runtime&gt;/subagents/&lt;id&gt;/transcript.jsonl`. the subagent&#x27;s `request_guidance` tool appends a `guidance-request` entry and blocks on a `threading.event`; the orchestrator&#x27;s `subagent` tool with `action=poll` and `action=steer` answers the request and writes a `guidance-response` entry. the `subagent` tool also accepts a free-form `answer` argument on `poll` to reply without a separate `steer` call.
+
+**lifecycle:** `subagentsupervisor` (`src/citra/tools/subagent/supervisor.py`) is owned by the orchestrator&#x27;s `executioncontext.subagents` field. it spawns one daemon thread per subagent, drives `agentrunner.run_turn` against a nested `executioncontext`, sets a per-subagent completion `event`, and cleans the runtime root on `close()`. the supervisor is closed as part of `executioncontext.close()`, which is called from `citraapplication.close()`.
+
+**enabled per turn via `enable_tools`**; declared as a deferred tool in `default_registry.py` so its schema does not pollute the prompt until the orchestrator needs it. the tool does not expose network, document/diagram, git, lsp, prompt-user, or memory tools to the subagent. cross-subagent communication is intentionally unsupported; only the orchestrator can address subagents.
+">
+<header class="section-header">
+<div class="breadcrumb">tool-system<span class="breadcrumb-separator"> / </span>tool-subagent</div>
+<div class="section-heading-row section-heading-row-single">
+
+<h3>tool-subagent</h3>
+</div>
+</header>
+<div class="section-body">
+<p><strong>Purpose:</strong> Delegate a well-defined component of the current task to an isolated worker subagent, observe its progress, steer it, and wait for it to finish. Subagents are the orchestrator's escape hatch for parallel, narrowly-scoped work that does not need the full orchestrator tool set.</p>
+<p><strong>Key arguments:</strong> <code>action</code> (<code>create</code>, <code>poll</code>, <code>steer</code>, <code>sleep</code>); <code>task</code>; <code>write_path</code>; <code>readonly_binds</code>; <code>subagent_id</code> / <code>subagent_ids</code>; <code>message</code> (for <code>steer</code>); <code>answer</code> (for <code>poll</code>, to reply to a pending guidance request); <code>timeout_seconds</code> (for <code>sleep</code>, maximum 60).</p>
+<p><strong>Subagent environment:</strong> A subagent gets a fresh, nested <code>WorkspaceContext</code> rooted under the orchestrator's runtime at <code>&lt;runtime&gt;/subagents/&lt;id&gt;/</code>. The subagent's mode (<code>SubagentMode</code>, <code>src/citra/tools/subagent/mode.py</code>) exposes only <code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code> and a dedicated <code>request_guidance</code> tool. The Bubblewrap sandbox adds the orchestrator's runtime binds plus the orchestrator's declared <code>readonly_binds</code> (read-only) and the subagent's <code>write_path</code> (writable) on top of the baseline writable set; <code>WorkspaceSandbox</code> keeps the rest of the host hidden. Network access is denied by default.</p>
+<p><strong>Communication:</strong> Subagents and the orchestrator communicate through a single channel: a per-subagent JSONL transcript mirrored in memory and persisted at <code>&lt;runtime&gt;/subagents/&lt;id&gt;/transcript.jsonl</code>. The subagent's <code>request_guidance</code> tool appends a <code>guidance-request</code> entry and blocks on a <code>threading.Event</code>; the orchestrator's <code>subagent</code> tool with <code>action=poll</code> and <code>action=steer</code> answers the request and writes a <code>guidance-response</code> entry. The <code>subagent</code> tool also accepts a free-form <code>answer</code> argument on <code>poll</code> to reply without a separate <code>steer</code> call.</p>
+<p><strong>Lifecycle:</strong> <code>SubagentSupervisor</code> (<code>src/citra/tools/subagent/supervisor.py</code>) is owned by the orchestrator's <code>ExecutionContext.subagents</code> field. It spawns one daemon thread per subagent, drives <code>AgentRunner.run_turn</code> against a nested <code>ExecutionContext</code>, sets a per-subagent completion <code>Event</code>, and cleans the runtime root on <code>close()</code>. The supervisor is closed as part of <code>ExecutionContext.close()</code>, which is called from <code>CitraApplication.close()</code>.</p>
+<p><strong>Enabled per turn via <code>enable_tools</code></strong>; declared as a deferred tool in <code>default_registry.py</code> so its schema does not pollute the prompt until the orchestrator needs it. The tool does not expose network, document/diagram, git, LSP, prompt-user, or memory tools to the subagent. Cross-subagent communication is intentionally unsupported; only the orchestrator can address subagents.</p>
+</div>
+<a class="back-to-top" href="#document-top">Back to contents</a>
+</article>
 <article class="document-section" id="section-context-layer-dd3f106fd7" data-depth="0" data-search-text="context-layer
 ## executioncontext
 
@@ -1314,7 +1389,8 @@ use it when unfinished work may continue after context loss or a later turn.">
 useful capabilities:
 
 - `os`, `config`, `sandbox`, `filesystem`, `subprocesses`, `browser`, `repo_map` properties (`execution_context.py:124`).
-- `close()` shuts down lsp, browser, and subprocesses in order (`execution_context.py:160`).
+- `subagents` exposes the orchestrator-side `subagentsupervisor` (see [tool-subagent](tool-subagent)). it is closed as part of `executioncontext.close()`.
+- `close()` shuts down subagents, lsp, browser, and subprocesses in order (`execution_context.py:160`).
 - `truncate_output()` caps model-facing text using the *active model&#x27;s tokenizer*, cutting at a newline boundary and appending an explicit truncation notice (default limit 2 000 tokens, `execution_context.py:20`, method at `execution_context.py:188`).
 
 ## workspacecontext
@@ -1326,7 +1402,7 @@ useful capabilities:
 `workspacechanges` owns the private baseline + staging index for one lifecycle, stored *outside* the model-visible working directory; it never writes the source repository&#x27;s index or history (`src/citra/context/workspace_changes.py:137`). key operations:
 
 - `materialize(...)` copies selected source files into the workspace, respecting ignore files, hard exclusions, byte limits, and preview mode; results are reported as a `materializationresult` with per-category counts (`workspace_changes.py:22`, method at `workspace_changes.py:243`).
-- `stage(...)`, `stage_patch(...)`, and `apply(...)` implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (`workspace_changes.py:718`, `workspace_changes.py:738`, `workspace_changes.py:800`).
+- `stage(...)`, `stage_deletions(...)`, `stage_patch(...)`, and `apply(...)` implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (`workspace_changes.py:746`, `workspace_changes.py:766`, `workspace_changes.py:836`, `workspace_changes.py:898`).
 - conflicts surface as `workspaceconflicterror`; internal git failures as `gitcommanderror` (`workspace_changes.py:13`). a `sourcesnapshot` records the baseline state for conflict detection (`workspace_changes.py:102`).">
 <header class="section-header">
 
@@ -1341,7 +1417,8 @@ useful capabilities:
 <p>Useful capabilities:</p>
 <ul>
 <li><code>os</code>, <code>config</code>, <code>sandbox</code>, <code>filesystem</code>, <code>subprocesses</code>, <code>browser</code>, <code>repo_map</code> properties (<code>execution_context.py:124</code>).</li>
-<li><code>close()</code> shuts down LSP, browser, and subprocesses in order (<code>execution_context.py:160</code>).</li>
+<li><code>subagents</code> exposes the orchestrator-side <code>SubagentSupervisor</code> (see <a href="tool-subagent">tool-subagent</a>). It is closed as part of <code>ExecutionContext.close()</code>.</li>
+<li><code>close()</code> shuts down subagents, LSP, browser, and subprocesses in order (<code>execution_context.py:160</code>).</li>
 <li><code>truncate_output()</code> caps model-facing text using the <em>active model's tokenizer</em>, cutting at a newline boundary and appending an explicit truncation notice (default limit 2 000 tokens, <code>execution_context.py:20</code>, method at <code>execution_context.py:188</code>).</li>
 </ul>
 <h2>WorkspaceContext</h2>
@@ -1350,7 +1427,7 @@ useful capabilities:
 <p><code>WorkspaceChanges</code> owns the private baseline + staging index for one lifecycle, stored <em>outside</em> the model-visible working directory; it never writes the source repository's index or history (<code>src/citra/context/workspace_changes.py:137</code>). Key operations:</p>
 <ul>
 <li><code>materialize(...)</code> copies selected source files into the workspace, respecting ignore files, hard exclusions, byte limits, and preview mode; results are reported as a <code>MaterializationResult</code> with per-category counts (<code>workspace_changes.py:22</code>, method at <code>workspace_changes.py:243</code>).</li>
-<li><code>stage(...)</code>, <code>stage_patch(...)</code>, and <code>apply(...)</code> implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (<code>workspace_changes.py:718</code>, <code>workspace_changes.py:738</code>, <code>workspace_changes.py:800</code>).</li>
+<li><code>stage(...)</code>, <code>stage_deletions(...)</code>, <code>stage_patch(...)</code>, and <code>apply(...)</code> implement the commit workflow: inspect/stage in the private index, conflict-check against the baseline captured at materialization, then apply only staged updates to source (<code>workspace_changes.py:746</code>, <code>workspace_changes.py:766</code>, <code>workspace_changes.py:836</code>, <code>workspace_changes.py:898</code>).</li>
 <li>Conflicts surface as <code>WorkspaceConflictError</code>; internal git failures as <code>GitCommandError</code> (<code>workspace_changes.py:13</code>). A <code>SourceSnapshot</code> records the baseline state for conflict detection (<code>workspace_changes.py:102</code>).</li>
 </ul>
 </div>
@@ -2077,6 +2154,11 @@ type checking uses pyrefly (configured in `pyproject.toml:[tool.pyrefly]`, `pypr
                 const searching = query.length > 0;
                 let visibleCount = 0;
 
+                const indexRoot = document.querySelector('.document-index');
+                if (indexRoot) {
+                    indexRoot.classList.toggle('index-searching', searching);
+                }
+
                 for (const article of articles) {
                     const hiddenByCollapse = !searching
                         && ancestorsOf.get(article.id)
@@ -2093,7 +2175,11 @@ type checking uses pyrefly (configured in `pyproject.toml:[tool.pyrefly]`, `pypr
                 }
 
                 for (const item of navItems) {
-                    const link = item.querySelector(':scope > a[href^="#section-"]');
+                    const link = item.querySelector(
+                        ':scope > a[href^="#section-"]'
+                    ) || item.querySelector(
+                        ':scope > .index-row > a[href^="#section-"]'
+                    );
                     let show = true;
                     if (link) {
                         const target = document.getElementById(
@@ -2129,6 +2215,23 @@ type checking uses pyrefly (configured in `pyproject.toml:[tool.pyrefly]`, `pypr
                     }
                     syncToggleButtons();
                     applyState();
+                });
+            });
+
+            // --- Collapsible index tree -----------------------------------
+            // Sidebar toggles fold only the index; section bodies are not
+            // affected by them.
+            document.querySelectorAll('.document-index .index-toggle').forEach(button => {
+                button.addEventListener('click', () => {
+                    const item = button.closest('li');
+                    if (!item) return;
+                    const expanded = !item.classList.toggle('nav-branch-collapsed');
+                    button.setAttribute('aria-expanded', String(expanded));
+                    button.textContent = expanded ? '\u2212' : '+';
+                    button.setAttribute(
+                        'aria-label',
+                        expanded ? 'Collapse subsections' : 'Expand subsections'
+                    );
                 });
             });
 

@@ -71,16 +71,29 @@ class ModelCommand(Command):
         store = self.context.config.model_config_store
         try:
             config = store.get(name)
-            active = store.active_name()
+            orchestrator = store.orchestrator_name()
+            subagent = store.subagent_name()
         except (KeyError, ValueError, RuntimeError, OSError) as error:
             return self._error("read model config", error)
+
+        roles: list[str] = []
+        if config.name == orchestrator:
+            roles.append("orchestrator")
+        if config.name == subagent:
+            if config.name == orchestrator:
+                roles.append("subagent (inherits orchestrator)")
+            else:
+                roles.append("subagent")
+        role_text = ", ".join(roles) if roles else "no"
 
         reasoning = config.reasoning_effort or "none"
         return CommandResult(
             "\n".join(
                 (
                     f"profile: {config.name}",
-                    f"active: {'yes' if config.name == active else 'no'}",
+                    f"orchestrator: {'yes' if config.name == orchestrator else 'no'}",
+                    f"subagent: {'yes' if config.name == subagent else 'no'}",
+                    f"roles: {role_text}",
                     f"host: {config.host}",
                     f"id: {config.id}",
                     "api_key: ********",
@@ -101,31 +114,75 @@ class ModelCommand(Command):
 
         store = self.context.config.model_config_store
         try:
-            active = store.active_name()
+            orchestrator = store.orchestrator_name()
+            subagent = store.subagent_name()
+            subagent_shares = subagent == orchestrator
             lines = []
             for name in store.names():
                 config = store.get(name)
-                marker = "*" if name == active else " "
-                lines.append(f"{marker} {name}: {config.id}")
+                markers: list[str] = []
+                if name == orchestrator:
+                    markers.append("*")
+                else:
+                    markers.append(" ")
+                if name == subagent:
+                    if subagent_shares:
+                        markers[-1] = "*"
+                    else:
+                        markers.append("S")
+                else:
+                    markers.append(" ")
+                lines.append(
+                    f"{''.join(markers)} {name}: {config.id}"
+                )
+            if subagent_shares:
+                lines.append("(* = orchestrator, subagent inherits)")
+            else:
+                lines.append(
+                    f"(* = orchestrator [{orchestrator}], "
+                    f"S = subagent [{subagent}])"
+                )
         except (KeyError, ValueError, RuntimeError, OSError) as error:
             return self._error("list model profiles", error)
 
         return CommandResult("\n".join(lines))
 
     def _use(self, args: list[str]) -> CommandResult:
+        if not args:
+            return CommandResult("Expected a role and profile name.\n\n" + self._usage())
+
+        store = self.context.config.model_config_store
+        first = args[0].lower()
+        if first in {"orchestrator", "subagent"}:
+            if len(args) != 2:
+                return CommandResult(
+                    f"Expected 'model use {first} <profile>'.\n\n" + self._usage()
+                )
+            profile_name = args[1]
+            try:
+                if first == "orchestrator":
+                    store.set_orchestrator(profile_name)
+                else:
+                    store.set_subagent(profile_name)
+                config = store.get(profile_name)
+            except (KeyError, ValueError, RuntimeError, OSError) as error:
+                return self._error(f"set {first} model profile", error)
+            return CommandResult(
+                f"{first.capitalize()} model profile = {config.name} ({config.id})"
+            )
+
         if len(args) != 1:
             return CommandResult("Expected a profile name.\n\n" + self._usage())
 
-        store = self.context.config.model_config_store
-        name = args[0]
+        profile_name = args[0]
         try:
-            store.set_active(name)
-            config = store.get(name)
+            store.set_orchestrator(profile_name)
+            config = store.get(profile_name)
         except (KeyError, ValueError, RuntimeError, OSError) as error:
             return self._error("activate model profile", error)
 
         return CommandResult(
-            f"Active model profile = {config.name} ({config.id})"
+            f"Orchestrator model profile = {config.name} ({config.id})"
         )
 
     def _add(self, args: list[str]) -> CommandResult:
@@ -286,7 +343,9 @@ class ModelCommand(Command):
             "Usage:\n"
             "  model show [profile]\n"
             "  model list\n"
-            "  model use <profile>\n"
+            "  model use <profile>            (sets the orchestrator profile)\n"
+            "  model use orchestrator <profile>\n"
+            "  model use subagent <profile>    (omit to inherit the orchestrator)\n"
             "  model add <profile> [--copy <profile>]\n"
             "  model delete <profile>\n"
             "  model set [--profile <profile>] host <url>\n"

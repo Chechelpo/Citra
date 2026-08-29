@@ -194,7 +194,7 @@ def test_model_command_switches_and_targets_profiles_without_leaking_secret(
     assert "  beta: beta-model" in listing
 
     result = command.run("use beta")
-    assert "Active model profile = beta" in result.output
+    assert "Orchestrator model profile = beta" in result.output
     assert config.model().name == "beta"
 
     result = command.run("set --profile alpha id alpha-command-model")
@@ -204,7 +204,7 @@ def test_model_command_switches_and_targets_profiles_without_leaking_secret(
 
     shown = command.run("show alpha").output
     assert "profile: alpha" in shown
-    assert "active: no" in shown
+    assert "orchestrator: no" in shown
     assert "api_key: ********" in shown
     assert "alpha-secret" not in shown
 
@@ -259,7 +259,9 @@ permanent_workspace = "/tmp/b"
     )
     monkeypatch.setenv("CITRA_CONFIG_PATH", str(config_path))
 
-    with pytest.raises(RuntimeError, match="Active model profile 'missing'"):
+    with pytest.raises(
+        RuntimeError, match="Orchestrator model profile 'missing'"
+    ):
         CitraConfig.load()
 
 
@@ -516,3 +518,378 @@ max_output_tokens = 10
     store = ModelConfigStore(config_path)
     with pytest.raises(ValueError, match="profile names"):
         store.get()
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator / subagent selector tests
+# ---------------------------------------------------------------------------
+
+
+def _write_split_role_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    body: str,
+) -> tuple[Path, CitraConfig]:
+    fernet = _install_key(tmp_path, monkeypatch)
+    config_path = tmp_path / "config.toml"
+    alpha_key = fernet.encrypt(b"alpha-secret").decode("ascii")
+    beta_key = fernet.encrypt(b"beta-secret").decode("ascii")
+    preamble = f'''\
+[models]
+{body}
+
+[models.alpha]
+host = "https://alpha.invalid/v1"
+encrypted_key = "{alpha_key}"
+id = "alpha-model"
+max_input_tokens = 1000
+max_output_tokens = 100
+
+[models.beta]
+host = "https://beta.invalid/v1"
+encrypted_key = "{beta_key}"
+id = "beta-model"
+max_input_tokens = 2000
+max_output_tokens = 200
+
+[web-search]
+host_url = "http://search.invalid"
+
+[workspace]
+temporary_workspace = "{tmp_path / 'agent'}"
+permanent_workspace = "{tmp_path / 'source'}"
+'''
+    config_path.write_text(preamble, encoding="utf-8")
+    monkeypatch.setenv("CITRA_CONFIG_PATH", str(config_path))
+    return config_path, CitraConfig.load()
+
+
+def test_legacy_active_alias_becomes_orchestrator_and_subagent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path, monkeypatch, body='active = "alpha"'
+    )
+    store = config.model_config_store
+
+    assert store.orchestrator_name() == "alpha"
+    assert store.subagent_name() == "alpha"
+    assert store.active_name() == "alpha"
+    assert config.model().name == "alpha"
+
+
+def test_explicit_orchestrator_and_subagent_selectors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path,
+        monkeypatch,
+        body=(
+            'orchestrator = "alpha"\n'
+            'subagent = "beta"\n'
+        ),
+    )
+    store = config.model_config_store
+
+    assert store.orchestrator_name() == "alpha"
+    assert store.subagent_name() == "beta"
+    assert config.model().name == "alpha"
+
+
+def test_subagent_inherits_orchestrator_when_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path, monkeypatch, body='orchestrator = "alpha"'
+    )
+    store = config.model_config_store
+
+    assert store.orchestrator_name() == "alpha"
+    assert store.subagent_name() == "alpha"
+
+
+def test_orchestrator_and_subagent_must_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fernet = _install_key(tmp_path, monkeypatch)
+    encrypted = fernet.encrypt(b"secret").decode("ascii")
+    config_path = tmp_path / "missing-role.toml"
+    config_path.write_text(
+        f'''\
+[models]
+orchestrator = "missing"
+
+[models.alpha]
+host = "https://alpha.invalid/v1"
+encrypted_key = "{encrypted}"
+id = "alpha-model"
+max_input_tokens = 100
+max_output_tokens = 10
+
+[web-search]
+host_url = "http://search.invalid"
+
+[workspace]
+temporary_workspace = "{tmp_path / 'a'}"
+permanent_workspace = "{tmp_path / 'b'}"
+''',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CITRA_CONFIG_PATH", str(config_path))
+
+    with pytest.raises(
+        RuntimeError, match="Orchestrator model profile 'missing'"
+    ):
+        CitraConfig.load()
+
+
+def test_active_and_orchestrator_must_agree_when_both_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both keys may coexist when they point at the same profile.
+
+    Operators that still keep the legacy ``active`` alias in their
+    configuration alongside the new ``orchestrator`` selector must not
+    fail as long as the names match. A mismatch must be rejected.
+    """
+    fernet = _install_key(tmp_path, monkeypatch)
+    encrypted = fernet.encrypt(b"secret").decode("ascii")
+    config_path = tmp_path / "both-ok.toml"
+    config_path.write_text(
+        f'''\
+[models]
+active = "alpha"
+orchestrator = "alpha"
+
+[models.alpha]
+host = "https://alpha.invalid/v1"
+encrypted_key = "{encrypted}"
+id = "alpha-model"
+max_input_tokens = 100
+max_output_tokens = 10
+
+[web-search]
+host_url = "http://search.invalid"
+
+[workspace]
+temporary_workspace = "{tmp_path / 'a'}"
+permanent_workspace = "{tmp_path / 'b'}"
+''',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CITRA_CONFIG_PATH", str(config_path))
+
+    config = CitraConfig.load()
+    assert config.model_config_store.orchestrator_name() == "alpha"
+
+    bad_path = tmp_path / "both-bad.toml"
+    bad_path.write_text(
+        f'''\
+[models]
+active = "alpha"
+orchestrator = "beta"
+
+[models.alpha]
+host = "https://alpha.invalid/v1"
+encrypted_key = "{encrypted}"
+id = "alpha-model"
+max_input_tokens = 100
+max_output_tokens = 10
+
+[models.beta]
+host = "https://beta.invalid/v1"
+encrypted_key = "{encrypted}"
+id = "beta-model"
+max_input_tokens = 100
+max_output_tokens = 10
+
+[web-search]
+host_url = "http://search.invalid"
+
+[workspace]
+temporary_workspace = "{tmp_path / 'a'}"
+permanent_workspace = "{tmp_path / 'b'}"
+''',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CITRA_CONFIG_PATH", str(bad_path))
+
+    with pytest.raises(
+        RuntimeError, match="both 'models.active' and 'models.orchestrator'"
+    ):
+        CitraConfig.load()
+
+
+def test_set_orchestrator_persists_and_set_subagent_persists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, config = _write_split_role_config(
+        tmp_path, monkeypatch, body='orchestrator = "alpha"'
+    )
+    store = config.model_config_store
+
+    store.set_orchestrator("beta")
+    store.set_subagent("alpha")
+    assert store.orchestrator_name() == "beta"
+    assert store.subagent_name() == "alpha"
+
+    reloaded = CitraConfig.load()
+    assert reloaded.model_config_store.orchestrator_name() == "beta"
+    assert reloaded.model_config_store.subagent_name() == "alpha"
+
+    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["models"]["orchestrator"] == "beta"
+    assert raw["models"]["subagent"] == "alpha"
+
+    # Clearing the subagent selector falls back to the orchestrator
+    # profile name.
+    store.set_subagent("beta")
+    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert "subagent" not in raw["models"]
+
+
+def test_cannot_delete_orchestrator_or_subagent_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path,
+        monkeypatch,
+        body=(
+            'orchestrator = "alpha"\n'
+            'subagent = "beta"\n'
+        ),
+    )
+    store = config.model_config_store
+
+    with pytest.raises(ValueError, match="active or subagent"):
+        store.delete("alpha")
+    with pytest.raises(ValueError, match="active or subagent"):
+        store.delete("beta")
+
+    # Deleting the subagent selector falls back to the orchestrator
+    # profile, then a separate non-selected profile can be deleted.
+    store.set_subagent("alpha")
+    store.delete("beta")
+    assert "beta" not in store.names()
+
+
+def test_default_model_profile_pins_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path,
+        monkeypatch,
+        body=(
+            'orchestrator = "alpha"\n'
+            'subagent = "beta"\n'
+        ),
+    )
+
+    # The base config returns the orchestrator profile.
+    assert config.model().name == "alpha"
+
+    # Pinning the default to "beta" returns the subagent profile.
+    pinned = config.with_default_model_profile("beta")
+    assert pinned.model().name == "beta"
+    # The underlying store is shared; mutating the orchestrator in
+    # one view is visible in the other.
+    config.model_config_store.set_orchestrator("beta")
+    assert pinned.model().name == "beta"
+
+    with pytest.raises(KeyError, match="Unknown model profile"):
+        config.with_default_model_profile("missing")
+
+
+def test_model_command_lists_orchestrator_and_subagent_markers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path,
+        monkeypatch,
+        body=(
+            'orchestrator = "alpha"\n'
+            'subagent = "beta"\n'
+        ),
+    )
+    command = ModelCommand(SimpleNamespace(config=config))  # type: ignore[arg-type]
+
+    listing = command.run("list").output
+    assert "*" in listing
+    assert "alpha: alpha-model" in listing
+    assert "S" in listing
+    assert "beta: beta-model" in listing
+    assert "S = subagent [beta]" in listing
+
+    # When the subagent profile is the same as the orchestrator, the
+    # list should not double-mark the line and the legend reflects the
+    # inheritance.
+    config.model_config_store.set_subagent("alpha")
+    listing = command.run("list").output
+    assert "alpha: alpha-model" in listing
+    assert "subagent inherits" in listing
+
+
+def test_model_command_show_uses_role_aware_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path,
+        monkeypatch,
+        body=(
+            'orchestrator = "alpha"\n'
+            'subagent = "beta"\n'
+        ),
+    )
+    command = ModelCommand(SimpleNamespace(config=config))  # type: ignore[arg-type]
+
+    shown = command.run("show beta").output
+    assert "profile: beta" in shown
+    assert "orchestrator: no" in shown
+    assert "subagent: yes" in shown
+
+    shown_alpha = command.run("show alpha").output
+    assert "profile: alpha" in shown_alpha
+    assert "orchestrator: yes" in shown_alpha
+    assert "subagent: no" in shown_alpha
+
+
+def test_model_command_use_sets_orchestrator_or_subagent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config = _write_split_role_config(
+        tmp_path,
+        monkeypatch,
+        body=(
+            'orchestrator = "alpha"\n'
+            'subagent = "alpha"\n'
+        ),
+    )
+    command = ModelCommand(SimpleNamespace(config=config))  # type: ignore[arg-type]
+
+    result = command.run("use orchestrator beta")
+    assert "Orchestrator model profile = beta" in result.output
+    assert config.model_config_store.orchestrator_name() == "beta"
+
+    result = command.run("use subagent beta")
+    assert "Subagent model profile = beta" in result.output
+    assert config.model_config_store.subagent_name() == "beta"
+
+    # Bare ``use`` still targets the orchestrator for back-compat.
+    result = command.run("use alpha")
+    assert "Orchestrator model profile = alpha" in result.output
+    assert config.model_config_store.orchestrator_name() == "alpha"
+
+    bad = command.run("use subagent missing")
+    assert "Unknown model profile" in bad.output
