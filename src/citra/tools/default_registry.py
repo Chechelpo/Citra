@@ -26,6 +26,7 @@ from .transient import (
     Lsp,
     PromptUser,
     Read,
+    ReadImage,
     SkillTool,
     Subprocess,
     Tree,
@@ -150,6 +151,7 @@ _DEFERRED_TOOL_TYPES: tuple[type[Tool], ...] = (
     WebSearch,
     Document,
     Diagram,
+    ReadImage,
 )
 
 

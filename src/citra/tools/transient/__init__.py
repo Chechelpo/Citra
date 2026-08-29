@@ -10,6 +10,7 @@ from .glob import Glob
 from .lsp import Lsp
 from .prompt_user import PromptUser
 from .read import Read
+from .read_image import ReadImage
 from .skill_tool import SkillTool
 from .subprocess import Subprocess
 from .tree import Tree
@@ -29,6 +30,7 @@ __all__ = [
     "Lsp",
     "PromptUser",
     "Read",
+    "ReadImage",
     "SkillTool",
     "Subprocess",
     "Tree",

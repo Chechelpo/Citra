@@ -28,6 +28,7 @@
             <entry name="tool-web-search" />
             <entry name="tool-document" />
             <entry name="tool-diagram" />
+            <entry name="tool-read-image" />
             <entry name="tool-enable-tools" />
             <entry name="memory-tools">
                 <entry name="memory-working-state" />
@@ -240,7 +241,7 @@ Deferred registrations require a summary and stay out of model calls until enabl
 
 Core: `read`, `write`, `edit`, `glob`, `grep`, `git`, `tree`, `commit`, `bash`, `prompt_user`, `lsp`, `skill`, plus the six memory tools (`src/citra/tools/default_registry.py:10`).
 
-Deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram` (`default_registry.py:25`). The `EnableTools` tool itself is constructed by the runner with the deferred catalog and an `enabled_tool_ids` set scoped to the turn (`src/citra/tools/enable_tools.py:14`).
+Deferred (enabled via `enable_tools`): `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`, `read_image` (`default_registry.py:25`). The `EnableTools` tool itself is constructed by the runner with the deferred catalog and an `enabled_tool_ids` set scoped to the turn (`src/citra/tools/enable_tools.py:14`).
 
 ## Notable transient tools
 
@@ -540,6 +541,21 @@ Requires network access like any networked tool. Enabled per turn via `enable_to
 **Key arguments:** `query` (search terms), optional result-count/`timeout`. Returns ranked results with titles, URLs, and snippets.
 
 Enabled per turn via `enable_tools`; requires network access. Cacheable-classified conservative behavior applies as for other networked tools.</section>
+        <section name="tool-read-image">**Purpose:** Read a local image and return it in a format suitable for sending to a vision-capable model. Adapts the OpenAI `image_url` content-part shape to Citra's text-based tool-result protocol.
+
+**Key arguments:** `path` (file path; supports `@source`, `@tmp`, and other workspace aliases), `max_bytes` (optional positive integer; defaults to 20 MiB). The file is read through a new sandbox filesystem op, `read_binary`, which streams the bytes and base64-encodes them inside the worker (`src/citra/sandbox/filesystem_ops/read_binary.py`). The op is the binary counterpart of the existing `read_raw` text op and reuses the same JSON-over-stdio protocol.
+
+**Wire format:** the tool validates the file's leading magic bytes (PNG, JPEG, GIF, WebP) and produces a JSON object with the OpenAI vision content-part shape:
+
+```json
+{"type": "image_url", "image_url": {"url": "data:image/png;base64,&lt;...&gt;"}}
+```
+
+The agent runner serializes the result via `json.dumps` and forwards it as a `role="tool"` message. The model client of the calling project is responsible for surfacing the data URL to the vision input it actually uses (for example by extracting it and feeding it through a multimodal `role="user"` message).
+
+**Constraints:** result cache is disabled (large payloads, freshness matters); the `max_bytes` cap protects the worker and the per-tool token budget. A file that fails the magic-byte check raises a clear `Not a supported image` error and falls back to the worker's extension-based mime guess only when the file's content also matches a whitelisted format.
+
+Deferred (enabled via `enable_tools`); included in the `LongTaskHorizon` mode's deferred tools so vision-capable agents can opt in when the user needs to inspect or reason about images.</section>
         <section name="tool-document">**Purpose:** Create, list, inspect, read, and edit structured Citra documents (`&lt;name&gt;.citra.xml` with a derived `.html` view).
 
 **Operations:** `create`, `list`, `inspect`, `validate`, `read`, `create_section`, `update_section`, `remove_section`, `update_title`, `update_versioning`, `render_html`. Locations default to `@workspace`; `@library` holds persistent cross-project documents.
@@ -554,7 +570,7 @@ Enabled per turn via `enable_tools`. Mutating.</section>
 Enabled per turn via `enable_tools`. Mutating.</section>
         <section name="tool-enable-tools">**Purpose:** Enable one or more deferred tools for the remainder of the current agent turn. Deferred tools stay registered but out of model calls until explicitly enabled (`src/citra/tools/enable_tools.py`).
 
-**Key arguments:** `tools` — array of deferred tool ids from the fixed catalog: `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`.
+**Key arguments:** `tools` — array of deferred tool ids from the fixed catalog: `subprocess`, `browser`, `curl`, `web_search`, `document`, `diagram`, `read_image`.
 
 Enable a tool only when its capability is actually needed; the enabled set is scoped to the current turn. Mutating (changes the visible tool surface).</section>
         <section name="memory-tools">Six session-owned memory tools persist structured state for the lifetime of a conversation (`src/citra/tools/session_memory/`). They extend the `MemoryTool` → `SessionTool` → `Tool` hierarchy and are registered as **core** tools so retained memory always stays visible to the model. State lives in a shared `ConversationMemoryState` owned by the `AgentSession`; it survives turn boundaries and history compaction but is process-local — nothing is written to disk automatically.
