@@ -8,6 +8,7 @@ The tool exposes four actions to the orchestrator's model:
     guidance) for every known subagent;
   * ``steer`` — inject a user instruction into one subagent's main
     session;
+  * ``cancel`` — stop one running subagent;
   * ``sleep`` — block until one or more subagents finish.
 
 The tool delegates the actual lifecycle management to a
@@ -51,12 +52,13 @@ def _subagent_definition() -> ChatCompletionTool:
                 "Delegate a well-defined component task to an isolated "
                 "subagent. A subagent has its own sandboxed workspace "
                 "(one writable directory and a configured set of "
-                "read-only binds) and only sees the ``read``, ``write``, "
-                "``edit``, ``bash`` and ``request_guidance`` tools. "
+                "read-only binds) and only sees the context-selected "
+                "filesystem, shell, and guidance tools. "
                 "Use ``create`` to spawn a subagent, ``poll`` to inspect "
                 "its current transcript and any pending guidance, "
                 "``steer`` to inject a correction, and ``sleep`` to "
-                "block until one or more subagents finish. Subagents "
+                "block until one or more subagents finish. Use ``cancel`` "
+                "to terminate a worker that should no longer continue. Subagents "
                 "are intended for delegating narrow implementation "
                 "work; the orchestrator remains the only entity that "
                 "can write back to the user's project."
@@ -71,6 +73,7 @@ def _subagent_definition() -> ChatCompletionTool:
                                 "create",
                                 "poll",
                                 "steer",
+                                "cancel",
                                 "sleep",
                             ),
                         ),
@@ -80,9 +83,8 @@ def _subagent_definition() -> ChatCompletionTool:
                         schema=JsonSchema.string(
                             description=(
                                 "Identifier of an existing subagent. "
-                                "Required for ``steer``; optional for "
-                                "``sleep`` (defaults to all known "
-                                "subagents)."
+                                "Required for ``steer`` and ``cancel``; "
+                                "optional for ``poll`` and ``sleep``."
                             ),
                         ),
                         required=False,
@@ -127,8 +129,8 @@ def _subagent_definition() -> ChatCompletionTool:
                         schema=JsonSchema.array(
                             JsonSchema.string(
                                 description=(
-                                    "Read-only host path to expose inside "
-                                    "the subagent's sandbox."
+                                    "Read-only model-facing path to expose "
+                                    "inside the subagent's sandbox."
                                 ),
                             ),
                             description=(
@@ -303,6 +305,8 @@ class SubagentTool(Tool):
             return self._action_poll(arguments)
         if action == "steer":
             return self._action_steer(arguments)
+        if action == "cancel":
+            return self._action_cancel(arguments)
         if action == "sleep":
             return self._action_sleep(arguments)
         raise ValueError(
@@ -456,6 +460,28 @@ class SubagentTool(Tool):
 
         return "subagent status after sleep:\n" + "\n".join(lines)
 
+    def _action_cancel(
+        self,
+        arguments: dict[str, Any],
+    ) -> str:
+        subagent_id = self._required_string(
+            arguments,
+            "subagent_id",
+        )
+        cancelled = self.__supervisor.cancel(
+            subagent_id,
+            reason="cancelled by the orchestrator",
+        )
+        if cancelled:
+            return f"cancelled subagent {subagent_id!r}."
+        snapshot = self.__supervisor.snapshot(subagent_id)
+        if snapshot is None:
+            return f"unknown subagent: {subagent_id!r}"
+        return (
+            f"subagent {subagent_id!r} is already terminal "
+            f"(status={snapshot.status.value})."
+        )
+
     # ------------------------------------------------------------------
     # Builders
     # ------------------------------------------------------------------
@@ -510,7 +536,7 @@ class SubagentTool(Tool):
             parent_workspace=parent_workspace,
             parent_config=parent_config,
             parent_skills=self.context.skills,
-            api_call=None,
+            supervisor=self.__supervisor,
             spec=spec,
             write_path=write_path,
             readonly_binds=readonly_binds,
@@ -571,6 +597,9 @@ class SubagentTool(Tool):
         if action == "steer":
             subagent_id = arguments.get("subagent_id") or "-"
             return f"action=steer | id={subagent_id}"
+        if action == "cancel":
+            subagent_id = arguments.get("subagent_id") or "-"
+            return f"action=cancel | id={subagent_id}"
         if action == "sleep":
             ids = arguments.get("subagent_ids") or arguments.get(
                 "subagent_id"

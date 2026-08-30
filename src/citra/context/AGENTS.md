@@ -2,7 +2,7 @@
 
 > Execution context and configuration loading.
 
-This package provides process-lifetime Agent Runtime configuration,
+This package provides workflow-lifetime Agent Runtime configuration,
 provisioning, workspace, staging, and execution services used by every tool
 and command.
 
@@ -20,7 +20,9 @@ and command.
 | `os`           | `platform.system()` (normalized: `darwin`→`macos`) |
 | `workspace`    | lifecycle-scoped Agent Runtime facade           |
 | `config`       | supplied `CitraConfig`, or `CITRA_CONFIG_PATH` fallback |
-| `mode`         | selected process-lifetime operating mode        |
+| `mode`         | currently active workflow role mode             |
+| `workflow`     | selected process-lifetime workflow and sandbox owner |
+| `workflow_runtime` | concrete workflow-owned sandbox and active run state |
 | `model_config` | shortcut → `config.model`                     |
 | `web_search_config` | shortcut → `config.web_search`          |
 | `sandbox`      | Bubblewrap execution broker                    |
@@ -90,12 +92,15 @@ configuration domains:
 | `tools.toml` | `[web-search]`, `[workspace]`, `[memory]`, `[runtime.*]`, `[browser]`, `[sandbox]`, `[subprocess]`, `[bash]`, `[curl]`, `[lsp]`, `[notifications]`, and future non-model/non-lint operational sections. |
 | `models.toml` | `[models]`, its `active` selector, named model profiles, and retry tables. |
 | `linting.toml` | Optional global fallback `[lint]` and `[[lint.rules]]`. |
+| `mode.toml` | Optional `default` mode used by the simple workflow. |
+| `workflow.toml` | Optional `default` workflow; built-in default is `simple`. |
 
 `tools.toml` and `models.toml` are required in the canonical directory layout;
-`linting.toml` is optional. A historical single TOML file is still accepted
-when `CITRA_CONFIG_PATH` explicitly points to a file. `start.sh` prefers the
-split layout and only falls back to the old `.citra/config.toml` with a
-migration warning. TOML parsing uses the stdlib `tomllib` module.
+`linting.toml`, `mode.toml`, and `workflow.toml` are optional. A historical
+single TOML file is still accepted when `CITRA_CONFIG_PATH` explicitly points
+to a file. `start.sh` prefers the split layout and only falls back to the old
+`.citra/config.toml` with a migration warning. TOML parsing uses the stdlib
+`tomllib` module.
 
 ### Lint policy precedence
 
@@ -176,11 +181,23 @@ Re-exports the public configuration, execution, workspace, and staging types.
 - The config directory comes from the **`CITRA_CONFIG_PATH`** env var, which is
   set by `start.sh`, unless a parsed config is explicitly supplied. Canonically
   it is `.citra/config`; direct legacy file paths remain supported.
-- `ExecutionContext` is frozen. Long-lived mutable services are referenced by
-  it rather than replaced.
-- Mode selection happens before `WorkspaceContext` or `WorkspaceSandbox` is
-  created. `CitraApplication` passes the same selected mode and sandbox object
-  into `ExecutionContext` and every lifecycle-owned consumer.
+- `ExecutionContext` is frozen for lifecycle services. The workflow controller
+  may rebind only its active `mode`, `skills`, and `workflow_run` references at
+  a serial phase boundary; long-lived services are referenced rather than
+  replaced.
+- Workflow selection happens before `WorkspaceContext` or `WorkspaceSandbox`
+  is created. A workflow may override the sandbox policy; otherwise its
+  initial mode's policy is inherited. The resolved policy is frozen for the
+  workflow lifetime. Serial phase changes update `ExecutionContext.mode` but
+  reuse the exact workspace, sandbox, runtime, LSP, process, interaction, and
+  subagent services.
+- Serial workflow roles receive fresh `AgentSession` and `SkillRegistry`
+  objects while sharing the task-scoped `ConversationMemory`. Only the
+  original task, shared filesystem state, structured memory, and immediately
+  previous role's final assistant message cross phase boundaries.
+- A subagent gets separate mutable home/cache/tmp/process state but reuses a
+  worker-local resolver over the parent's immutable provisioned runtime assets.
+  Its nested runtime must be cleaned when the worker finishes.
 - By default, the complete source snapshot is present in the writable
   workspace at startup. General filesystem tools use `context.filesystem`;
   staging/apply is the narrow, conflict-checked bridge back to read-only

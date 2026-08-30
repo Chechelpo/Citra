@@ -53,8 +53,15 @@ Re-exports `Command`, `CommandRegistry`, `CommandResult`,
 | `test`| `TestCommand`  | `test.py`  | Runs diagnostic checks (config, model API, web search, bash, workspace). |
 | `model`| `ModelCommand`| `model.py` | Manage named model profiles (`list`, `show`, `use`/`use orchestrator`/`use subagent`, `add`, `delete`, and profile-targeted `set`). |
 | `debug`| `DebugCommand`| `debug.py` | Toggle the grey model-request debug lines in `chat_completions_api.py` (`on`, `off`, or no argument to flip). |
+| `agent`| `AgentCommand`| `agent.py` | List or inspect subagents and send steering, guidance answers, or cancellation directly from the CLI. |
+| `workflow`| `WorkflowCommand`| `workflow.py` | Inspect or cancel the active workflow run and show its resolved sandbox policy, phase, and transitions. |
 
 Legacy alias: bare `/exit` is mapped to `/q` by `CitraApplication`.
+
+`/agent` and `/workflow` are also accepted by the foreground steering prompt
+while the primary agent is running. Other slash commands remain restricted to
+the normal REPL prompt so configuration and lifecycle commands cannot race an
+active turn.
 
 ---
 

@@ -8,10 +8,11 @@ from citra.agent import AgentSession
 from citra.agent import runner as runner_module
 from citra.agent.runner import AgentRunner
 from citra.cli import repl as repl_module
-from citra.cli.repl import select_startup_mode
+from citra.cli.repl import select_startup_mode, select_startup_workflow
 from citra.modes import ModeRegistry, SandboxConfig, TaskSteeringConfig, UserMode
 from citra.utils.prompt import build_system_prompt
 from citra.sandbox import SandboxMode, WorkspaceSandbox
+from citra.workflows import WorkflowRegistry
 
 
 class _Input:
@@ -78,6 +79,22 @@ def test_startup_selector_uses_configured_default_on_enter(
     assert selected.name == "second"
 
 
+def test_startup_workflow_selector_defaults_to_simple() -> None:
+    registry = WorkflowRegistry(
+        mode_registry=ModeRegistry(
+            modes=(_mode("first"),),
+            default_mode="first",
+        )
+    )
+
+    selected = select_startup_workflow(
+        registry,
+        input_service=_Input(""),
+    )
+
+    assert selected.name == "simple"
+
+
 def test_repl_selects_mode_before_application_runtime_is_created(
     monkeypatch,
 ) -> None:
@@ -93,6 +110,9 @@ def test_repl_selects_mode_before_application_runtime_is_created(
         def prompt(self, _message: str) -> str:
             self.calls += 1
             if self.calls == 1:
+                events.append("workflow selected")
+                return ""
+            if self.calls == 2:
                 events.append("mode selected")
                 return ""
             raise EOFError
@@ -106,7 +126,8 @@ def test_repl_selects_mode_before_application_runtime_is_created(
             del force
 
     def create_application(**kwargs) -> _Application:
-        assert kwargs["mode"].name == "second"
+        assert kwargs["workflow"].name == "simple"
+        assert kwargs["workflow"].initial_mode.name == "second"
         events.append("runtime created")
         return _Application()
 
@@ -114,6 +135,11 @@ def test_repl_selects_mode_before_application_runtime_is_created(
         repl_module,
         "ModeRegistry",
         lambda **_kwargs: registry,
+    )
+    monkeypatch.setattr(
+        repl_module,
+        "WorkflowRegistry",
+        lambda **_kwargs: WorkflowRegistry(mode_registry=registry),
     )
     monkeypatch.setattr(
         repl_module.CitraApplication,
@@ -127,7 +153,11 @@ def test_repl_selects_mode_before_application_runtime_is_created(
         interactive_mode_selection=True,
     )
 
-    assert events == ["mode selected", "runtime created"]
+    assert events == [
+        "workflow selected",
+        "mode selected",
+        "runtime created",
+    ]
 
 
 def test_mode_sandbox_policy_is_authoritative_and_operator_policy_adds(

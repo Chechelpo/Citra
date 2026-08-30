@@ -135,9 +135,10 @@ Use:
 * **Working State** for unresolved reasoning, hypotheses, investigations, or
   tentative interpretations that must survive context trimming.
 * **TODO** for required work.
+* **Requirement** for acceptance conditions and their verified satisfaction.
 * **Fact** for verified information.
 * **Decision** for choices later work should remain consistent with.
-* **Constraint** for active requirements and invariants.
+* **Constraint** for active boundaries and invariants.
 * **Checkpoint** for a compact resume point when unfinished work may continue
   later.
 
@@ -229,6 +230,7 @@ def _completion_requirements(
     if memory_enabled:
         items.extend(
             (
+                "ensure every valid requirement is satisfied;",
                 "ensure every valid TODO is complete;",
                 "resolve or discard obsolete Working State;",
                 "remove stale or incorrect memory;",

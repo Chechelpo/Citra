@@ -54,8 +54,8 @@ class SubagentSpec:
     The orchestrator is responsible for choosing an unambiguous ``subagent_id``
     (defaulting to a short, content-derived id) and the ``write_path`` that
     the subagent is allowed to mutate. ``readonly_binds`` may include any
-    host path the orchestrator wants to expose as read-only (typically the
-    component the subagent is implementing).
+    model-facing path the orchestrator wants to expose as read-only (typically
+    source material needed to implement the component).
     """
 
     task: str
@@ -87,6 +87,14 @@ class SubagentSpec:
         subagent_id = self.subagent_id.strip()
         if not subagent_id:
             subagent_id = _default_subagent_id(task)
+        if len(subagent_id) > 48 or any(
+            not (character.isalnum() or character in {"-", "_"})
+            for character in subagent_id
+        ):
+            raise ValueError(
+                "Subagent id must be at most 48 characters and contain "
+                "only letters, numbers, '-' or '_'."
+            )
         object.__setattr__(self, "subagent_id", subagent_id)
 
         if not isinstance(self.network, bool):
@@ -212,10 +220,18 @@ def resolve_write_path(
     The result is always a directory. The subagent's runtime then exposes
     only this directory as writable.
     """
+    workspace = base_workspace.expanduser().resolve()
     raw = Path(write_path).expanduser()
     if not raw.is_absolute():
-        raw = base_workspace / raw
+        raw = workspace / raw
     resolved = raw.resolve()
+    try:
+        resolved.relative_to(workspace)
+    except ValueError as error:
+        raise ValueError(
+            "Subagent write path must remain inside the orchestrator "
+            f"workspace: {resolved}"
+        ) from error
     if resolved.exists() and not resolved.is_dir():
         raise ValueError(
             f"Subagent write path is not a directory: {resolved}"

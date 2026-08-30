@@ -1,8 +1,8 @@
 # AGENTS.md — Conversation Memory Tools
 
 > Cross-turn conversation-memory tools used by the agent to retain structured
-> state such as TODOs, facts, decisions, constraints, working state, and resume
-> checkpoints.
+> state such as requirements, TODOs, facts, decisions, constraints, working
+> state, and resume checkpoints.
 
 ## Overview
 
@@ -32,6 +32,8 @@ The memory types and their ownership are:
 
 * **Working state** (`working_state`) — provisional hypotheses and reasoning.
   The seed for everything else. Not authoritative.
+* **Requirement** (`requirement`) — acceptance conditions and satisfaction
+  evidence.
 * **TODO** (`todo`) — required work, optionally hierarchical.
 * **Fact** (`fact`) — verified information, optionally with citations.
 * **Decision** (`decision`) — a choice later work must respect.
@@ -51,7 +53,10 @@ tools = TOOL_REGISTRY.instantiate(context, session)
 
 Do **not** construct memory-tool classes directly on every model call.
 Registry instantiation is safe: it reuses the instances owned by a session
-and refreshes their execution context.
+and refreshes their execution context. Serial workflows may deliberately give
+fresh role sessions the same `ConversationMemory`; in that case the registry
+also rebinds each retained memory tool to the current role session while
+preserving its stored state.
 
 ### Shared `ConversationMemoryState`
 
@@ -215,6 +220,29 @@ model prompt, must enforce this.
 `TodoTool.should_offer_documentation()` is `False` (execution state, not
 long-term maintainer knowledge).
 
+## `RequirementTool`
+
+`RequirementTool` retains explicit acceptance conditions separately from the
+work needed to achieve them. It supports `add`, `update`, `satisfy`, `reopen`,
+and `remove`. Updating or reopening a requirement invalidates its previous
+satisfaction evidence. `has_unsatisfied_requirements()` is a runtime completion
+gate, while ordinary serial-role boundaries may preserve unsatisfied entries
+for later roles.
+
+```python
+@dataclass(frozen=True)
+class RequirementExtract:
+    id: int
+    content: str
+    satisfied: bool = False
+    evidence: str | None = None
+```
+
+Requirements are created directly because they normally originate in the user
+task or an established acceptance criterion rather than provisional reasoning.
+`RequirementTool.should_offer_documentation()` returns true when requirements
+exist.
+
 ## `FactTool`
 
 `FactTool` retains verified facts promoted from working states.
@@ -322,7 +350,12 @@ class CheckpointExtract:
     content: str
     next_step: str | None
     turn: int
+    revision: int
 ```
+
+`revision` increases on every `set` or `clear`. Serial workflow controllers use
+it to require a checkpoint update from the active role rather than accidentally
+reusing the previous role's transition.
 
 `CheckpointTool.should_offer_documentation()` is `False`.
 
@@ -381,7 +414,7 @@ The runtime is responsible for:
 
 * preserving memory tool instances and shared state throughout the conversation
 * injecting memory into model context
-* enforcing completion invariants (e.g. outstanding TODOs)
+* enforcing completion invariants (e.g. unsatisfied requirements and TODOs)
 * deciding whether and when to ask the user about persistence
 
 In particular, `TodoTool` may expose `has_outstanding_todos()`, but the outer

@@ -14,6 +14,7 @@ from ..agent.interactions import UserPromptRequest
 from ..agent.runner import ApiCall
 from ..application import CitraApplication
 from ..modes import Mode, ModeRegistry
+from ..workflows import Workflow, WorkflowRegistry
 from ..utils.chat_completions_api import call_api
 from ..utils.terminal import (
     BLUE,
@@ -54,6 +55,37 @@ def select_startup_mode(
     while True:
         selection = input_service.prompt(
             f"{BOLD}{BLUE}mode❯{RESET} "
+        ).strip()
+        try:
+            return registry.select(selection)
+        except (KeyError, ValueError) as error:
+            print(f"{RED}⏺ {error}{RESET}")
+
+
+def select_startup_workflow(
+    registry: WorkflowRegistry,
+    *,
+    input_service: Any = terminal_input,
+) -> Workflow:
+    """Select the sandbox-owning workflow before provisioning starts."""
+    print(f"{BOLD}Select a Citra workflow:{RESET}")
+    for index, workflow in enumerate(registry.workflows, 1):
+        description = (
+            f" — {workflow.description}" if workflow.description else ""
+        )
+        default = (
+            f" {GREEN}(default){RESET}"
+            if workflow is registry.default_workflow
+            else ""
+        )
+        print(
+            f"  {DIM}{index}.{RESET} {workflow.name}"
+            f"{description}{default}"
+        )
+
+    while True:
+        selection = input_service.prompt(
+            f"{BOLD}{BLUE}workflow❯{RESET} "
         ).strip()
         try:
             return registry.select(selection)
@@ -121,9 +153,13 @@ def run_turn_with_steering(
         nonlocal soft_stop_requested
         if not soft_stop_requested:
             soft_stop_requested = True
-            application.session.queue_steering(
-                "Stop the current work safely and return control to the user."
-            )
+            request_soft_stop = getattr(application, "request_soft_stop", None)
+            if callable(request_soft_stop):
+                request_soft_stop()
+            else:
+                application.session.queue_steering(
+                    "Stop the current work safely and return control to the user."
+                )
             print(f"{YELLOW}⏺ Stop instruction queued. Press Ctrl+C again to exit.{RESET}")
             return
 
@@ -178,6 +214,18 @@ def run_turn_with_steering(
                 )
                 input_closed = True
                 continue
+            if steering is not None and is_command(steering):
+                command_parts = steering[1:].split(None, 1)
+                command_id = command_parts[0] if command_parts else ""
+                if command_id in {"agent", "workflow"}:
+                    application.handle_command(steering)
+                else:
+                    print(
+                        f"{YELLOW}⏺ Only /agent and /workflow supervision "
+                        f"commands are "
+                        f"available while a turn is running.{RESET}"
+                    )
+                continue
             if steering is not None and application.session.queue_steering(steering):
                 print(f"{GREEN}⏺ Steering queued.{RESET}")
 
@@ -191,27 +239,48 @@ def main(
     api_call: ApiCall = call_api,
     input_service: Any = terminal_input,
     interactive_mode_selection: bool | None = None,
+    interactive_workflow_selection: bool | None = None,
 ) -> None:
     mode_registry = ModeRegistry(
         config_path=os.environ.get("CITRA_CONFIG_PATH"),
     )
-    should_prompt = (
-        sys.stdin.isatty()
-        if interactive_mode_selection is None
+    workflow_registry = WorkflowRegistry(
+        config_path=os.environ.get("CITRA_CONFIG_PATH"),
+        mode_registry=mode_registry,
+    )
+    prompt_override = (
+        interactive_workflow_selection
+        if interactive_workflow_selection is not None
         else interactive_mode_selection
     )
-    mode = (
-        select_startup_mode(
-            mode_registry,
+    should_prompt = (
+        sys.stdin.isatty()
+        if prompt_override is None
+        else prompt_override
+    )
+    workflow = (
+        select_startup_workflow(
+            workflow_registry,
             input_service=input_service,
         )
         if should_prompt
-        else mode_registry.select()
+        else workflow_registry.select()
     )
+    if workflow.name == "simple":
+        mode = (
+            select_startup_mode(
+                mode_registry,
+                input_service=input_service,
+            )
+            if should_prompt
+            else mode_registry.select()
+        )
+        workflow = workflow_registry.set_simple_mode(mode)
     application = CitraApplication.create(
         api_call=api_call,
-        mode=mode,
         mode_registry=mode_registry,
+        workflow=workflow,
+        workflow_registry=workflow_registry,
     )
     try:
         print_header(application.config, application.source_workspace)
@@ -226,7 +295,7 @@ def main(
                     if not application.handle_command(user_input):
                         break
                     continue
-                application.session.add_user_message(user_input)
+                application.prepare_user_turn(user_input)
                 if sys.stdin.isatty():
                     run_turn_with_steering(
                         application,

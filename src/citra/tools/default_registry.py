@@ -9,6 +9,7 @@ from .session_memory import (
     ConstraintTool,
     DecisionTool,
     FactTool,
+    RequirementTool,
     TodoTool,
     WorkingStateTool,
 )
@@ -121,6 +122,7 @@ def memory_tools() -> tuple[type[Tool], ...]:
     """Return concrete conversation-memory tools."""
 
     return (
+        RequirementTool,
         TodoTool,
         DecisionTool,
         ConstraintTool,

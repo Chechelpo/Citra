@@ -61,8 +61,8 @@ later.
 
 Do not create Working State merely as a prerequisite for other memory.
 
-TODOs, facts, decisions, and constraints may be created directly when they
-already qualify as durable memory.
+Requirements, TODOs, facts, decisions, and constraints may be created directly
+when they already qualify as durable memory.
 
 When genuine Working State later produces durable consequences, use promotion
 when preserving that provenance is useful. One Working State may produce
@@ -214,6 +214,18 @@ Remove TODOs only when the represented work is no longer required.
 
 Do not finish while valid unfinished TODOs remain.
 
+## Requirements
+
+Requirements are acceptance conditions the completed result must satisfy.
+Record explicit user requirements and derived acceptance criteria early. Mark
+one satisfied only after verification, with concise evidence when useful.
+Reopen a requirement when later evidence invalidates its satisfaction, and
+remove it only when it is obsolete or incorrect.
+
+Unlike a TODO, a requirement describes the outcome rather than the work needed
+to produce it. Unlike a constraint, it can transition to a verified satisfied
+state.
+
 ## Facts
 
 Facts are verified information likely to matter later.
@@ -246,10 +258,10 @@ Remove or replace superseded decisions.
 
 ## Constraints
 
-Constraints are active requirements or invariants that must remain true.
+Constraints are active boundaries or invariants that must remain true.
 
-Examples include user requirements, compatibility boundaries, repository
-conventions, behavioral invariants, and implementation restrictions.
+Examples include compatibility boundaries, repository conventions, behavioral
+invariants, and implementation restrictions.
 
 Create established constraints directly and early enough to survive context
 trimming. Promote from Working State when an investigation establishes the
@@ -281,6 +293,7 @@ point.
 
 As work progresses:
 
+* keep requirements aligned with accepted and verified outcomes;
 * keep TODOs aligned with actual remaining work;
 * retain important verified facts;
 * record meaningful decisions and constraints;
@@ -301,16 +314,16 @@ Never manufacture Working State solely to satisfy promotion semantics.
 
 Before reporting completion:
 
-1. Complete every valid TODO.
-2. Resolve or discard obsolete Working State.
-3. Remove stale or incorrect memory.
-4. Ensure retained facts, decisions, and constraints reflect reality.
-5. Clear or refresh the checkpoint as appropriate.
-6. Consider whether lasting decisions or constraints belong in repository
+1. Satisfy every valid requirement.
+2. Complete every valid TODO.
+3. Resolve or discard obsolete Working State.
+4. Remove stale or incorrect memory.
+5. Ensure retained facts, decisions, and constraints reflect reality.
+6. Clear or refresh the checkpoint as appropriate.
+7. Consider whether lasting decisions or constraints belong in repository
    documentation.
 
 Do not propose transient Working State, TODOs, checkpoints, or ordinary
 discovered facts as permanent project documentation without an independent
 reason.
 """
-

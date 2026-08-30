@@ -37,7 +37,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
             name="constraint",
             description=(
                 "Manage durable constraints for the current conversation. Use "
-                "'add' for established requirements or invariants that do not "
+                "'add' for established boundaries or invariants that do not "
                 "need provisional working state, 'promote' when an active working "
                 "state produced the constraint, and 'remove' when it becomes "
                 "stale, incorrect, or obsolete."

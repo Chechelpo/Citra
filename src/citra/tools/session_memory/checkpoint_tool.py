@@ -19,6 +19,7 @@ class CheckpointExtract:
     content: str
     next_step: str | None
     turn: int
+    revision: int
 
 
 class CheckpointTool(MemoryTool[CheckpointExtract]):
@@ -100,6 +101,16 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         )
 
         self._checkpoint: CheckpointExtract | None = None
+        self._revision = 0
+
+    @property
+    def revision(self) -> int:
+        """Monotonic revision used by workflow transition validation."""
+        return self._revision
+
+    @property
+    def current_checkpoint(self) -> CheckpointExtract | None:
+        return self._checkpoint
 
     @property
     @override
@@ -155,6 +166,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
                     "'content' and 'next_step' are invalid for clear."
                 )
 
+            self._revision += 1
             self._checkpoint = None
 
             return "Cleared handoff checkpoint."
@@ -183,10 +195,12 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
             else None
         )
 
+        self._revision += 1
         self._checkpoint = CheckpointExtract(
             content=content,
             next_step=next_step or None,
             turn=self.session.turn_number,
+            revision=self._revision,
         )
 
         return "Updated handoff checkpoint."

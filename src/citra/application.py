@@ -13,11 +13,23 @@ from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
 from .modes import Mode, ModeRegistry
-from  citra.utils.lsp import LspConfig, LspManager
+from .workflows import (
+    Workflow,
+    WorkflowRegistry,
+    WorkflowRun,
+    WorkflowRuntime,
+    simple_workflow,
+)
+from citra.utils.lsp import LspConfig, LspManager
+from .tools.session_memory import (
+    CheckpointTool,
+    RequirementTool,
+    TodoTool,
+    WorkingStateTool,
+)
 from .tools.skills.skill_registry import SkillRegistry
 from .tools.subagent import SubagentSupervisor
 from .utils.chat_completions_api import call_api
-from  citra.sandbox import WorkspaceSandbox
 from .utils.terminal import RESET, YELLOW
 
 
@@ -32,14 +44,31 @@ class CitraApplication:
         api_call: ApiCall = call_api,
         mode: Mode | None = None,
         mode_registry: ModeRegistry | None = None,
+        workflow: Workflow | None = None,
+        workflow_registry: WorkflowRegistry | None = None,
     ) -> None:
         self.config = config
+        self._api_call = api_call
         self.source_workspace = source_workspace.resolve()
         self.mode_registry = mode_registry or ModeRegistry(
             config_path=os.environ.get("CITRA_CONFIG_PATH"),
         )
-        self.mode = mode or self.mode_registry.active_mode
-        self.mode.validate()
+        self.workflow_registry = workflow_registry or WorkflowRegistry(
+            config_path=os.environ.get("CITRA_CONFIG_PATH"),
+            mode_registry=self.mode_registry,
+        )
+        if workflow is None:
+            if mode is not None:
+                workflow = simple_workflow(mode)
+            else:
+                workflow = self.workflow_registry.active_workflow
+        self.workflow = workflow
+        self.workflow.validate()
+        initial_mode = self.workflow.initial_mode
+        initial_mode.validate()
+        # Resolve the optional workflow override once. This policy owns the
+        # sandbox for the complete workflow and never changes at phase edges.
+        self.sandbox_config = self.workflow.resolved_sandbox_config
         self.session = AgentSession(
             memory_enabled=config.memory.enabled,
         )
@@ -49,7 +78,7 @@ class CitraApplication:
         self._hard_shutdown = Event()
         workspace_config = replace(
             config.workspace_context,
-            direct_source=self.mode.sandbox_config.mode.uses_direct_source,
+            direct_source=self.sandbox_config.mode.uses_direct_source,
         )
         self.workspace = WorkspaceContext.create(
             config=workspace_config,
@@ -58,26 +87,19 @@ class CitraApplication:
             browser_path=config.browser.browsers_path,
         )
         try:
+            self.workflow_runtime = WorkflowRuntime(
+                workflow=self.workflow,
+                workspace=self.workspace,
+                operator_sandbox_config=config.sandbox,
+            )
             self.skills = SkillRegistry(
                 agent_session=self.session,
                 memory_enabled=config.memory.enabled,
-                mode=self.mode,
-                skills_root=(
-                    Path(
-                        os.environ.get(
-                            "CITRA_INSTALL_ROOT",
-                            str(Path(__file__).resolve().parents[2]),
-                        )
-                    )
-                    / "skills"
-                ),
+                mode=initial_mode,
+                skills_root=self._skills_root(),
             )
             self.interactions = UserInteractionBroker()
-            sandbox = WorkspaceSandbox(
-                self.workspace,
-                config=config.sandbox,
-                mode_config=self.mode.sandbox_config,
-            )
+            sandbox = self.workflow_runtime.sandbox
             self.lsp_manager = LspManager(
                 self.workspace,
                 sandbox,
@@ -101,8 +123,10 @@ class CitraApplication:
                 lsp_manager=self.lsp_manager,
                 user_interactions=self.interactions,
                 subagents=self.subagent_supervisor,
+                workflow_runtime=self.workflow_runtime,
                 provided_config=config,
-                provided_mode=self.mode,
+                provided_mode=initial_mode,
+                provided_workflow=self.workflow,
                 provided_sandbox=sandbox,
             )
             self.runner = AgentRunner(
@@ -124,6 +148,8 @@ class CitraApplication:
         api_call: ApiCall = call_api,
         mode: Mode | None = None,
         mode_registry: ModeRegistry | None = None,
+        workflow: Workflow | None = None,
+        workflow_registry: WorkflowRegistry | None = None,
     ) -> CitraApplication:
         config = config or CitraConfig.load()
         source = Path(
@@ -137,11 +163,232 @@ class CitraApplication:
             api_call=api_call,
             mode=mode,
             mode_registry=mode_registry,
+            workflow=workflow,
+            workflow_registry=workflow_registry,
         )
 
-    def run_agent_turn(self) -> None:
+    @property
+    def mode(self) -> Mode:
+        """Currently active mode, which may change between serial phases."""
+        return self.context.mode
+
+    @property
+    def workflow_run(self) -> WorkflowRun | None:
+        return self.workflow_runtime.active_run
+
+    def prepare_user_turn(self, content: str) -> None:
+        """Seed either the persistent agent or a new isolated serial run."""
+        content = content.strip()
+        if not content:
+            raise ValueError("User task cannot be empty")
+        if not self.workflow.is_serial:
+            self.session.add_user_message(content)
+            return
+
+        self.workflow_runtime.start_run(content)
+        try:
+            self._activate_serial_step()
+        except Exception:
+            self.workflow_runtime.cancel_run()
+            raise
+
+    def run_agent_turn(self, user_input: str | None = None) -> None:
         self.workspace.ensure_active()
-        self.runner.run_turn()
+        if user_input is not None:
+            self.prepare_user_turn(user_input)
+        if not self.workflow.is_serial:
+            self.runner.run_turn()
+            return
+
+        active_run = self.workflow_runtime.active_run
+        if active_run is None or active_run.is_terminal:
+            inferred = self._latest_user_message()
+            if inferred is None:
+                raise RuntimeError(
+                    "Serial workflow requires prepare_user_turn(task) before execution"
+                )
+            self.prepare_user_turn(inferred)
+
+        run = self.workflow_runtime.active_run
+        assert run is not None
+        while not run.is_terminal:
+            step = run.begin_step()
+            checkpoint_revision = self._checkpoint_revision()
+            print(f"\n{YELLOW}⏺ Workflow phase: {step.step_id}{RESET}")
+            self.runner.run_turn()
+            if run.is_terminal:
+                break
+            handoff_error = self._submit_serial_handoff(
+                run,
+                checkpoint_revision=checkpoint_revision,
+            )
+            if handoff_error is not None:
+                checkpoint_name = (
+                    CheckpointTool.resolve_definition_for_context(
+                        self.context
+                    ).function.name
+                )
+                self.session.add_user_message(
+                    "The workflow controller rejected phase completion: "
+                    f"{handoff_error}\n\n"
+                    "Reconcile the durable memory tools, set an appropriate "
+                    f"transition with `{checkpoint_name}`, then return a "
+                    "self-contained final assistant message for the next role."
+                )
+                self.runner.run_turn()
+            if run.is_terminal:
+                break
+            if handoff_error is not None:
+                handoff_error = self._submit_serial_handoff(
+                    run,
+                    checkpoint_revision=checkpoint_revision,
+                )
+            if handoff_error is not None:
+                run.cancel()
+                raise RuntimeError(
+                    f"Workflow phase {step.step_id!r} could not hand off: "
+                    f"{handoff_error}"
+                )
+            run.advance()
+            if not run.is_terminal:
+                try:
+                    self._activate_serial_step()
+                except Exception:
+                    run.cancel()
+                    raise
+
+    def _activate_serial_step(self) -> None:
+        run = self.workflow_runtime.active_run
+        if run is None or run.is_terminal:
+            raise RuntimeError("Cannot activate a terminal workflow run")
+        mode = run.current_step.mode
+        # Conversation history and reasoning are role-local. Structured memory
+        # is task-scoped and deliberately shared by the workflow run.
+        session = AgentSession(
+            memory=run.memory,
+            memory_enabled=True,
+        )
+        session.add_user_message(run.phase_input())
+        skills = SkillRegistry(
+            agent_session=session,
+            memory_enabled=True,
+            mode=mode,
+            skills_root=self._skills_root(),
+        )
+        self.session = session
+        self.skills = skills
+        self.context.activate_mode(
+            mode,
+            skills=skills,
+            workflow_run=run,
+        )
+        self.runner = AgentRunner(
+            self.context,
+            session,
+            api_call=self._api_call,
+        )
+
+    def _checkpoint_revision(self) -> int:
+        checkpoint = self.session.memory.get(CheckpointTool.TOOL_ID)
+        if not isinstance(checkpoint, CheckpointTool):
+            return 0
+        return checkpoint.revision
+
+    def _submit_serial_handoff(
+        self,
+        run: WorkflowRun,
+        *,
+        checkpoint_revision: int,
+    ) -> str | None:
+        checkpoint_tool = self.session.memory.get(CheckpointTool.TOOL_ID)
+        if not isinstance(checkpoint_tool, CheckpointTool):
+            return "the checkpoint memory tool was not used"
+        if checkpoint_tool.revision <= checkpoint_revision:
+            return "the phase did not update its checkpoint"
+
+        checkpoint = checkpoint_tool.current_checkpoint
+        if checkpoint is None:
+            return "the phase cleared its checkpoint instead of setting one"
+        next_step = (checkpoint.next_step or "").strip()
+        if not next_step:
+            return "the checkpoint does not declare next_step"
+
+        step = run.current_step
+        if next_step not in step.allowed_next:
+            allowed = ", ".join(step.allowed_next)
+            return (
+                f"step {step.step_id!r} cannot transition to "
+                f"{next_step!r}; allowed: {allowed}"
+            )
+        if next_step == "complete":
+            completion_error = self._memory_completion_error()
+            if completion_error is not None:
+                return completion_error
+
+        message = self._latest_assistant_handoff()
+        if message is None:
+            return "the phase did not return a final assistant message"
+
+        try:
+            run.submit_handoff(summary=message, next_step=next_step)
+        except (RuntimeError, ValueError) as error:
+            return str(error)
+        return None
+
+    def _memory_completion_error(self) -> str | None:
+        requirement = self.session.memory.get(RequirementTool.TOOL_ID)
+        if (
+            isinstance(requirement, RequirementTool)
+            and requirement.has_unsatisfied_requirements()
+        ):
+            return "workflow completion requires all valid requirements satisfied"
+        todo = self.session.memory.get(TodoTool.TOOL_ID)
+        if isinstance(todo, TodoTool) and todo.has_outstanding_todos():
+            return "workflow completion requires all valid TODOs to be complete"
+        working = self.session.memory.get(WorkingStateTool.TOOL_ID)
+        if isinstance(working, WorkingStateTool) and working.get_extracts():
+            return (
+                "workflow completion requires working states to be resolved "
+                "or discarded"
+            )
+        return None
+
+    def _latest_assistant_handoff(self) -> str | None:
+        for message in reversed(self.session.get_messages()):
+            if message.get("role") != "assistant":
+                continue
+            if message.get("tool_calls"):
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        return None
+
+    def _skills_root(self) -> Path:
+        return (
+            Path(
+                os.environ.get(
+                    "CITRA_INSTALL_ROOT",
+                    str(Path(__file__).resolve().parents[2]),
+                )
+            )
+            / "skills"
+        )
+
+    def _latest_user_message(self) -> str | None:
+        for message in reversed(self.session.get_messages()):
+            if message.get("role") == "user":
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    normalized = content.strip()
+                    if normalized.startswith("# Workflow task"):
+                        continue
+                    if normalized.startswith(
+                        "The workflow controller rejected phase completion:"
+                    ):
+                        continue
+                    return normalized
+        return None
 
     def handle_command(self, user_input: str) -> bool:
         body = user_input[1:]
@@ -178,6 +425,13 @@ class CitraApplication:
         self._hard_shutdown.set()
         self.close(force=True)
 
+    def request_soft_stop(self) -> None:
+        """Stop a serial macro after the active model turn reaches safety."""
+        self.workflow_runtime.cancel_run()
+        self.session.queue_steering(
+            "Stop the current work safely and return control to the user."
+        )
+
     def close(self, *, force: bool = False) -> None:
         with self._close_lock:
             if self._closed or self._closing:
@@ -199,6 +453,10 @@ class CitraApplication:
                 self.context.close(force=force)
             except BaseException as error:
                 errors.append(error)
+            try:
+                self.workspace.cleanup(force=force)
+            except BaseException as error:
+                errors.append(error)
         finally:
             with self._close_lock:
                 self._closing = False
@@ -207,7 +465,8 @@ class CitraApplication:
         if errors:
             detail = "; ".join(str(error) for error in errors)
             raise RuntimeError(
-                f"Citra shutdown was incomplete; runtime={self.workspace.root}: {detail}"
+                "Citra shutdown was incomplete; "
+                f"runtime={self.workspace.root}: {detail}"
             ) from errors[0]
 
     def __enter__(self) -> CitraApplication:

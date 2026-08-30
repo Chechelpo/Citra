@@ -20,6 +20,7 @@ from typing import Any
 from citra.modes import Mode, SandboxConfig, TaskSteeringConfig
 from citra.tools.default_registry import ToolSet
 from citra.tools.skills.skill import Skill
+from citra.tools.tool import Tool
 from citra.tools.transient import Bash, Edit, Read, Write
 from citra.sandbox.sandbox import SandboxMode
 
@@ -34,11 +35,11 @@ from .guidance import RequestGuidanceTool
 class SubagentToolset:
     """The narrow tool set exposed to a subagent."""
 
-    read: type
-    write: type
-    edit: type
-    bash: type
-    request_guidance: type
+    read: type[Tool]
+    write: type[Tool]
+    edit: type[Tool]
+    bash: type[Tool]
+    request_guidance: type[Tool]
 
     def to_tool_set(self) -> ToolSet:
         return ToolSet(
@@ -80,7 +81,12 @@ class SubagentMode(Mode):
         self,
         *,
         name: str,
-        system_prompt: str,
+        subagent_id: str,
+        task: str,
+        write_path: Path,
+        readonly_binds: tuple[Path, ...],
+        network: bool,
+        system_prompt_addendum: str,
         toolset: SubagentToolset,
         sandbox_config: SandboxConfig,
     ) -> None:
@@ -89,7 +95,12 @@ class SubagentMode(Mode):
             "Constrained mode for a subagent. Only filesystem read/write/"
             "edit, bash, and request_guidance are available."
         )
-        self._system_prompt = system_prompt
+        self._subagent_id = subagent_id
+        self._task = task
+        self._write_path = write_path
+        self._readonly_binds = readonly_binds
+        self._network = network
+        self._system_prompt_addendum = system_prompt_addendum
         self._toolset = toolset
         self._sandbox_config = sandbox_config
         self._task_steering: TaskSteeringConfig | None = None
@@ -130,8 +141,16 @@ class SubagentMode(Mode):
         self,
         context: Any,
     ) -> str:
-        del context
-        return self._system_prompt
+        return _build_system_prompt(
+            subagent_id=self._subagent_id,
+            task=self._task,
+            write_path=self._write_path,
+            readonly_binds=self._readonly_binds,
+            network=self._network,
+            addendum=self._system_prompt_addendum,
+            toolset=self._toolset,
+            context=context,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -170,18 +189,14 @@ def build_subagent_mode(
         network=network,
     )
 
-    system_prompt = _build_system_prompt(
+    return SubagentMode(
+        name=f"subagent:{subagent_id}",
         subagent_id=subagent_id,
         task=task,
         write_path=write_path,
         readonly_binds=readonly_binds,
         network=network,
-        addendum=system_prompt_addendum,
-    )
-
-    return SubagentMode(
-        name=f"subagent:{subagent_id}",
-        system_prompt=system_prompt,
+        system_prompt_addendum=system_prompt_addendum,
         toolset=toolset,
         sandbox_config=sandbox_config,
     )
@@ -194,7 +209,7 @@ def _subagent_sandbox_config(
     network: bool,
 ) -> SandboxConfig:
     """
-    Build the SandboxConfig used by a subagent.
+    Build the SandboxConfig inherited by a subagent's single-mode workflow.
 
     ``bwrap`` will still apply the orchestrator's baseline
     (``SANDBOX_WRITABLE_DIRS`` and the runtime's read-only binds), so we
@@ -229,7 +244,19 @@ def _build_system_prompt(
     readonly_binds: tuple[Path, ...],
     network: bool,
     addendum: str,
+    toolset: SubagentToolset,
+    context: Any,
 ) -> str:
+    public_names = {
+        name: tool_type.resolve_definition_for_context(context).function.name
+        for name, tool_type in (
+            ("read", toolset.read),
+            ("write", toolset.write),
+            ("edit", toolset.edit),
+            ("bash", toolset.bash),
+            ("request_guidance", toolset.request_guidance),
+        )
+    }
     lines: list[str] = [
         "# Subagent",
         "",
@@ -244,7 +271,8 @@ def _build_system_prompt(
         "",
         "## Environment",
         "",
-        f"- Write directory: `{write_path}` (the only place you may create or modify files).",
+        f"- Write directory: `{write_path}` (the only place you may create "
+        "or modify files).",
         "- Read-only binds:",
     ]
 
@@ -263,10 +291,13 @@ def _build_system_prompt(
             "",
             "## Available tools",
             "",
-            "- `read`, `write`, `edit`: operate relative to the write directory.",
-            "- `bash`: runs inside the same sandbox; the Bubblewrap policy "
+            f"- `{public_names['read']}`, `{public_names['write']}`, "
+            f"`{public_names['edit']}`: operate relative to the write directory.",
+            f"- `{public_names['bash']}`: runs inside the same sandbox; "
+            "the Bubblewrap policy "
             "above determines what it can reach.",
-            "- `request_guidance(question)`: ask the orchestrator a single, "
+            f"- `{public_names['request_guidance']}`: ask the orchestrator a "
+            "single, "
             "self-contained question and block until the orchestrator responds. "
             "Use this when an ambiguity in the task or environment prevents you "
             "from making progress.",
@@ -276,7 +307,8 @@ def _build_system_prompt(
             "- Stay strictly inside the write directory. Do not attempt to "
             "read or write paths the sandbox or your tools do not expose.",
             "- You cannot open other tools. If you think you need a tool you "
-            "do not have, ask the orchestrator through `request_guidance`.",
+            "do not have, ask the orchestrator through "
+            f"`{public_names['request_guidance']}`.",
             "- Prefer small, well-scoped changes. Do not introduce unrelated "
             "refactors.",
             "- When you are done, end your turn with a short summary of what "

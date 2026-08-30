@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 class SandboxMode(IntEnum):
     """
-    Level of sandboxing required by a mode.
+    Level of sandboxing required by a mode or workflow override.
 
     Each level includes the guarantees of the previous level.
     """

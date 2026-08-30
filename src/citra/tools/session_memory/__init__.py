@@ -4,6 +4,7 @@ from .decision_tool import DecisionTool
 from .fact_tool import FactTool
 from .todo_tool import TodoTool
 from .memory_tool import MemoryTool
+from .requirement_tool import RequirementTool
 from .working_state_tool import WorkingStateTool
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "FactTool",
     "TodoTool",
     "MemoryTool",
+    "RequirementTool",
     "WorkingStateTool"
 ]

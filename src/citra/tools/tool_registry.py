@@ -88,8 +88,15 @@ class ToolRegistry:
                     "memory",
                     None,
                 )
-                if not session.memory_enabled or not bool(
+                workflow = getattr(context, "workflow", None)
+                workflow_requires_memory = bool(
+                    getattr(workflow, "requires_memory", False)
+                )
+                memory_configured = bool(
                     getattr(configured_memory, "enabled", True)
+                )
+                if not session.memory_enabled or not (
+                    memory_configured or workflow_requires_memory
                 ):
                     continue
                 tool = self._get_memory_tool(
@@ -142,6 +149,7 @@ class ToolRegistry:
             ),
         )
         tool.rebind_context(context)
+        tool.rebind_session(session)
         return tool
 
     def release_session(self, session: AgentSession) -> None:

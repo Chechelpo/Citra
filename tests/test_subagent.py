@@ -23,6 +23,11 @@ from citra.tools.subagent.spec import (
     TranscriptEntry,
     resolve_write_path,
 )
+from citra.tools.subagent.guidance import (
+    RequestGuidanceTool,
+    SubagentGuidanceBridge,
+)
+from citra.tools.subagent.mode import build_subagent_mode
 from citra.tools.subagent.supervisor import (
     ContextBuilder,
     SubagentSupervisor,
@@ -180,6 +185,14 @@ class TestSubagentSpec:
         assert spec.subagent_id
         assert spec.subagent_id != "   "
 
+    def test_subagent_id_rejects_path_traversal(self) -> None:
+        with pytest.raises(ValueError, match="Subagent id"):
+            SubagentSpec(
+                task="t",
+                write_path="x",
+                subagent_id="../../escape",
+            )
+
     def test_readonly_binds_normalized(self) -> None:
         spec = SubagentSpec(
             task="t",
@@ -214,6 +227,15 @@ class TestSubagentSpec:
         with pytest.raises(ValueError):
             resolve_write_path(tmp_path, "regular.txt")
 
+    def test_resolve_write_path_rejects_workspace_escape(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        with pytest.raises(ValueError, match="must remain inside"):
+            resolve_write_path(workspace, "../escape")
+
 
 # ---------------------------------------------------------------------------
 # Transcript entry tests
@@ -239,6 +261,51 @@ class TestTranscriptEntry:
         )
         line = entry.to_jsonl_line()
         assert "\n" not in line
+
+
+def test_request_guidance_uses_context_bridge() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _Supervisor:
+        def request_guidance(self, subagent_id: str, question: str) -> str:
+            calls.append((subagent_id, question))
+            return "continue"
+
+    context = SimpleNamespace(
+        config=SimpleNamespace(
+            model=lambda: SimpleNamespace(id="test-model"),
+        ),
+        subagents=SubagentGuidanceBridge(
+            subagent_id="worker-1",
+            supervisor=_Supervisor(),
+        ),
+    )
+    tool = RequestGuidanceTool(cast(Any, context))
+
+    assert tool.execute({"question": "Which API?"}) == "continue"
+    assert calls == [("worker-1", "Which API?")]
+
+
+def test_subagent_prompt_uses_context_selected_public_tool_names(
+    tmp_path: Path,
+) -> None:
+    context = SimpleNamespace(
+        config=SimpleNamespace(
+            model=lambda: SimpleNamespace(id="gpt-5-codex"),
+        ),
+    )
+    mode = build_subagent_mode(
+        subagent_id="worker-1",
+        task="Implement the component",
+        write_path=tmp_path,
+        readonly_binds=(),
+        network=False,
+        system_prompt_addendum="",
+    )
+
+    prompt = mode.get_system_prompt(cast(Any, context))
+    assert "`exec_command`" in prompt
+    assert "`request_guidance`" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +396,75 @@ def test_create_starts_subagent_and_writes_transcript(
     assert transcript_path.exists()
     contents = transcript_path.read_text(encoding="utf-8")
     assert "do a thing" in contents
+
+
+def test_supervisor_seeds_worker_task_and_records_runner_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from citra.agent.runner import AgentRunEvent
+    import citra.tools.subagent.supervisor as supervisor_module
+
+    supervisor, _ = _make_supervisor(tmp_path)
+    seen_messages: list[dict[str, Any]] = []
+
+    class _ObservedRunner:
+        def __init__(
+            self,
+            context: Any,
+            session: Any,
+            *,
+            api_call: Any,
+            event_sink: Any,
+            render_output: bool,
+        ) -> None:
+            del context, api_call
+            assert render_output is False
+            seen_messages.extend(session.get_messages())
+            self.event_sink = event_sink
+
+        def run_turn(self) -> None:
+            self.event_sink(
+                AgentRunEvent(
+                    kind="assistant",
+                    role="assistant",
+                    content="finished component",
+                )
+            )
+
+    monkeypatch.setattr(supervisor_module, "AgentRunner", _ObservedRunner)
+
+    class _Workspace:
+        def cleanup(self, *, force: bool = False) -> None:
+            assert force
+
+    context = _FakeExecutionContext(_Workspace())
+    subagent_id = supervisor.create(
+        SubagentSpec(
+            task="implement component",
+            write_path="component",
+            subagent_id="worker-1",
+        ),
+        build_context=cast(
+            ContextBuilder,
+            lambda spec, write_path, binds: context,
+        ),
+    )
+
+    statuses = supervisor.wait((subagent_id,), timeout=5.0)
+    assert statuses[subagent_id] == SubagentStatus.COMPLETED
+    assert any(
+        message.get("role") == "user"
+        and message.get("content") == "implement component"
+        for message in seen_messages
+    )
+    snapshot = supervisor.snapshot(subagent_id)
+    assert snapshot is not None
+    assert any(
+        entry.kind == "assistant"
+        and entry.content == "finished component"
+        for entry in snapshot.transcript
+    )
 
 
 def test_poll_returns_every_subagent(tmp_path: Path) -> None:
@@ -670,6 +806,52 @@ permanent_workspace = "{tmp_path / 'source'}"
     assert default_cfg.memory.enabled is False
     assert default_cfg.lsp.enabled is False
     assert default_cfg.lint.enabled is False
+
+
+def test_subagent_runtime_forks_resolver_over_parent_assets(
+    tmp_path: Path,
+) -> None:
+    from citra.context.runtime import (
+        ProvisionedTool,
+        RuntimeProvisioning,
+    )
+    from citra.tools.subagent.factory import _fork_runtime_provisioning
+
+    runtime = tmp_path / "runtime"
+    command = runtime / "bin" / "bash"
+    parent_provisioning = RuntimeProvisioning(
+        runtime_root=runtime,
+        budget_bytes=100,
+        copied_bytes=10,
+        assets={},
+        tools={
+            "command:bash": ProvisionedTool(
+                id="command:bash",
+                commands={"bash": command},
+                mode="copy",
+            ),
+            "staged:pytest": ProvisionedTool(
+                id="staged:pytest",
+                commands={"pytest": tmp_path / "env" / "pytest"},
+                mode="dependency-environment",
+            ),
+        },
+        definitions={},
+    )
+    parent_workspace = SimpleNamespace(
+        runtime=runtime,
+        provisioning=parent_provisioning,
+    )
+
+    forked = _fork_runtime_provisioning(cast(Any, parent_workspace))
+
+    assert forked.runtime_root == runtime
+    assert forked.resolve_command("bash") == command
+    assert forked.tools is not parent_provisioning.tools
+    assert forked.tools["command:bash"] is not parent_provisioning.tools[
+        "command:bash"
+    ]
+    assert "staged:pytest" not in forked.tools
 
 
 # Cleanup is automatic because the test runs in a tmp_path; the

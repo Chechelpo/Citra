@@ -120,6 +120,10 @@ class MemoryTests(unittest.TestCase):
         item = self.checkpoint.get_extracts()[0]
         self.assertEqual(item.content, "Tests green")
         self.assertEqual(item.next_step, "Commit")
+        self.assertEqual(item.revision, 1)
+        self.assertEqual(self.checkpoint.revision, 1)
+        self.checkpoint._execute({"action": "clear"})
+        self.assertEqual(self.checkpoint.revision, 2)
 
     def test_direct_add_actions_are_rejected(self):
         for tool in (self.facts, self.todos, self.constraints, self.decisions):

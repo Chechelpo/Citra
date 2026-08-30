@@ -9,12 +9,14 @@ exactly like ``citra.tools.default_registry``.
 
 from .model import ModelCommand
 from .lsp import LspCommand
+from .agent import AgentCommand
 from .clear import ClearCommand
 from .command import CommandRegistry
 from .debug import DebugCommand
 from .help import HelpCommand
 from .quit import QuitCommand
 from .test import TestCommand
+from .workflow import WorkflowCommand
 
 
 COMMAND_REGISTRY = CommandRegistry()
@@ -26,3 +28,5 @@ COMMAND_REGISTRY.register("test", TestCommand)
 COMMAND_REGISTRY.register("model", ModelCommand)
 COMMAND_REGISTRY.register("lsp", LspCommand)
 COMMAND_REGISTRY.register("debug", DebugCommand)
+COMMAND_REGISTRY.register("agent", AgentCommand)
+COMMAND_REGISTRY.register("workflow", WorkflowCommand)

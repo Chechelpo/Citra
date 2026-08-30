@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
@@ -18,7 +19,7 @@ from ..cli.rendering import (
 )
 from ..context import ExecutionContext
 from ..tools.enable_tools import EnableTools
-from ..tools.session_memory import TodoTool
+from ..tools.session_memory import RequirementTool, TodoTool
 from ..tools.tool_registry import ToolRegistry
 from ..utils.chat_completions_api import (
     ModelRequestInterrupted,
@@ -36,6 +37,19 @@ _CANCELLED_BY_STEERING = (
 )
 
 
+@dataclass(frozen=True)
+class AgentRunEvent:
+    """One observable model-loop event emitted at a protocol-safe boundary."""
+
+    kind: str
+    role: str
+    content: str
+    tool: str | None = None
+
+
+AgentEventSink = Callable[[AgentRunEvent], None]
+
+
 class AgentRunner:
     """Run model/tool cycles against lifecycle-scoped services."""
 
@@ -45,10 +59,14 @@ class AgentRunner:
         session: AgentSession,
         *,
         api_call: ApiCall = call_api,
+        event_sink: AgentEventSink | None = None,
+        render_output: bool = True,
     ) -> None:
         self.context = context
         self.session = session
         self.api_call = api_call
+        self.event_sink = event_sink
+        self.render_output = render_output
 
     def run_turn(self) -> None:
         ensure_active = getattr(self.context, "ensure_active", None)
@@ -158,7 +176,15 @@ class AgentRunner:
             assistant = get_assistant_message(response)
             text = assistant.get("content")
             if isinstance(text, str) and text:
-                render_assistant_text(text)
+                self._emit(
+                    AgentRunEvent(
+                        kind="assistant",
+                        role="assistant",
+                        content=text,
+                    )
+                )
+                if self.render_output:
+                    render_assistant_text(text)
             tool_calls = cast(
                 list[ChatCompletionMessageFunctionToolCallParam],
                 assistant.get("tool_calls") or [],
@@ -172,9 +198,22 @@ class AgentRunner:
                 if self.session.steering.has_pending():
                     continue
                 todo_tool = tools_by_id.get(TodoTool.TOOL_ID)
+                requirement_tool = tools_by_id.get(RequirementTool.TOOL_ID)
+                if (
+                    isinstance(requirement_tool, RequirementTool)
+                    and requirement_tool.has_unsatisfied_requirements()
+                    and not self._is_serial_role_turn()
+                ):
+                    self.session.add_user_message(
+                        "Continue: valid task requirements remain unsatisfied. "
+                        "Satisfy them with verification evidence, or remove "
+                        "only requirements that are truly obsolete or invalid."
+                    )
+                    continue
                 if (
                     isinstance(todo_tool, TodoTool)
                     and todo_tool.has_outstanding_todos()
+                    and not self._is_serial_role_turn()
                 ):
                     self.session.add_user_message(
                         "Continue: valid conversation TODOs remain outstanding. "
@@ -192,13 +231,33 @@ class AgentRunner:
                     raise RuntimeError("Model returned a tool call without an id.")
                 if not cancel_remaining and self.session.steering.has_pending():
                     cancel_remaining = True
-                    print(
-                        f"\n{YELLOW}⏺ Steering received. "
-                        f"Cancelling remaining tool calls.{RESET}"
+                    if self.render_output:
+                        print(
+                            f"\n{YELLOW}⏺ Steering received. "
+                            f"Cancelling remaining tool calls.{RESET}"
+                        )
+                function = tool_call["function"]
+                tool_name = str(function.get("name") or "unknown")
+                self._emit(
+                    AgentRunEvent(
+                        kind="tool-call",
+                        role="assistant",
+                        content=str(function.get("arguments") or "{}"),
+                        tool=tool_name,
                     )
-                render_tool_call_start(tool_call)
-                memory_tool = memory_tool_for_call(tools, tool_call)
-                memory_before = build_memory_context(tools) if memory_tool else None
+                )
+                if self.render_output:
+                    render_tool_call_start(tool_call)
+                memory_tool = (
+                    memory_tool_for_call(tools, tool_call)
+                    if self.render_output
+                    else None
+                )
+                memory_before = (
+                    build_memory_context(tools)
+                    if memory_tool
+                    else None
+                )
                 result = (
                     _CANCELLED_BY_STEERING
                     if cancel_remaining
@@ -208,14 +267,38 @@ class AgentRunner:
                         session=self.session,
                     )
                 )
-                render_tool_call_result(result)
+                self._emit(
+                    AgentRunEvent(
+                        kind="tool-result",
+                        role="tool",
+                        content=result,
+                        tool=tool_name,
+                    )
+                )
+                if self.render_output:
+                    render_tool_call_result(result)
                 self.session.add_tool_result(call_id, result)
                 if not cancel_remaining and memory_tool is not None:
                     render_memory_change(tools, memory_before)
 
+    def _emit(self, event: AgentRunEvent) -> None:
+        sink = self.event_sink
+        if sink is not None:
+            sink(event)
+
     def _runtime_is_closing(self) -> bool:
         workspace = getattr(self.context, "workspace", None)
         return bool(getattr(workspace, "is_closing", False))
+
+    def _is_serial_role_turn(self) -> bool:
+        """Return whether TODOs may survive this isolated role boundary."""
+        workflow = getattr(self.context, "workflow", None)
+        run = getattr(self.context, "workflow_run", None)
+        return bool(
+            workflow is not None
+            and getattr(workflow, "is_serial", False)
+            and run is not None
+        )
 
 
 def _configured_tools(

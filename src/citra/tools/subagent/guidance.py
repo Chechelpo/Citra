@@ -11,7 +11,7 @@ an ``answer`` argument.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -24,13 +24,24 @@ from ...utils.json_schema import (
 )
 
 
-@dataclass
-class _PendingGuidance:
-    """Inbox entry posted by a subagent's ``request_guidance`` call."""
+@dataclass(frozen=True)
+class SubagentGuidanceBridge:
+    """Per-worker binding injected into the nested execution context.
 
-    question: str
-    response_event: Any = field(default_factory=Any)
-    response: str | None = None
+    Normal tools are constructed by :class:`ToolRegistry` with only an
+    ``ExecutionContext``.  Keeping the worker id and supervisor on this small
+    context service lets ``RequestGuidanceTool`` follow that constructor
+    contract instead of requiring an incompatible bespoke factory.
+    """
+
+    subagent_id: str
+    supervisor: Any
+
+    def request_guidance(self, question: str) -> str:
+        return self.supervisor.request_guidance(
+            self.subagent_id,
+            question,
+        )
 
 
 class RequestGuidanceTool(Tool):
@@ -83,13 +94,14 @@ class RequestGuidanceTool(Tool):
     def __init__(
         self,
         context: ExecutionContext,
-        *,
-        subagent_id: str,
-        supervisor: Any,
     ) -> None:
         super().__init__(context=context)
-        self.__subagent_id = subagent_id
-        self.__supervisor = supervisor
+        bridge = getattr(context, "subagents", None)
+        if not isinstance(bridge, SubagentGuidanceBridge):
+            raise RuntimeError(
+                "ExecutionContext is missing its subagent guidance bridge."
+            )
+        self.__bridge = bridge
 
     @classmethod
     @override
@@ -106,7 +118,7 @@ class RequestGuidanceTool(Tool):
 
     @property
     def subagent_id(self) -> str:
-        return self.__subagent_id
+        return self.__bridge.subagent_id
 
     @override
     def _execute(
@@ -119,10 +131,7 @@ class RequestGuidanceTool(Tool):
                 "request_guidance requires a non-empty 'question'."
             )
 
-        return self.__supervisor.request_guidance(
-            self.__subagent_id,
-            question,
-        )
+        return self.__bridge.request_guidance(question)
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,11 @@ command registration
 ExecutionContext
 ```
 
+`AgentRunner` may emit optional `AgentRunEvent` values at protocol-safe
+assistant/tool boundaries and may suppress terminal rendering. Subagent
+runtimes use this observer path to build isolated transcripts; the default
+foreground runner keeps normal rendering enabled.
+
 Those responsibilities belong elsewhere.
 
 ---
@@ -64,11 +69,14 @@ turn_number: int
 ever splitting an assistant tool-call message from its tool results.
 
 `steering` contains user instructions queued for later insertion.
-`memory` owns the long-lived TODO/fact/decision/constraint/checkpoint tool
-instances, so truncating old chat messages cannot erase working state.
+`memory` owns the long-lived requirement/TODO/fact/decision/constraint/
+checkpoint tool instances, so truncating old chat messages cannot erase
+working state.
 `memory_enabled` is derived from `[memory].enabled`; when false, memory tools
 and prompt/skill guidance are absent while ordinary message history remains
-active.
+active. A serial workflow is the deliberate exception: every role receives a
+fresh `AgentSession` but shares one task-scoped `ConversationMemory`, and the
+workflow enables memory regardless of the ordinary conversation preference.
 
 At the start of each user turn, `AgentRunner` asks the selected mode for its
 turn-indexed task steering. Non-empty steering is appended as a normal user
@@ -462,9 +470,11 @@ rather than depending on internal implementation details.
 
 ## Notes for agents
 
-* `AgentSession` is process-lifetime conversation state.
-* `ExecutionContext` and the workspace are process-lifetime application
-  services, but are not conversation memory.
+* `AgentSession` is role-lifetime state. It is process-lifetime only for a
+  persistent single-mode workflow. Serial workflows create a fresh session at
+  every role boundary so reasoning and memory do not contaminate later roles.
+* `ExecutionContext`, the workflow-owned sandbox, and the workspace are
+  process-lifetime application services, but are not conversation memory.
 * Ordinary tools remain transient. Memory-tool instances are owned by
   `AgentSession.memory` and rebound to the current context when instantiated.
 * Steering uses FIFO ordering.

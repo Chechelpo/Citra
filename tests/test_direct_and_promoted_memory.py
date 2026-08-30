@@ -266,8 +266,10 @@ class MemoryTests(unittest.TestCase):
         extract = self.checkpoint.get_extracts()[0]
         self.assertEqual(extract.content, "Files edited")
         self.assertEqual(extract.turn, 1)
+        self.assertEqual(extract.revision, 1)
         self.checkpoint._execute({"action": "clear"})
         self.assertEqual(self.checkpoint.get_extracts(), [])
+        self.assertEqual(self.checkpoint.revision, 2)
 
 
 if __name__ == "__main__":

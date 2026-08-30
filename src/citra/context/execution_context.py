@@ -21,6 +21,7 @@ from .config_loader import CitraConfig
 if TYPE_CHECKING:
     from citra.modes import Mode
     from citra.utils.lsp import LspManager
+    from citra.workflows import Workflow, WorkflowRun, WorkflowRuntime
 
 DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
 
@@ -34,11 +35,17 @@ class ExecutionContext:
     lsp_manager: LspManager | None = None
     user_interactions: object | None = None
     subagents: object | None = None
+    workflow_runtime: WorkflowRuntime | None = None
+    workflow_run: WorkflowRun | None = None
     provided_config: CitraConfig | None = field(
         default=None,
         repr=False,
     )
     provided_mode: Mode | None = field(
+        default=None,
+        repr=False,
+    )
+    provided_workflow: Workflow | None = field(
         default=None,
         repr=False,
     )
@@ -53,6 +60,9 @@ class ExecutionContext:
         init=False,
     )
     __mode: Mode = field(
+        init=False,
+    )
+    __workflow: Workflow = field(
         init=False,
     )
     __sandbox: WorkspaceSandbox = field(
@@ -89,7 +99,21 @@ class ExecutionContext:
 
             config = CitraConfig.load()
 
+        workflow_runtime = self.workflow_runtime
+        workflow = self.provided_workflow
+        if workflow_runtime is not None:
+            if (
+                workflow is not None
+                and workflow_runtime.workflow is not workflow
+            ):
+                raise ValueError(
+                    "ExecutionContext workflow and WorkflowRuntime differ"
+                )
+            workflow = workflow_runtime.workflow
+
         mode = self.provided_mode
+        if workflow is not None and mode is None:
+            mode = workflow.initial_mode
         if mode is None:
             from citra.modes import ModeRegistry
 
@@ -97,11 +121,29 @@ class ExecutionContext:
                 config_path=os.environ.get("CITRA_CONFIG_PATH"),
             ).active_mode
 
-        sandbox = self.provided_sandbox or WorkspaceSandbox(
-            self.workspace,
-            config=config.sandbox,
-            mode_config=mode.sandbox_config,
-        )
+        if workflow is None:
+            from citra.workflows import simple_workflow
+
+            workflow = simple_workflow(mode)
+
+        if workflow_runtime is None:
+            from citra.workflows import WorkflowRuntime
+
+            workflow_runtime = WorkflowRuntime(
+                workflow=workflow,
+                workspace=self.workspace,
+                operator_sandbox_config=config.sandbox,
+                sandbox=self.provided_sandbox,
+            )
+            object.__setattr__(self, "workflow_runtime", workflow_runtime)
+        elif (
+            self.provided_sandbox is not None
+            and self.provided_sandbox is not workflow_runtime.sandbox
+        ):
+            raise ValueError(
+                "ExecutionContext sandbox is not owned by its WorkflowRuntime"
+            )
+        sandbox = workflow_runtime.sandbox
         self.workspace.provisioning.health_check_tools(
             sandbox,
             cwd=self.workspace.workspace,
@@ -147,6 +189,12 @@ class ExecutionContext:
 
         object.__setattr__(
             self,
+            "_ExecutionContext__workflow",
+            workflow,
+        )
+
+        object.__setattr__(
+            self,
             "_ExecutionContext__sandbox",
             sandbox,
         )
@@ -188,6 +236,23 @@ class ExecutionContext:
     @property
     def mode(self) -> Mode:
         return self.__mode
+
+    @property
+    def workflow(self) -> Workflow:
+        return self.__workflow
+
+    def activate_mode(
+        self,
+        mode: Mode,
+        *,
+        skills: SkillRegistry,
+        workflow_run: WorkflowRun | None,
+    ) -> None:
+        """Bind one isolated mode turn to the persistent workflow runtime."""
+        mode.validate()
+        object.__setattr__(self, "_ExecutionContext__mode", mode)
+        object.__setattr__(self, "skills", skills)
+        object.__setattr__(self, "workflow_run", workflow_run)
 
     @property
     def sandbox(

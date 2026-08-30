@@ -38,7 +38,11 @@ class ConversationMemory:
         with self._lock:
             return tuple(self._services.values())
 
+    def get(self, name: str) -> object | None:
+        """Return one existing memory service without creating it."""
+        with self._lock:
+            return self._services.get(name)
+
     def clear(self) -> None:
         with self._lock:
             self._services.clear()
-

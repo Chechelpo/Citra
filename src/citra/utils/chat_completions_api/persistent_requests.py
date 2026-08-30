@@ -729,6 +729,34 @@ def _normalized_error_codes(
     }
 
 
+def _is_gmicloud_insufficient_balance_error(
+    status: int,
+    body: str,
+) -> bool:
+    """Detect GMICloud's misleading balance failure on free-model routes.
+
+    GMICloud can return HTTP 402 with an ``Insufficient balance`` message even
+    when the selected route is intended to be free. Treat that narrow provider
+    response as a transient upstream failure so it does not terminate the
+    client immediately.
+    """
+    if status != 402:
+        return False
+
+    # Inspect the raw body as well as extracted classifier fields. Some router
+    # payloads put ``Insufficient balance`` under a generic ``error`` key, which
+    # is intentionally not one of _http_error_fields()'s classifier keys.
+    fields = _http_error_fields(body)
+    detail = " ".join(
+        [body, *(value for _, value in fields)]
+    ).casefold()
+
+    return (
+        "gmicloud" in detail
+        and "insufficient balance" in detail
+    )
+
+
 def _should_retry_http_error(
     status: int,
     body: str,
@@ -742,6 +770,10 @@ def _should_retry_http_error(
     back to the generic status policy.
 
     Special cases:
+
+    * ``402`` from GMICloud containing ``Insufficient balance`` is treated as
+      a transient provider failure. This narrow exception prevents a free-model
+      route from terminating the client on a provider-side billing gate.
 
     * ``404`` + structured code ``upstream_404`` is retryable. This means the
       router accepted the request but the selected provider's own upstream
@@ -761,6 +793,13 @@ def _should_retry_http_error(
     codes = _normalized_error_codes(
         fields
     )
+
+    # GMICloud may emit a billing-looking HTTP 402 for a route that is
+    # configured as free. Do not let that provider-specific response stop the
+    # client; treat it like a transient upstream failure and continue through
+    # the bounded retry policy.
+    if _is_gmicloud_insufficient_balance_error(status, body):
+        return True
 
     # Some providers report an internal/routing 404 using HTTP 404 plus an
     # explicit provider code. Retrying this narrow case is useful; retrying
@@ -879,6 +918,12 @@ def _http_retry_reason(
         return (
             "hit a temporary upstream "
             "provider routing failure"
+        )
+
+    if _is_gmicloud_insufficient_balance_error(status, body):
+        return (
+            "ignored GMICloud's misleading insufficient-balance "
+            "response on a free-model route"
         )
 
     reasons = {
@@ -1508,7 +1553,10 @@ def call_api(
     * all 5xx server responses
 
     Most other 4xx responses are considered permanent request errors
-    and fail immediately. Examples include:
+    and fail immediately. A narrow exception is made for GMICloud HTTP 402
+    responses containing ``Insufficient balance``; those are ignored as a
+    provider-side transient failure and retried within the normal attempt cap.
+    Examples of permanent responses include:
 
     * 401 Unauthorized
     * 403 Forbidden
@@ -1845,13 +1893,29 @@ def call_api(
                 body
             )
 
-            print(
-                f"{RED}"
-                f"✖ Model API returned HTTP "
-                f"{error.code}: "
-                f"{detail or error.reason}"
-                f"{RESET}"
+            gmicloud_balance_ignored = (
+                _is_gmicloud_insufficient_balance_error(
+                    error.code,
+                    body,
+                )
             )
+
+            if gmicloud_balance_ignored:
+                print(
+                    f"{YELLOW}"
+                    f"⏺ Ignoring GMICloud HTTP {error.code} "
+                    f"'Insufficient balance' response; "
+                    f"continuing with retry policy."
+                    f"{RESET}"
+                )
+            else:
+                print(
+                    f"{RED}"
+                    f"✖ Model API returned HTTP "
+                    f"{error.code}: "
+                    f"{detail or error.reason}"
+                    f"{RESET}"
+                )
 
             if _is_stealth_continue_work_error(
                 error.code,

@@ -26,11 +26,12 @@ from pathlib import Path
 import logging
 import shutil
 import threading
+import time
 from typing import Any, Callable
 import uuid
 
 from citra.agent import AgentSession
-from citra.agent.runner import AgentRunner, ApiCall
+from citra.agent.runner import AgentRunEvent, AgentRunner, ApiCall
 from citra.context import ExecutionContext
 
 from .spec import (
@@ -66,16 +67,18 @@ class _GuidanceWaiter:
     question: str
     response_event: threading.Event = field(default_factory=threading.Event)
     response: str | None = None
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
     def answer(
         self,
         response: str,
     ) -> bool:
-        if self.response_event.is_set():
-            return False
-        self.response = response
-        self.response_event.set()
-        return True
+        with self.lock:
+            if self.response_event.is_set():
+                return False
+            self.response = response
+            self.response_event.set()
+            return True
 
 
 @dataclass
@@ -94,8 +97,10 @@ class _SubagentRecord:
     error: str | None = None
     transcript: list[TranscriptEntry] = field(default_factory=list)
     pending_guidance: list[TranscriptEntry] = field(default_factory=list)
+    state_lock: threading.RLock = field(default_factory=threading.RLock)
     pending_lock: threading.Lock = field(default_factory=threading.Lock)
     completion: threading.Event = field(default_factory=threading.Event)
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
     workspace: Any = None
     context: ExecutionContext | None = None
@@ -170,13 +175,18 @@ class SubagentSupervisor:
                 )
 
         subagent_id = spec.subagent_id
-
         with self.__records_lock:
             if subagent_id in self.__records:
                 existing = self.__records[subagent_id]
-                if not existing.status.is_terminal:
+                with existing.state_lock:
+                    reusable = (
+                        existing.status.is_terminal
+                        and existing.completion.is_set()
+                    )
+                if not reusable:
                     raise ValueError(
-                        f"Subagent '{subagent_id}' is already running."
+                        f"Subagent '{subagent_id}' is already running or "
+                        "finishing cleanup."
                     )
                 # A previous subagent with this id has already finished;
                 # remove its old runtime root so the new subagent gets a
@@ -187,6 +197,26 @@ class SubagentSupervisor:
                 )
                 self.__records.pop(subagent_id, None)
 
+            write_path = resolve_write_path(
+                self.__parent_workspace.workspace,
+                spec.write_path,
+            )
+            for active in self.__records.values():
+                with active.state_lock:
+                    if active.status.is_terminal:
+                        continue
+                    if _paths_overlap(write_path, active.write_path):
+                        raise ValueError(
+                            f"Subagent write path {write_path} overlaps active "
+                            f"subagent {active.subagent_id!r} write path "
+                            f"{active.write_path}. Concurrent workers must "
+                            "have non-overlapping ownership."
+                        )
+            readonly_binds = tuple(
+                self._resolve_readonly_bind(raw)
+                for raw in spec.readonly_binds
+            )
+
             runtime_root = self.__subagents_root / subagent_id
             if runtime_root.exists():
                 shutil.rmtree(
@@ -196,24 +226,13 @@ class SubagentSupervisor:
             runtime_root.mkdir(parents=True, exist_ok=True)
             transcript_path = runtime_root / "transcript.jsonl"
 
-            write_path = resolve_write_path(
-                self.__parent_workspace.workspace,
-                spec.write_path,
-            )
-
-            readonly_binds: list[Path] = []
-            for raw in spec.readonly_binds:
-                candidate = Path(raw).expanduser().resolve()
-                if candidate.exists():
-                    readonly_binds.append(candidate)
-
             record = _SubagentRecord(
                 subagent_id=subagent_id,
                 spec=spec,
                 runtime_root=runtime_root,
                 transcript_path=transcript_path,
                 write_path=write_path,
-                readonly_binds=tuple(readonly_binds),
+                readonly_binds=readonly_binds,
             )
             self.__records[subagent_id] = record
 
@@ -227,6 +246,31 @@ class SubagentSupervisor:
         thread.start()
         return subagent_id
 
+    def _resolve_readonly_bind(self, raw: str) -> Path:
+        """Resolve a model-supplied bind through the parent's path policy."""
+        resolve_path = getattr(self.__parent_workspace, "resolve_path", None)
+        if callable(resolve_path):
+            candidate = Path(resolve_path(raw)).resolve()
+        else:
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.__parent_workspace.workspace / candidate
+            candidate = candidate.resolve()
+            try:
+                candidate.relative_to(
+                    Path(self.__parent_workspace.workspace).resolve()
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "Subagent read-only binds must remain inside the "
+                    f"orchestrator workspace: {candidate}"
+                ) from error
+        if not candidate.exists():
+            raise FileNotFoundError(
+                f"Subagent read-only bind does not exist: {candidate}"
+            )
+        return candidate
+
     def poll(
         self,
         *,
@@ -238,9 +282,10 @@ class SubagentSupervisor:
 
         snapshots: list[SubagentSnapshot] = []
         for record in records:
-            if not include_completed and record.status.is_terminal:
+            snapshot = self._snapshot(record)
+            if not include_completed and snapshot.status.is_terminal:
                 continue
-            snapshots.append(self._snapshot(record))
+            snapshots.append(snapshot)
         return tuple(snapshots)
 
     def snapshot(
@@ -271,15 +316,39 @@ class SubagentSupervisor:
 
         with self.__records_lock:
             record = self.__records.get(subagent_id)
-        if record is None or record.status.is_terminal:
+        if record is None:
             return False
 
-        session = record.session
-        if session is None:
-            return False
+        with record.state_lock:
+            if record.status.is_terminal:
+                return False
+            session = record.session
+            if session is None:
+                return False
+            enqueued = session.queue_steering(message)
+        if enqueued:
+            self._append_entry(
+                record,
+                {
+                    "role": "user",
+                    "content": message,
+                    "kind": "steering",
+                },
+            )
+        return enqueued
 
-        session.queue_steering(message)
-        return True
+    def cancel(
+        self,
+        subagent_id: str,
+        *,
+        reason: str = "cancelled from the supervisor",
+    ) -> bool:
+        """Request bounded cancellation of one running subagent."""
+        with self.__records_lock:
+            record = self.__records.get(subagent_id)
+        if record is None:
+            return False
+        return self._cancel(record, reason=reason)
 
     def answer_guidance(
         self,
@@ -305,7 +374,6 @@ class SubagentSupervisor:
         if not waiters:
             return False
         # FIFO: answer the oldest request.
-        waiters.sort(key=lambda item: item[0])
         waiter_id, waiter = waiters[0]
         answered = waiter.answer(response)
         if not answered:
@@ -315,14 +383,15 @@ class SubagentSupervisor:
         # Pop the matching pending-guidance transcript entry so the
         # orchestrator's next ``poll`` no longer surfaces a request it
         # has already answered.
-        record.pending_guidance = [
-            entry
-            for entry in record.pending_guidance
-            if not _entry_matches_question(
-                entry,
-                waiter.question,
-            )
-        ]
+        with record.pending_lock:
+            record.pending_guidance = [
+                entry
+                for entry in record.pending_guidance
+                if not _entry_matches_question(
+                    entry,
+                    waiter.question,
+                )
+            ]
 
         self._append_entry(
             record,
@@ -351,16 +420,20 @@ class SubagentSupervisor:
         response (or a default message if the subagent is cancelled
         before the orchestrator can answer).
         """
+        question = (question or "").strip()
+        if not question:
+            return ""
+
         with self.__records_lock:
             record = self.__records.get(subagent_id)
         if record is None:
             return ""
-        if record.status.is_terminal:
-            return ""
-
-        waiter = _GuidanceWaiter(question=question)
-        with record.pending_lock:
-            record.guidance_waiters[uuid.uuid4().hex] = waiter
+        with record.state_lock:
+            if record.status.is_terminal:
+                return ""
+            waiter = _GuidanceWaiter(question=question)
+            with record.pending_lock:
+                record.guidance_waiters[uuid.uuid4().hex] = waiter
 
         self._append_entry(
             record,
@@ -422,8 +495,10 @@ class SubagentSupervisor:
             for _, event in events:
                 event.wait()
         else:
+            deadline = time.monotonic() + max(0.0, timeout)
             for _, event in events:
-                if not event.wait(timeout=timeout):
+                remaining = max(0.0, deadline - time.monotonic())
+                if not event.wait(timeout=remaining):
                     break
 
         result: dict[str, SubagentStatus] = {}
@@ -433,7 +508,8 @@ class SubagentSupervisor:
                 if record is None:
                     result[sid] = SubagentStatus.FAILED
                 else:
-                    result[sid] = record.status
+                    with record.state_lock:
+                        result[sid] = record.status
         return result
 
     def close(self) -> None:
@@ -446,18 +522,26 @@ class SubagentSupervisor:
         with self.__records_lock:
             records = list(self.__records.values())
         for record in records:
-            self._cancel(record)
+            self._cancel(
+                record,
+                reason="cancelled by orchestrator shutdown",
+            )
 
         # Best-effort wait for the subagent threads to drain. We do not
         # raise here: the orchestrator is shutting down, and ``force=True``
         # already terminated each subagent's runtime.
+        deadline = time.monotonic() + 1.0
         for record in records:
             thread = record.thread
             if thread is not None and thread.is_alive():
-                thread.join(timeout=0.5)
+                thread.join(
+                    timeout=max(0.0, deadline - time.monotonic())
+                )
 
         for record in records:
-            self._dispose_record(record, force=True)
+            thread = record.thread
+            if thread is None or not thread.is_alive():
+                self._dispose_record(record, force=True)
 
     # ------------------------------------------------------------------
     # Internal: subagent thread
@@ -470,17 +554,23 @@ class SubagentSupervisor:
     ) -> None:
         context: ExecutionContext | None = None
         try:
+            if record.cancel_requested.is_set():
+                return
             context = build_context(
                 record.spec,
                 record.write_path,
                 record.readonly_binds,
             )
-            record.context = context
-            record.session = AgentSession(
+            session = AgentSession(
                 memory_enabled=False,
             )
-            record.status = SubagentStatus.RUNNING
-            record.started_at = datetime.now(timezone.utc).isoformat()
+            session.add_user_message(record.spec.task.strip())
+            with record.state_lock:
+                record.context = context
+                record.session = session
+                if not record.cancel_requested.is_set():
+                    record.status = SubagentStatus.RUNNING
+                    record.started_at = datetime.now(timezone.utc).isoformat()
 
             self._append_entry(
                 record,
@@ -492,32 +582,45 @@ class SubagentSupervisor:
                 },
             )
 
-            runner = AgentRunner(
-                context,
-                record.session,
-                api_call=self.__api_call,
-            )
-            runner.run_turn()
-            record.status = SubagentStatus.COMPLETED
+            if not record.cancel_requested.is_set():
+                runner = AgentRunner(
+                    context,
+                    session,
+                    api_call=self.__api_call,
+                    event_sink=lambda event: self._record_agent_event(
+                        record,
+                        event,
+                    ),
+                    render_output=False,
+                )
+                runner.run_turn()
+            with record.state_lock:
+                if not record.cancel_requested.is_set():
+                    record.status = SubagentStatus.COMPLETED
         except Exception as error:
-            record.error = (
-                f"{type(error).__name__}: {error}"
-            )
-            record.status = SubagentStatus.FAILED
-            logger.exception(
-                "Subagent %s failed: %s",
-                record.subagent_id,
-                record.error,
-            )
+            with record.state_lock:
+                if record.cancel_requested.is_set():
+                    record.status = SubagentStatus.CANCELLED
+                else:
+                    record.error = f"{type(error).__name__}: {error}"
+                    record.status = SubagentStatus.FAILED
+            if not record.cancel_requested.is_set():
+                logger.exception(
+                    "Subagent %s failed: %s",
+                    record.subagent_id,
+                    record.error,
+                )
         finally:
-            record.finished_at = datetime.now(timezone.utc).isoformat()
+            with record.state_lock:
+                record.finished_at = datetime.now(timezone.utc).isoformat()
+                status = record.status
             self._append_entry(
                 record,
                 {
                     "role": "system",
                     "content": (
                         f"subagent {record.subagent_id} finished "
-                        f"with status={record.status.value}"
+                        f"with status={status.value}"
                     ),
                     "kind": "lifecycle",
                     "subagent_id": record.subagent_id,
@@ -530,9 +633,8 @@ class SubagentSupervisor:
                             "[no response: subagent exited before the "
                             "orchestrator could answer]"
                         )
-                        waiter.response_event.set()
                 record.guidance_waiters.clear()
-            record.completion.set()
+                record.pending_guidance.clear()
             if context is not None:
                 try:
                     context.close(force=True)
@@ -541,24 +643,58 @@ class SubagentSupervisor:
                         "Failed to close subagent %s context",
                         record.subagent_id,
                     )
+                try:
+                    context.workspace.cleanup(force=True)
+                except Exception:
+                    logger.exception(
+                        "Failed to remove subagent %s runtime",
+                        record.subagent_id,
+                    )
+            record.completion.set()
 
     def _cancel(
         self,
         record: _SubagentRecord,
-    ) -> None:
-        if record.status.is_terminal:
-            return
-        record.status = SubagentStatus.CANCELLED
-        record.error = record.error or "cancelled by orchestrator shutdown"
-        context = record.context
+        *,
+        reason: str,
+    ) -> bool:
+        with record.state_lock:
+            if record.status.is_terminal:
+                return False
+            record.cancel_requested.set()
+            record.status = SubagentStatus.CANCELLED
+            record.error = record.error or reason
+            context = record.context
+        with record.pending_lock:
+            for waiter in record.guidance_waiters.values():
+                waiter.answer(
+                    "[no response: the subagent was cancelled before the "
+                    "orchestrator answered]"
+                )
         if context is not None:
             try:
-                context.workspace.begin_closing()
+                context.close(force=True)
             except Exception:
                 logger.exception(
-                    "Failed to mark subagent %s workspace as closing",
+                    "Failed to close cancelled subagent %s context",
                     record.subagent_id,
                 )
+        return True
+
+    def _record_agent_event(
+        self,
+        record: _SubagentRecord,
+        event: AgentRunEvent,
+    ) -> None:
+        self._append_entry(
+            record,
+            {
+                "role": event.role,
+                "content": event.content,
+                "kind": event.kind,
+                "tool": event.tool,
+            },
+        )
 
     def _dispose_record(
         self,
@@ -587,21 +723,25 @@ class SubagentSupervisor:
         self,
         record: _SubagentRecord,
     ) -> SubagentSnapshot:
+        with record.state_lock:
+            status = record.status
+            transcript = tuple(record.transcript)
+            error = record.error
+            started_at = record.started_at
+            finished_at = record.finished_at
         with record.pending_lock:
-            guidance = list(record.pending_guidance)
-        # ``transcript`` is append-only and read-only here; we hand out a
-        # frozen copy so callers cannot mutate the in-memory mirror.
-        transcript = tuple(record.transcript)
+            guidance = tuple(record.pending_guidance)
+        # Hand out frozen copies so callers cannot mutate supervisor state.
         return SubagentSnapshot(
             subagent_id=record.subagent_id,
-            status=record.status,
+            status=status,
             task=record.spec.task,
             write_path=str(record.write_path),
             transcript=transcript,
-            pending_guidance=tuple(guidance),
-            error=record.error,
-            started_at=record.started_at,
-            finished_at=record.finished_at,
+            pending_guidance=guidance,
+            error=error,
+            started_at=started_at,
+            finished_at=finished_at,
         )
 
     def append_entry(
@@ -622,27 +762,29 @@ class SubagentSupervisor:
         payload: dict[str, Any],
     ) -> None:
         entry = TranscriptEntry.from_json(payload)
-        record.transcript.append(entry)
-        if len(record.transcript) > TRANSCRIPT_ENTRY_BUDGET:
-            del record.transcript[
-                : len(record.transcript) - TRANSCRIPT_ENTRY_BUDGET
-            ]
         if payload.get("kind") == "guidance-request":
             with record.pending_lock:
                 record.pending_guidance.append(entry)
 
-        try:
-            with record.transcript_path.open(
-                "a",
-                encoding="utf-8",
-            ) as handle:
-                handle.write(entry.to_jsonl_line())
-                handle.write("\n")
-        except Exception:
-            logger.exception(
-                "Failed to persist subagent %s transcript",
-                record.subagent_id,
-            )
+        with record.state_lock:
+            record.transcript.append(entry)
+            if len(record.transcript) > TRANSCRIPT_ENTRY_BUDGET:
+                del record.transcript[
+                    : len(record.transcript) - TRANSCRIPT_ENTRY_BUDGET
+                ]
+
+            try:
+                with record.transcript_path.open(
+                    "a",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write(entry.to_jsonl_line())
+                    handle.write("\n")
+            except Exception:
+                logger.exception(
+                    "Failed to persist subagent %s transcript",
+                    record.subagent_id,
+                )
 
 
 def _entry_matches_question(
@@ -653,3 +795,19 @@ def _entry_matches_question(
     to ``question``."""
     needle = f"asks:\n\n{question}"
     return entry.content.strip().endswith(needle.strip())
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    """Return whether either resolved ownership root contains the other."""
+    first = first.resolve()
+    second = second.resolve()
+    try:
+        first.relative_to(second)
+        return True
+    except ValueError:
+        pass
+    try:
+        second.relative_to(first)
+        return True
+    except ValueError:
+        return False

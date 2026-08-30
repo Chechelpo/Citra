@@ -28,3 +28,7 @@ class SessionTool(Tool, ABC):
     @property
     def session(self) -> AgentSession:
         return self.__session
+
+    def rebind_session(self, session: AgentSession) -> None:
+        """Bind a durable session tool to the currently active session."""
+        self.__session = session

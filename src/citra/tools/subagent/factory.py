@@ -1,10 +1,10 @@
 """
 Factory that builds a subagent's ``ExecutionContext``.
 
-A subagent runs inside its own recursive ``WorkspaceContext`` so the
-Bubblewrap sandbox and provisioning logic can be reused unchanged. The
-factory is kept separate from the supervisor to avoid an import cycle
-between ``supervisor`` and ``context``.
+A subagent owns separate mutable runtime state and process supervision while
+reusing the orchestrator's immutable provisioned command layer. The factory is
+kept separate from the supervisor to avoid an import cycle between
+``supervisor`` and ``context``.
 """
 
 from __future__ import annotations
@@ -19,9 +19,11 @@ from citra.context import (
     WorkspaceContext,
     WorkspaceContextConfig,
 )
-from citra.sandbox import WorkspaceSandbox
+from citra.context.runtime import RuntimeProvisioning
 from citra.tools.skills.skill_registry import SkillRegistry
+from citra.workflows import SingleModeWorkflow, WorkflowRuntime
 
+from .guidance import SubagentGuidanceBridge
 from .spec import SubagentSpec
 from .mode import build_subagent_mode, default_subagent_toolset
 
@@ -31,7 +33,7 @@ def build_subagent_context(
     parent_workspace: WorkspaceContext,
     parent_config: CitraConfig,
     parent_skills: SkillRegistry,
-    api_call: Any,
+    supervisor: Any,
     spec: SubagentSpec,
     write_path: Path,
     readonly_binds: tuple[Path, ...],
@@ -39,11 +41,10 @@ def build_subagent_context(
     """
     Construct a fresh ``ExecutionContext`` for one subagent.
 
-    The subagent's workspace is rooted under the orchestrator's runtime
-    root (``<parent.runtime>/subagents/<id>``). The subagent has no
-    access to ``@source``; the only writable mount is ``write_path`` and
-    the only declared read-only binds are those the orchestrator
-    explicitly passed in.
+    The subagent's mutable runtime is rooted under the orchestrator's runtime
+    root (``<parent.root>/subagents/<id>``). The only project write mount is
+    ``write_path`` and the only additional read-only binds are the validated
+    model-facing paths the orchestrator explicitly passed in.
     """
     runtime_root = parent_workspace.root / "subagents" / spec.subagent_id
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -55,19 +56,22 @@ def build_subagent_context(
         direct_source=True,
     )
 
-    workspace = WorkspaceContext.create(
+    nested_workspace = WorkspaceContext.create(
         config=workspace_config,
         workspace=write_path,
+        runtime_config=parent_config.runtime,
+        tool_definitions=(),
+        runtime_assets=(),
     )
 
-    sandbox = WorkspaceSandbox(
-        workspace,
-        config=parent_config.sandbox,
-        mode_config=_subagent_sandbox_mode(
-            readonly_binds=readonly_binds,
-            write_path=write_path,
-            network=spec.network,
-        ),
+    # Worker runtimes own separate mutable home/cache/tmp/process state, but
+    # share the parent's already-provisioned immutable command layer.  This
+    # avoids rebuilding the same toolchain for every delegated task while
+    # retaining independent process supervision and cleanup.
+    workspace = replace(
+        nested_workspace,
+        runtime=parent_workspace.runtime,
+        provisioning=_fork_runtime_provisioning(parent_workspace),
     )
 
     mode = build_subagent_mode(
@@ -79,46 +83,63 @@ def build_subagent_context(
         system_prompt_addendum=spec.system_prompt_addendum,
         toolset=default_subagent_toolset(),
     )
+    # Subagents follow the same ownership rule as foreground agents: a
+    # one-mode workflow owns their concrete sandbox.
+    workflow = SingleModeWorkflow(
+        name=f"subagent:{spec.subagent_id}",
+        description="One constrained subagent turn.",
+        mode=mode,
+        sandbox_config=mode.sandbox_config,
+    )
+    workflow_runtime = WorkflowRuntime(
+        workflow=workflow,
+        workspace=workspace,
+        operator_sandbox_config=parent_config.sandbox,
+    )
+    sandbox = workflow_runtime.sandbox
 
     return ExecutionContext(
         workspace,
         skills=parent_skills,
+        subagents=SubagentGuidanceBridge(
+            subagent_id=spec.subagent_id,
+            supervisor=supervisor,
+        ),
+        workflow_runtime=workflow_runtime,
         provided_config=_subagent_config(parent_config, spec),
         provided_mode=mode,
+        provided_workflow=workflow,
         provided_sandbox=sandbox,
     )
 
 
-def _subagent_sandbox_mode(
-    *,
-    readonly_binds: tuple[Path, ...],
-    write_path: Path,
-    network: bool,
-):
-    """Build the ``SandboxConfig`` the subagent's mode will install."""
-    from citra.modes import SandboxConfig
-    from citra.sandbox.sandbox import SandboxMode
-
-    return SandboxConfig(
-        mode=SandboxMode.PARTIAL_SANDBOX,
-        additional_ro_binds=tuple(
-            dict.fromkeys(
-                (
-                    *readonly_binds,
-                    *(
-                        bind
-                        for bind in (
-                            Path("/usr"),
-                            Path("/etc"),
-                            Path("/var"),
-                        )
-                        if bind.exists()
-                    ),
-                )
+def _fork_runtime_provisioning(
+    parent_workspace: WorkspaceContext,
+) -> RuntimeProvisioning:
+    """Create a worker-local resolver over the parent's immutable assets."""
+    parent = parent_workspace.provisioning
+    return RuntimeProvisioning(
+        runtime_root=parent_workspace.runtime,
+        budget_bytes=parent.budget_bytes,
+        copied_bytes=parent.copied_bytes,
+        assets=dict(parent.assets),
+        tools={
+            tool_id: replace(
+                tool,
+                commands=dict(tool.commands),
             )
-        ),
-        additional_w_binds=(write_path,),
-        global_network_disallow=not network,
+            for tool_id, tool in parent.tools.items()
+            if not tool_id.startswith("staged:")
+        },
+        definitions={
+            tool_id: replace(
+                definition,
+                health_check=None,
+            )
+            for tool_id, definition in parent.definitions.items()
+            if not tool_id.startswith("staged:")
+        },
+        warnings=list(parent.warnings),
     )
 
 

@@ -131,7 +131,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_known_commands_are_registered(self):
-        for cid in ("q", "c", "help", "test"):
+        for cid in ("q", "c", "help", "test", "agent", "workflow"):
             self.assertTrue(
                 COMMAND_REGISTRY.contains(cid),
                 f"missing command /{cid}",
