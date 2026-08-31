@@ -35,7 +35,7 @@ class SimpleTask(StaticMode):
             Edit, Write, Read, Glob, Bash, Tree, TodoTool, FactTool, DecisionTool, ConstraintTool
         ),
         deferred_tools=(
-            Lsp, WebSearch, Curl, PromptUser
+            Lsp, WebSearch, Curl, PromptUser, Document, Diagram
         ),
     )
 

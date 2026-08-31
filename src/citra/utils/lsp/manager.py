@@ -1,18 +1,19 @@
 """Lifecycle-scoped language-server discovery, startup, reuse, and shutdown."""
+
 from __future__ import annotations
 
-from citra.sandbox.filesystem_ops import ReadRawInput
-
-from dataclasses import dataclass
 import logging
 import os
-from pathlib import Path
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from pathlib import Path
 from threading import RLock
-from typing import Any, Iterable
+from typing import Any
 
 from citra.context.turn_workspace import WorkspaceContext
 from citra.sandbox import WorkspaceSandbox
+from citra.sandbox.filesystem_ops import ReadRawInput
 from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 
 from .client import LspClient
@@ -20,6 +21,7 @@ from .config import LspConfig, ServerConfig
 from .diagnostics import format_diagnostics, json_fallback_diagnostics
 from .errors import LspDiagnosticsTimeout, LspError, LspStartupError, LspUnavailable
 from .installer import InstallResult, available_managers, candidate_for, execute_install
+from .interpreters import ResolvedInterpreter
 from .language import Language, detect_language, server_for_language, supports_language
 from .servers import SERVER_ALIASES, SERVERS
 from .servers.base import ServerDefinition
@@ -27,6 +29,42 @@ from .transport import JsonRpcTransport
 
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_dict(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
+    """Shallow-merge ``overlay`` on top of ``base``.
+
+    The overlay wins on key conflicts. Both inputs are treated as plain
+    mappings; the result is a fresh ``dict`` so callers can mutate it
+    without leaking state into the frozen ``ServerConfig``.
+    """
+    merged: dict[str, Any] = dict(base)
+    for key, value in overlay.items():
+        merged[key] = value
+    return merged
+
+
+def _merge_settings(
+    base: Mapping[str, Any],
+    overlay: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Deep-merge two ``workspace/didChangeConfiguration`` payloads.
+
+    The overlay wins on key conflicts at every depth. Nested mappings are
+    merged recursively so the resolver can set
+    ``settings["python"]["pythonPath"]`` without clobbering
+    ``settings["python"]["analysis"]`` (and vice versa).
+    """
+    merged: dict[str, Any] = {}
+    for key, value in base.items():
+        merged[key] = value
+    for key, overlay_value in overlay.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, Mapping) and isinstance(overlay_value, Mapping):
+            merged[key] = _merge_settings(base_value, overlay_value)
+        else:
+            merged[key] = overlay_value
+    return merged
 
 
 @dataclass(frozen=True)
@@ -80,9 +118,13 @@ class LspManager:
             raise LspUnavailable(str(error)) from error
         language = detect_language(path)
         if language is None:
-            raise LspUnavailable(f"No language server is configured for {path.suffix or 'this file'}.")
+            raise LspUnavailable(
+                f"No language server is configured for {path.suffix or 'this file'}."
+            )
         if not supports_language(language):
-            raise LspUnavailable(f"No language server is configured for {language.value}.")
+            raise LspUnavailable(
+                f"No language server is configured for {language.value}."
+            )
         server_id = self._normalize_server_target(server_for_language(language))
         root = self._root_for(path)
         if language is Language.VUE:
@@ -108,7 +150,8 @@ class LspManager:
                 server_id: sum(
                     1
                     for key, client in self._clients.items()
-                    if key.server_id == server_id and client.transport.process.poll() is None
+                    if key.server_id == server_id
+                    and client.transport.process.poll() is None
                 )
                 for server_id in SERVERS
             }
@@ -145,7 +188,9 @@ class LspManager:
         path = self.workspace.require_allowed_path(path)
         language = detect_language(path)
         if language is None:
-            raise LspUnavailable(f"No language server is configured for {path.suffix or 'this file'}.")
+            raise LspUnavailable(
+                f"No language server is configured for {path.suffix or 'this file'}."
+            )
         try:
             handle = self.client_for(path)
         except LspUnavailable:
@@ -226,9 +271,16 @@ class LspManager:
                 self._client_for_server(key.server_id, key.root)
                 restarted += 1
             except LspUnavailable as error:
-                logger.info("Could not restart optional LSP server %s for %s: %s", key.server_id, key.root, error)
+                logger.info(
+                    "Could not restart optional LSP server %s for %s: %s",
+                    key.server_id,
+                    key.root,
+                    error,
+                )
             except LspError:
-                logger.exception("Could not restart LSP server %s for %s", key.server_id, key.root)
+                logger.exception(
+                    "Could not restart LSP server %s for %s", key.server_id, key.root
+                )
         return restarted if roots else stopped
 
     def install(
@@ -259,14 +311,18 @@ class LspManager:
                 if candidate_for(
                     definition,
                     managers=self._available_managers(),
-                ) is not None
+                )
+                is not None
             ]
         else:
             definitions = [self._definition_for_target(target)]
 
         results: list[InstallResult] = []
         for definition in definitions:
-            if normalized not in {"all", "missing"} and self._availability(definition)[0]:
+            if (
+                normalized not in {"all", "missing"}
+                and self._availability(definition)[0]
+            ):
                 results.append(
                     InstallResult(
                         server_id=definition.id,
@@ -342,26 +398,38 @@ class LspManager:
         if definition.id == "jdtls" and executable is not None:
             java = self._which("java")
             if java is None:
-                raise LspUnavailable("jdtls is unavailable: Java 21 or newer is required.")
+                raise LspUnavailable(
+                    "jdtls is unavailable: Java 21 or newer is required."
+                )
             major = self._java_major_version(java)
             if major is None:
-                raise LspUnavailable("jdtls is unavailable: could not determine the Java runtime version.")
+                raise LspUnavailable(
+                    "jdtls is unavailable: could not determine the Java runtime version."
+                )
             if major < 21:
                 raise LspUnavailable(
                     f"jdtls is unavailable: Java 21 or newer is required (found Java {major})."
                 )
         if definition.id == "ruby":
             if self._which("ruby") is None:
-                raise LspUnavailable("Ruby LSP is unavailable: a Ruby runtime is required.")
+                raise LspUnavailable(
+                    "Ruby LSP is unavailable: a Ruby runtime is required."
+                )
             command = self._ruby_command(root, executable)
             if command is None:
-                raise LspUnavailable("No Ruby language server is installed for this project.")
+                raise LspUnavailable(
+                    "No Ruby language server is installed for this project."
+                )
         else:
             if executable is None:
                 raise LspUnavailable(
                     f"Language server {definition.executable!r} is not installed. {definition.install_hint}"
                 )
-            missing = [dependency for dependency in definition.requires if self._which(dependency) is None]
+            missing = [
+                dependency
+                for dependency in definition.requires
+                if self._which(dependency) is None
+            ]
             if missing:
                 raise LspUnavailable(
                     f"{definition.id} is unavailable; missing dependency: {', '.join(missing)}"
@@ -393,12 +461,16 @@ class LspManager:
             initialization_options=initialization_options,
             cold_diagnostics_timeout=definition.cold_diagnostics_timeout,
         )
+        server_config, path_prepend = self._apply_interpreter_resolver(
+            server_id, definition, server_config
+        )
         try:
             process = self.sandbox.popen(
                 server_config.command,
                 cwd=root,
                 network=False,
                 environment=dict(server_config.environment),
+                path_prepend=path_prepend,
             )
         except Exception as error:
             raise LspUnavailable(f"Could not start {server_id}: {error}") from error
@@ -435,7 +507,9 @@ class LspManager:
         except Exception as error:
             transport.close()
             self.sandbox.terminate_process(process)
-            raise LspStartupError(f"Could not initialize {server_id}: {error}") from error
+            raise LspStartupError(
+                f"Could not initialize {server_id}: {error}"
+            ) from error
 
         return client
 
@@ -487,8 +561,13 @@ class LspManager:
         try:
             ts_client, _ = self._client_for_server("typescript", root)
             provider = (ts_client.capabilities.raw or {}).get("executeCommandProvider")
-            commands = provider.get("commands", []) if isinstance(provider, dict) else []
-            if not isinstance(commands, list) or "typescript.tsserverRequest" not in commands:
+            commands = (
+                provider.get("commands", []) if isinstance(provider, dict) else []
+            )
+            if (
+                not isinstance(commands, list)
+                or "typescript.tsserverRequest" not in commands
+            ):
                 raise LspUnavailable(
                     "Vue language server is unavailable: typescript-language-server "
                     "does not support the typescript.tsserverRequest bridge command."
@@ -610,9 +689,13 @@ class LspManager:
         except Exception:
             self.sandbox.terminate_process(process)
 
-    def _availability(self, definition: ServerDefinition) -> tuple[bool, dict[str, Any]]:
+    def _availability(
+        self, definition: ServerDefinition
+    ) -> tuple[bool, dict[str, Any]]:
         executable = self._which(definition.executable)
-        dependencies = {dependency: self._which(dependency) for dependency in definition.requires}
+        dependencies = {
+            dependency: self._which(dependency) for dependency in definition.requires
+        }
         optional: dict[str, Any] = {"requirements": dependencies}
         available = executable is not None and all(dependencies.values())
 
@@ -626,7 +709,9 @@ class LspManager:
         if definition.id == "vue":
             plugin = (
                 self._vue_plugin_location(getattr(self.workspace, "workspace", None))
-                or self._vue_plugin_location(getattr(self.workspace, "source_workspace", None))
+                or self._vue_plugin_location(
+                    getattr(self.workspace, "source_workspace", None)
+                )
                 or self._vue_plugin_location(None)
             )
             optional["typescript_bridge"] = self._which("typescript-language-server")
@@ -634,7 +719,9 @@ class LspManager:
             # json.dumps(), so keep its public payload JSON-native. Internal
             # discovery helpers may use Path objects, but they must not leak
             # through status data.
-            optional["vue_typescript_plugin"] = str(plugin) if plugin is not None else None
+            optional["vue_typescript_plugin"] = (
+                str(plugin) if plugin is not None else None
+            )
             available = (
                 available
                 and optional["typescript_bridge"] is not None
@@ -645,6 +732,55 @@ class LspManager:
             "executable": executable,
             "optional_dependencies": optional,
         }
+
+    def _apply_interpreter_resolver(
+        self,
+        server_id: str,
+        definition: ServerDefinition,
+        server_config: ServerConfig,
+    ) -> tuple[ServerConfig, tuple[str, ...]]:
+        """Invoke the server's interpreter resolver and merge the result.
+
+        The resolver hook is opt-in: a ``ServerDefinition`` without an
+        ``interpreter_resolver`` returns the config unchanged. When the
+        resolver returns a :class:`ResolvedInterpreter`, the manager merges
+        its ``environment`` (last-wins on the spawned process), ``settings``
+        (deep-merge by section so e.g. ``python.pythonPath`` from the
+        resolver does not clobber the existing ``python.analysis.*``
+        config), ``initialization_options`` (shallow merge), and exposes the
+        ``path_prepend`` list to :meth:`WorkspaceSandbox.popen` so the
+        resolved toolchain is on the server's ``PATH``.
+
+        A resolver that raises is logged at debug level and treated as "no
+        interpreter" — language-server startup is never blocked by a
+        resolver failure.
+        """
+        resolver = definition.interpreter_resolver
+        if resolver is None:
+            return server_config, ()
+
+        project_root = self.workspace.source_workspace
+        try:
+            resolved: ResolvedInterpreter = resolver(
+                project_root, workspace=self.workspace
+            )
+        except Exception as error:  # noqa: BLE001 - resolvers must never block startup
+            logger.debug("interpreter resolver for %s failed: %s", server_id, error)
+            return server_config, ()
+
+        merged_environment = {**resolved.environment, **server_config.environment}
+        merged_settings = _merge_settings(server_config.settings, resolved.settings)
+        merged_init_options = _merge_dict(
+            dict(server_config.initialization_options),
+            dict(resolved.initialization_options),
+        )
+        new_config = replace(
+            server_config,
+            environment=merged_environment,
+            settings=merged_settings,
+            initialization_options=merged_init_options,
+        )
+        return new_config, tuple(resolved.path_prepend)
 
     def _which(self, command: str) -> str | None:
         path = self.workspace.resolve_command(command)

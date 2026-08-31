@@ -521,8 +521,17 @@ class WorkspaceSandbox:
         cwd: str | Path | None = None,
         network: bool = False,
         environment: Mapping[str, str] | None = None,
+        path_prepend: Sequence[str] | None = None,
     ) -> subprocess.Popen[bytes]:
-        """Start a lifecycle-owned process under the same mount policy."""
+        """Start a lifecycle-owned process under the same mount policy.
+
+        ``path_prepend`` is an optional list of directories to prepend to the
+        spawned process's ``PATH``. It is applied after the workspace layer
+        has been merged (so workspace-level paths still win) and before the
+        sandboxed environment is finalised (so bwrap's view of ``PATH``
+        matches the child's). Existing ``PATH`` entries are preserved and
+        de-duplicated to keep the env bounded.
+        """
         self.__workspace.ensure_active()
         bwrap = shutil.which("bwrap")
         if bwrap is None:
@@ -541,6 +550,20 @@ class WorkspaceSandbox:
             )
         turn_dirs = self._prepare_lifecycle_directories()
         raw_env = workspace.environment(environment)
+        if path_prepend:
+            filtered_prepend = [entry for entry in path_prepend if entry]
+            if filtered_prepend:
+                existing_path = raw_env.get("PATH", "")
+                existing_parts = [part for part in existing_path.split(os.pathsep) if part]
+                prepend_set = set(filtered_prepend)
+                merged_parts: list[str] = []
+                for entry in filtered_prepend:
+                    if entry not in merged_parts:
+                        merged_parts.append(entry)
+                for part in existing_parts:
+                    if part not in prepend_set and part not in merged_parts:
+                        merged_parts.append(part)
+                raw_env["PATH"] = os.pathsep.join(merged_parts) if merged_parts else existing_path
         env = self._sandbox_environment(
             raw_env,
             explicit_environment=environment,
