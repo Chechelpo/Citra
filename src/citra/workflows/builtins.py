@@ -89,7 +89,7 @@ component workers are genuine isolated subagents.
 def simple_workflow(mode: Mode) -> SingleModeWorkflow:
     """Wrap a selected mode and inherit its sandbox policy."""
     return SingleModeWorkflow(
-        name="simple",
+        name="no-worfklow",
         description="One persistent agent running a selected mode.",
         mode=mode,
         sandbox_config=None,

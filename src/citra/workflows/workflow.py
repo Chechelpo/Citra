@@ -340,7 +340,7 @@ class WorkflowRuntime:
         )
         if self._sandbox.mode != self._sandbox_config.mode:
             raise RuntimeError(
-                "Workflow sandbox mode differs from its frozen policy"
+                f"Workflow sandbox mode differs from its frozen policy sandbox mode {self.sandbox.mode} vs config mode {self._sandbox_config.mode}"
             )
         self._active_run: WorkflowRun | None = None
         self._lock = RLock()

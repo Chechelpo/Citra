@@ -9,8 +9,8 @@ import textwrap
 import unittest
 from unittest import mock
 
-from citra.context.config_loader import WorkspaceContextConfig
-from citra.context.turn_workspace import WorkspaceContext
+from citra.config.config_loader import WorkspaceContextConfig
+from citra.context.session_context import WorkspaceContext
 from citra.sandbox import WorkspaceSandbox
 from citra.sandbox import SandboxedFilesystem
 

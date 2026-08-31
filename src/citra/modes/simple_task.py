@@ -17,7 +17,7 @@ from citra.tools.transient import *
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
-    from citra.utils.prompt import PromptEnvironment
+    from citra.utils.prompt import EnvironmentInfo
 
 
 class SimpleTask(StaticMode):
@@ -83,7 +83,7 @@ what needs to be done. Then continue executing the task.
         self,
         context: ExecutionContext,
     ) -> str:
-        environment: PromptEnvironment = collect_environment(context)
+        environment: EnvironmentInfo = collect_environment(context)
         initial_tree = render_tree(workspace=context.workspace, limit=100, max_depth=2)
         return f"""
 # Role

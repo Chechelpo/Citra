@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from citra.context.turn_workspace import WorkspaceContext
+from citra.context.session_context import WorkspaceContext
 from citra.sandbox import WorkspaceSandbox
 from citra.sandbox.filesystem_ops import ReadRawInput
 from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem

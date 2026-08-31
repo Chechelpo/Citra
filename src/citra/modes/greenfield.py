@@ -16,7 +16,7 @@ from citra.modes import TaskSteeringConfig
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
-    from citra.utils.prompt import PromptEnvironment
+    from citra.utils.prompt import EnvironmentInfo
 
 
 class LongTaskHorizon(StaticMode):
@@ -65,7 +65,7 @@ class LongTaskHorizon(StaticMode):
         self,
         context: ExecutionContext,
     ) -> str:
-        environment: PromptEnvironment = collect_environment(context)
+        environment: EnvironmentInfo = collect_environment(context)
         name :str = temporary_name()
         return f"""
 # Role

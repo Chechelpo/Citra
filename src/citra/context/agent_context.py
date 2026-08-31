@@ -6,7 +6,7 @@ import platform
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from citra.context.turn_workspace import WorkspaceContext
+from citra.context.session_context import WorkspaceContext
 from citra.tools.linting import LintRunner
 from citra.tools.skills.skill_registry import SkillRegistry
 from citra.utils.browser_manager import BrowserManager
@@ -16,7 +16,7 @@ from citra.utils.repo_map import RepoMap
 from citra.sandbox import WorkspaceSandbox
 from citra.sandbox import SandboxedFilesystem
 
-from .config_loader import CitraConfig
+from citra.config.config_loader import CitraConfig
 
 if TYPE_CHECKING:
     from citra.modes import Mode
@@ -27,7 +27,10 @@ DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
 
 
 @dataclass(frozen=True)
-class ExecutionContext:
+class AgentContext:
+    """
+    Data class holding the execution context for a single agent (subagent or main).
+    """
     workspace: WorkspaceContext
     skills: SkillRegistry
     logger = logging.getLogger(__name__)

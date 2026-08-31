@@ -1,5 +1,6 @@
 """Process-lifetime Agent Runtime filesystem and lifecycle ownership."""
 
+from citra.utils.prompt import EnvironmentInfo
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from typing import Mapping, Sequence
 import venv
 
 from .available_tools import default_runtime_assets, default_tool_definitions
-from .config_loader import RuntimeConfig, WorkspaceContextConfig
+from citra.config.config_loader import RuntimeConfig, WorkspaceContextConfig
 from .runtime import (
     RuntimeAsset,
     RuntimeProcessSupervisor,
@@ -95,12 +96,10 @@ class AvailablePathAlias(str, Enum):
 
 @dataclass(frozen=True)
 class WorkspaceContext:
-    """Compatibility facade over one process-lifetime Agent Runtime.
+    """
+    Compatibility facade over one process-lifetime Agent Runtime.
 
-    By default, the selected source is copied completely into ``workspace`` at
-    startup and ``changes.apply`` is the sole workspace-to-source bridge.
-    Direct-source mode deliberately aliases ``workspace`` to the source and
-    omits both the copy and staging service.
+    If a sandbox is active, the source code is copied into the workspace.
     """
 
     source_workspace: Path
@@ -129,6 +128,9 @@ class WorkspaceContext:
     startup_warnings: tuple[str, ...]
     processes: RuntimeProcessSupervisor
     _lifecycle: _RuntimeLifecycle
+
+    environment:EnvironmentInfo
+    
 
     @classmethod
     def create(

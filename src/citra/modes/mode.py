@@ -14,39 +14,6 @@ from citra.sandbox.sandbox import SandboxMode
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
 
-
-@dataclass(frozen=True)
-class SandboxConfig:
-    mode: SandboxMode = SandboxMode.ONLY_SOURCE
-
-    additional_ro_binds: tuple[Path, ...] = field(
-        default_factory=tuple
-    )
-
-    additional_w_binds: tuple[Path, ...] = field(
-        default_factory=tuple
-    )
-
-    global_network_disallow: bool = False
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.mode, SandboxMode):
-            raise TypeError("mode must be a SandboxMode")
-
-        for name, paths in (
-            ("additional_ro_binds", self.additional_ro_binds),
-            ("additional_w_binds", self.additional_w_binds),
-        ):
-            if not isinstance(paths, tuple) or not all(
-                isinstance(path, Path)
-                for path in paths
-            ):
-                raise TypeError(f"{name} must be a tuple of Path values")
-
-        if not isinstance(self.global_network_disallow, bool):
-            raise TypeError("global_network_disallow must be a boolean")
-
-
 @dataclass(frozen=True)
 class TaskSteeringConfig:
     """
@@ -118,7 +85,7 @@ class Mode(ABC):
 
     @property
     @abstractmethod
-    def sandbox_config(self) -> SandboxConfig:
+    def sandbox_config(self) -> SandboxMode:
         ...
 
     @property

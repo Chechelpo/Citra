@@ -7,7 +7,7 @@ import shlex
 import tomllib
 from typing import TYPE_CHECKING, Any
 
-from citra.context.config_loader import LintContextConfig, LintRuleConfig
+from citra.config.config_loader import LintContextConfig, LintRuleConfig
 
 if TYPE_CHECKING:
     from citra.context.turn_workspace import WorkspaceContext

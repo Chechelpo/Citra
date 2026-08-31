@@ -19,7 +19,7 @@ from citra.agent import AgentSession
 from citra.agent.runner import _configured_tools
 from citra.application import CitraApplication
 from citra.cli.repl import HardShutdownRequested, run_turn_with_steering
-from citra.context.config_loader import (
+from citra.config.config_loader import (
     RuntimeConfig,
     RuntimeEnvironmentConfig,
     RuntimeStorageConfig,
@@ -35,7 +35,7 @@ from citra.context.runtime import (
     RuntimeProvisionError,
     ToolDefinition,
 )
-from citra.context.turn_workspace import (
+from citra.context.session_context import (
     RuntimeClosingError,
     WorkspaceContext,
 )

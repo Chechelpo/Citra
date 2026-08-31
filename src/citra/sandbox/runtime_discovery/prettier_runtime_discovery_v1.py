@@ -32,11 +32,7 @@ class PrettierRuntimeDiscovery(RuntimeDiscovery):
     """
 
     @classmethod
-    def discover(
-        cls,
-        workspace: WorkspaceContext,
-    ) -> RuntimeDiscoveryResult:
-        del workspace
+    def discover(cls) -> RuntimeDiscoveryResult:
 
         executable_raw = shutil.which(_COMMAND)
         if executable_raw is None:

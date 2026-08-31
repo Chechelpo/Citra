@@ -13,10 +13,13 @@ import sys
 from typing import Any, TYPE_CHECKING, Iterable, Mapping, Sequence
 
 from citra.sandbox.runtime_discovery import *
+from citra.config import SandboxPolicy
+from citra.sandbox.sandbox_mode import SandboxMode
 
 if TYPE_CHECKING:
+    from citra.context import SandboxContextConfig
     from ..context.turn_workspace import WorkspaceContext
-
+    from citra.modes import SandboxConfig
 
 # ---------------------------------------------------------------------------
 # Sandbox policy
@@ -30,22 +33,7 @@ if TYPE_CHECKING:
 # Bubblewrap applies filesystem operations in command-line order, so later
 # mounts intentionally override earlier ones.
 
-class SandboxMode(IntEnum):
-    """
-    Level of sandboxing required by a mode or workflow override.
 
-    Each level includes the guarantees of the previous level.
-    """
-
-    FULL_ACCESS = 0
-    ONLY_SOURCE = 1
-    PARTIAL_SANDBOX = 2
-    FULL_SANDBOX = 3
-
-    @property
-    def uses_direct_source(self) -> bool:
-        """Whether the authoritative source is the active project root."""
-        return self <= SandboxMode.ONLY_SOURCE
 
 # Optional operator compatibility baseline.  Normal runtime assets arrive via
 # WorkspaceContext.runtime_readonly_binds instead.
@@ -200,13 +188,13 @@ class WorkspaceSandbox:
         self,
         workspace: WorkspaceContext,
         *,
-        config: object | None = None,
-        mode_config: object | None = None,
-        runtime_discovery: Sequence[type[RuntimeDiscovery]] | None = None,
+        policy: SandboxPolicy,
+        mode: SandboxMode
     ) -> None:
         self.__workspace = workspace
-        self.__config = config
-        self.__mode_config = mode_config
+        self.__policy: SandboxPolicy = policy
+        self.__mode: SandboxMode = mode
+
         self.__runtime_discovery = tuple(
             RUNTIME_DISCOVERY
             if runtime_discovery is None
@@ -271,15 +259,11 @@ class WorkspaceSandbox:
 
     @property
     def mode(self) -> SandboxMode:
-        configured = getattr(
-            self.__mode_config,
-            "mode",
-            None,
-        )
+        configured = self.__mode_config
         if configured is None:
             return (
                 SandboxMode.ONLY_SOURCE
-                if bool(getattr(self.__workspace, "direct_source", False))
+                if self.__workspace.direct_source
                 else SandboxMode.FULL_SANDBOX
             )
         if not isinstance(configured, SandboxMode):
@@ -287,9 +271,9 @@ class WorkspaceSandbox:
         return configured
 
     def _setting(self, name: str, default: object) -> object:
-        if self.__config is None:
+        if self.__policy is None:
             return default
-        return getattr(self.__config, name, default)
+        return getattr(self.__policy, name, default)
 
     def _string_setting(
         self,
@@ -303,14 +287,17 @@ class WorkspaceSandbox:
         ):
             raise TypeError(f"Sandbox setting '{name}' must contain strings.")
         configured = tuple(value)
-        mode_name = {
-            "extra_readonly_binds": "additional_ro_binds",
-            "extra_writable_binds": "additional_w_binds",
-        }.get(name)
-        if mode_name is None or self.__mode_config is None:
+        if self.__mode_config is None:
             return configured
 
-        mode_paths = getattr(self.__mode_config, mode_name, ())
+        if name == "extra_readonly_binds":
+            mode_name = "additional_ro_binds"
+            mode_paths = self.__mode_config.additional_ro_binds
+        elif name == "extra_writable_binds":
+            mode_name = "additional_w_binds"
+            mode_paths = self.__mode_config.additional_w_binds
+        else:
+            return configured
         if not isinstance(mode_paths, tuple) or not all(
             isinstance(path, Path)
             for path in mode_paths
@@ -337,12 +324,10 @@ class WorkspaceSandbox:
         """Apply mode and operator global network restrictions."""
         if not isinstance(requested, bool):
             raise TypeError("requested network access must be boolean")
-        mode_disallows = bool(
-            getattr(
-                self.__mode_config,
-                "global_network_disallow",
-                False,
-            )
+        mode_disallows = (
+            self.__mode_config.global_network_disallow
+            if self.__mode_config is not None
+            else False
         )
         operator_disallows = self._bool_setting(
             "global_network_disallow",
@@ -918,7 +903,7 @@ class WorkspaceSandbox:
             if path.exists()
         )
 
-        direct_source = bool(getattr(workspace, "direct_source", False))
+        direct_source = workspace.direct_source
         source_alias = (
             workspace.source_workspace
             if direct_source
@@ -1182,16 +1167,12 @@ class WorkspaceSandbox:
             for path in same_path_candidates
             if path.exists()
         ]
-        runtime = getattr(workspace, "runtime", None)
+        runtime = workspace.runtime
         if isinstance(runtime, Path) and runtime.exists():
             mounts.append((runtime, runtime))
         mounts.extend(
             (Path(source), Path(target))
-            for source, target in getattr(
-                workspace,
-                "runtime_readonly_binds",
-                (),
-            )
+            for source, target in workspace.runtime_readonly_binds
             if Path(source).exists()
         )
         return self._open_mounts(self._minimal_mount_pairs(mounts))
@@ -1217,7 +1198,7 @@ class WorkspaceSandbox:
         )
 
     def _open_source_mounts(self) -> tuple[_FdMount, ...]:
-        if bool(getattr(self.__workspace, "direct_source", False)):
+        if self.__workspace.direct_source:
             return ()
         source = self.__workspace.source_workspace
         return self._open_mounts(
@@ -1237,7 +1218,7 @@ class WorkspaceSandbox:
             for source, target in mounts:
                 descriptor = os.open(
                     source,
-                    os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+                    os.O_RDONLY | os.O_CLOEXEC,
                 )
                 opened.append(
                     _FdMount(
@@ -1415,7 +1396,7 @@ class WorkspaceSandbox:
             ):
                 continue
 
-            writable_roots = getattr(self.__workspace, "writable_roots", ())
+            writable_roots = self.__workspace.writable_roots
             if any(self._is_inside(path, root) for root in writable_roots):
                 continue
 
@@ -1607,7 +1588,7 @@ class WorkspaceSandbox:
         try:
             descriptor = os.open(
                 "/etc/resolv.conf",
-                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+                os.O_RDONLY | os.O_CLOEXEC,
             )
         except OSError:
             return None

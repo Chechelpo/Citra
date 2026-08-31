@@ -12,7 +12,7 @@ from citra.tools.transient import SkillTool
 from citra.tools.skills.skill import Skill
 from citra.utils.prompt import format_skills
 from citra.utils.prompt import collect_environment
-from citra.utils.prompt import PromptEnvironment
+from citra.utils.prompt import EnvironmentInfo
 from citra.tools.transient import Subprocess
 from citra.tools.transient import Browser
 
@@ -75,7 +75,7 @@ class _RoleMode(Mode):
             context
         ).function.name
         allowed = ", ".join(f"`{item}`" for item in step.allowed_next)
-        environment: PromptEnvironment = collect_environment(context)
+        environment: EnvironmentInfo = collect_environment(context)
         
         return f"""
 # Serial workflow role: {self.ROLE}

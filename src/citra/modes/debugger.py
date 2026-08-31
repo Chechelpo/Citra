@@ -22,7 +22,7 @@ from citra.tools.transient import (
 )
 from citra.utils import temporary_name
 from citra.utils.directory_tree import render_tree
-from citra.utils.prompt import PromptEnvironment, collect_environment
+from citra.utils.prompt import EnvironmentInfo, collect_environment
 from citra.utils.repo_map import RepoMap
 
 
@@ -42,7 +42,7 @@ class DebuggerMode(StaticMode):
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
-        environment: PromptEnvironment = collect_environment(context)
+        environment: EnvironmentInfo = collect_environment(context)
         initial_map = RepoMap(context.workspace)
         directory_tree = render_tree(workspace=context.workspace)
         return f"""

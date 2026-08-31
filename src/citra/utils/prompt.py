@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 @dataclass(frozen=True)
-class PromptEnvironment:
+class EnvironmentInfo:
     """
     Dynamic environment information exposed to the model.
     """
@@ -83,7 +83,7 @@ def _project_description(direct_source: bool) -> str:
     )
 
 
-def _source_environment_line(environment: PromptEnvironment) -> str:
+def _source_environment_line(environment: EnvironmentInfo) -> str:
     if environment.direct_source:
         return (
             "- **Source access:** direct and writable "
@@ -239,66 +239,3 @@ def _completion_requirements(
             )
         )
     return "\n".join(f"* {item}" for item in items)
-
-
-
-
-def collect_environment(
-    context: ExecutionContext,
-) -> PromptEnvironment:
-    now = datetime.now().astimezone()
-
-    return PromptEnvironment(
-        workspace=str(
-            context.workspace.workspace
-        ),
-        source_workspace=str(
-            context.workspace.source_workspace
-        ),
-        os=context.os,
-        architecture=platform.machine() or "unknown",
-        python_version=platform.python_version(),
-        datetime=now.isoformat(
-            timespec="seconds"
-        ),
-        timezone=_timezone_name(now),
-        git_repository=_is_git_repository(
-            context
-        ),
-        direct_source=bool(
-            getattr(context.workspace, "direct_source", False)
-        ),
-        memory_enabled=bool(
-            getattr(
-                getattr(context.config, "memory", None),
-                "enabled",
-                True,
-            )
-        ),
-    )
-
-
-def _is_git_repository(
-    context: ExecutionContext,
-) -> bool:
-    """Reuse the trusted workspace-commit service's startup detection."""
-    changes = context.workspace.changes
-    if changes is not None:
-        return changes.source_is_git_repository
-    return (context.workspace.workspace / ".git").is_dir()
-
-
-def _timezone_name(
-    value: datetime,
-) -> str:
-    name = value.tzname()
-
-    if name:
-        return name
-
-    offset = value.strftime("%z")
-
-    if offset:
-        return offset
-
-    return "unknown"
