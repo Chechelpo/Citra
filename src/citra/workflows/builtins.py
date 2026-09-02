@@ -10,7 +10,6 @@ from citra.sandbox import SandboxMode
 from citra.tools.default_registry import ToolSet, all_tools
 from citra.tools.subagent import SubagentTool
 from citra.utils.directory_tree import render_tree
-from citra.utils.prompt import collect_environment
 
 from .workflow import SingleModeWorkflow
 
@@ -38,7 +37,6 @@ class ArchitectMode(StaticMode):
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
-        environment = collect_environment(context)
         tree = render_tree(workspace=context.workspace, limit=120, max_depth=3)
         subagent_name = SubagentTool.resolve_definition_for_context(
             context
@@ -50,10 +48,6 @@ Translate the user's high-level greenfield or system-level requirement into a
 coherent implementation. You are one orchestrator agent in one workflow mode;
 component workers are genuine isolated subagents.
 
-# Environment
-
-{environment.as_prompt_section()}
-
 # Initial tree
 
 {tree}
@@ -63,8 +57,8 @@ component workers are genuine isolated subagents.
 1. Inspect the requirement and relevant repository state.
 2. Design the complete system once: components, ownership, dependency
    direction, public APIs, shared data models, and acceptance criteria.
-3. Materialize the architecture and frozen component contracts in the shared
-   workspace before delegation. Treat those contracts as immutable inputs to
+3. Write the architecture and frozen component contracts into the project
+   before delegation. Treat those contracts as immutable inputs to
    component workers.
 4. Use `{subagent_name}` to delegate only non-overlapping component write
    roots. Give each worker a self-contained task, relevant read-only context,
@@ -73,7 +67,8 @@ component workers are genuine isolated subagents.
    integrate until all required workers are terminal.
 6. Integrate component outputs yourself, run contract and cross-component
    tests, correct integration defects, and review the complete system.
-7. Apply only the verified final change set to the authoritative source.
+7. Leave the verified final change set uncommitted for the user to review and
+   commit.
 
 # Invariants
 
@@ -89,7 +84,7 @@ component workers are genuine isolated subagents.
 def simple_workflow(mode: Mode) -> SingleModeWorkflow:
     """Wrap a selected mode and inherit its sandbox policy."""
     return SingleModeWorkflow(
-        name="no-worfklow",
+        name="simple",
         description="One persistent agent running a selected mode.",
         mode=mode,
         sandbox_config=None,

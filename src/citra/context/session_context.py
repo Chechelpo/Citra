@@ -1,12 +1,16 @@
-"""Process-lifetime Agent Runtime filesystem and lifecycle ownership."""
+"""Process-lifetime Agent Runtime filesystem and lifecycle ownership.
 
-from citra.utils.prompt import EnvironmentInfo
+The controller uses the input project only to create a complete Git-aware
+working copy. Model-facing tools operate on that copy as the ordinary current
+project. The input path is never exposed as a model-facing path and Citra does
+not create an ``@source`` symlink, alias, or mountpoint.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,8 +22,9 @@ from threading import Lock
 from typing import Mapping, Sequence
 import venv
 
+from .environment_fetching import EnvironmentInfo
+
 from .available_tools import default_runtime_assets, default_tool_definitions
-from citra.config.config_loader import RuntimeConfig, WorkspaceContextConfig
 from .runtime import (
     RuntimeAsset,
     RuntimeProcessSupervisor,
@@ -28,14 +33,18 @@ from .runtime import (
     ToolDefinition,
     write_json_atomic,
 )
-from .workspace_changes import SourceSnapshot, WorkspaceChanges
 
 
 _PATH_ALIAS_PATTERN = re.compile(r"^@([a-z_]+)(?:/(.*))?$")
 _RUNTIME_DIRECTORY_PATTERN = re.compile(
     r"^citra-process-(?P<pid>[1-9][0-9]*)-(?P<nonce>[A-Za-z0-9_-]{6,})$"
 )
-_PROTECTED_WORKSPACE_PARTS = frozenset({".git", ".hg", ".svn", "@source"})
+
+# Runtime defaults formerly supplied through RuntimeConfig.
+_DEFAULT_PROVISIONING_COPY_BUDGET_BYTES = 512 * 1024 * 1024
+_DEFAULT_ENV_SOFT_LIMIT_BYTES = 4 * 1024 * 1024 * 1024
+_DEFAULT_CACHE_SOFT_LIMIT_BYTES = 4 * 1024 * 1024 * 1024
+_DEFAULT_TMP_SOFT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 
 
 class RuntimeClosingError(RuntimeError):
@@ -43,6 +52,8 @@ class RuntimeClosingError(RuntimeError):
 
 
 class RuntimeState(str, Enum):
+    """Lifecycle states for one process-lifetime Agent Runtime."""
+
     NEW = "new"
     CREATING_FILESYSTEM = "creating-filesystem"
     MATERIALIZING_WORKSPACE = "materializing-workspace"
@@ -55,6 +66,8 @@ class RuntimeState(str, Enum):
 
 
 class _RuntimeLifecycle:
+    """Small thread-safe lifecycle state holder."""
+
     def __init__(self) -> None:
         self._lock = Lock()
         self._state = RuntimeState.NEW
@@ -64,23 +77,28 @@ class _RuntimeLifecycle:
         with self._lock:
             return self._state
 
-    def set(self, state: RuntimeState) -> None:
+    def set(
+        self,
+        state: RuntimeState,
+    ) -> None:
         with self._lock:
             self._state = state
 
     def begin_closing(self) -> bool:
         with self._lock:
-            if self._state in {RuntimeState.CLOSING, RuntimeState.CLOSED}:
+            if self._state in {
+                RuntimeState.CLOSING,
+                RuntimeState.CLOSED,
+            }:
                 return False
+
             self._state = RuntimeState.CLOSING
             return True
 
 
 class AvailablePathAlias(str, Enum):
-    """A Citra-defined path alias, similar to ``~/`` or ``./``."""
+    """A model-facing Citra path alias, similar to ``~/`` or ``./``."""
 
-    WORKSPACE = "workspace"
-    SOURCE = "source"
     LIBRARY = "library"
     HOME = "home"
     TMP = "tmp"
@@ -96,16 +114,21 @@ class AvailablePathAlias(str, Enum):
 
 @dataclass(frozen=True)
 class WorkspaceContext:
-    """
-    Compatibility facade over one process-lifetime Agent Runtime.
+    """Own one process-lifetime Agent Runtime.
 
-    If a sandbox is active, the source code is copied into the workspace.
+    ``source_workspace`` is controller-private. The model works on
+    ``workspace``, which is always a materialized copy under ``root``.
+
+    There is intentionally no direct-source mode and no ``@source`` alias.
+    The real source tree is not exposed to model-facing filesystem tools.
     """
 
+    # Controller-private source and persistent controller data.
     source_workspace: Path
-    workspace: Path
     library: Path
 
+    # Model-facing project and runtime filesystem.
+    workspace: Path
     root: Path
     home: Path
     tmp: Path
@@ -118,10 +141,8 @@ class WorkspaceContext:
     metadata: Path
     runtime_state: Path
 
-    changes: WorkspaceChanges | None
+    # Controller/runtime services.
     provisioning: RuntimeProvisioning
-    runtime_config: RuntimeConfig
-    direct_source: bool
     private_source_paths: tuple[Path, ...]
     created_at: str
     workspace_initial_bytes: int
@@ -129,102 +150,224 @@ class WorkspaceContext:
     processes: RuntimeProcessSupervisor
     _lifecycle: _RuntimeLifecycle
 
-    environment:EnvironmentInfo
-    
+    # Prompt-facing environment metadata.
+    #
+    # This deliberately has a different name from environment(), which builds
+    # process environment variables.
+    environment_info: EnvironmentInfo
+
+    # Explicit runtime settings formerly supplied indirectly through
+    # RuntimeConfig / WorkspaceContextConfig.
+    aggressive_environment_normalization: bool
+    environment_overrides: tuple[tuple[str, str], ...]
+    env_soft_limit_bytes: int
+    cache_soft_limit_bytes: int
+    tmp_soft_limit_bytes: int
 
     @classmethod
     def create(
         cls,
-        config: WorkspaceContextConfig,
         workspace: str | Path,
         *,
-        runtime_config: RuntimeConfig | None = None,
+        temporary_workspace: str | Path | None = None,
+        library: str | Path | None = None,
         tool_definitions: Sequence[ToolDefinition] | None = None,
         runtime_assets: Sequence[RuntimeAsset] | None = None,
         browser_path: str | Path | None = None,
+        provisioning_copy_budget_bytes: int = (
+            _DEFAULT_PROVISIONING_COPY_BUDGET_BYTES
+        ),
+        remove_stale_process_roots: bool = True,
+        aggressive_environment_normalization: bool = True,
+        environment_overrides: Mapping[str, str] | None = None,
+        env_soft_limit_bytes: int = _DEFAULT_ENV_SOFT_LIMIT_BYTES,
+        cache_soft_limit_bytes: int = _DEFAULT_CACHE_SOFT_LIMIT_BYTES,
+        tmp_soft_limit_bytes: int = _DEFAULT_TMP_SOFT_LIMIT_BYTES,
     ) -> WorkspaceContext:
+        """Create an isolated runtime and materialize ``workspace`` into it.
+
+        The supplied ``workspace`` path is the real controller-owned source.
+        It is copied into ``<runtime-root>/workspace`` before any model-facing
+        work begins.
+
+        The input path is never added to ``allowed_roots`` and no source alias
+        is created inside the copied project.
+        """
+        if provisioning_copy_budget_bytes < 0:
+            raise ValueError(
+                "Provisioning copy budget cannot be negative."
+            )
+
+        for name, value in (
+            (
+                "env_soft_limit_bytes",
+                env_soft_limit_bytes,
+            ),
+            (
+                "cache_soft_limit_bytes",
+                cache_soft_limit_bytes,
+            ),
+            (
+                "tmp_soft_limit_bytes",
+                tmp_soft_limit_bytes,
+            ),
+        ):
+            if value < 0:
+                raise ValueError(
+                    f"{name} cannot be negative."
+                )
+
         source_workspace = Path(
-            config.permanent_workspace or workspace
+            workspace
         ).expanduser().resolve()
+
         if not source_workspace.is_dir():
             raise NotADirectoryError(
                 f"Source workspace does not exist: {source_workspace}"
             )
 
-        policy = runtime_config or RuntimeConfig()
         temp_base = (
-            Path(config.temporary_workspace).expanduser().resolve()
-            if config.temporary_workspace is not None
-            else Path(tempfile.gettempdir()).resolve()
+            Path(
+                temporary_workspace
+            ).expanduser().resolve()
+            if temporary_workspace is not None
+            else Path(
+                tempfile.gettempdir()
+            ).resolve()
         )
-        if cls._is_within(source_workspace, temp_base):
+
+        if cls._is_within(
+            source_workspace,
+            temp_base,
+        ):
             raise ValueError(
                 "The temporary Agent Runtime parent cannot be inside the "
                 "source workspace."
             )
-        temp_base.mkdir(parents=True, exist_ok=True)
+
+        temp_base.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         janitor_warnings: list[str] = []
-        if policy.cleanup.remove_stale_process_roots:
-            janitor_warnings.extend(cls.cleanup_stale_roots(temp_base))
+
+        if remove_stale_process_roots:
+            janitor_warnings.extend(
+                cls.cleanup_stale_roots(
+                    temp_base
+                )
+            )
 
         root = Path(
             tempfile.mkdtemp(
-                prefix=f"citra-process-{os.getpid()}-",
-                dir=str(temp_base),
+                prefix=(
+                    f"citra-process-{os.getpid()}-"
+                ),
+                dir=str(
+                    temp_base
+                ),
             )
         ).resolve()
+
         lifecycle = _RuntimeLifecycle()
         processes = RuntimeProcessSupervisor()
-        lifecycle.set(RuntimeState.CREATING_FILESYSTEM)
 
-        workspace_path = (
-            source_workspace
-            if config.direct_source
-            else root / "workspace"
+        lifecycle.set(
+            RuntimeState.CREATING_FILESYSTEM
         )
+
+        # The model-facing project is always a complete independent copy.
+        workspace_path = root / "workspace"
+
         runtime = root / "runtime"
         env = root / "env"
         cache = root / "cache"
         tmp = root / "tmp"
         home = root / "home" / "agent"
         metadata = root / "metadata"
-        config_dir = home / ".config"
-        data = home / ".local" / "share"
-        state = metadata
-        xdg_state = home / ".local" / "state"
-        runtime_state = home / ".run"
 
-        if config.library is not None:
-            library = Path(config.library).expanduser().resolve()
+        config_dir = (
+            home / ".config"
+        )
+
+        data = (
+            home
+            / ".local"
+            / "share"
+        )
+
+        state = metadata
+
+        xdg_state = (
+            home
+            / ".local"
+            / "state"
+        )
+
+        runtime_state = (
+            home
+            / ".run"
+        )
+
+        if library is not None:
+            library_path = Path(
+                library
+            ).expanduser().resolve()
+
         else:
-            citra_root_raw = os.environ.get("CITRA_ROOT")
-            library = (
-                Path(citra_root_raw).expanduser().resolve() / "library"
+            citra_root_raw = os.environ.get(
+                "CITRA_ROOT"
+            )
+
+            library_path = (
+                Path(
+                    citra_root_raw
+                ).expanduser().resolve()
+                / "library"
                 if citra_root_raw
-                else temp_base / "citra-library"
+                else temp_base
+                / "citra-library"
             )
 
         if (
-            cls._is_within(library, source_workspace)
-            or cls._is_within(library, root)
-            or cls._is_within(root, library)
+            cls._is_within(
+                library_path,
+                source_workspace,
+            )
+            or cls._is_within(
+                library_path,
+                root,
+            )
+            or cls._is_within(
+                root,
+                library_path,
+            )
         ):
-            _remove_tree(root)
+            _remove_tree(
+                root
+            )
+
             raise ValueError(
                 "The controlled document library, source workspace, and "
                 "Agent Runtime root must not contain one another."
             )
 
-        private_source_paths = _private_source_exclusions(
-            source_workspace,
-            library,
+        private_source_paths = (
+            _private_source_exclusions(
+                source_workspace,
+                library_path,
+            )
         )
 
         try:
-            library.mkdir(parents=True, exist_ok=True)
+            library_path.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
 
-            runtime_directories = (
+            for directory in (
+                workspace_path,
                 runtime,
                 env,
                 cache,
@@ -235,55 +378,55 @@ class WorkspaceContext:
                 data,
                 xdg_state,
                 runtime_state,
+            ):
+                directory.mkdir(
+                    parents=True,
+                    exist_ok=False,
+                )
+
+            home.chmod(
+                0o700
             )
 
-            if not config.direct_source:
-                runtime_directories = (workspace_path, *runtime_directories)
+            runtime_state.chmod(
+                0o700
+            )
 
-            for directory in runtime_directories:
-                directory.mkdir(parents=True, exist_ok=False)
+            created_at = datetime.now(
+                timezone.utc
+            ).isoformat()
 
-            home.chmod(0o700)
-            runtime_state.chmod(0o700)
-
-            created_at = datetime.now(timezone.utc).isoformat()
             owner = {
                 "schema_version": 1,
                 "runtime_id": root.name,
                 "owner_pid": os.getpid(),
-                "owner_process_start": _process_start_token(os.getpid()),
+                "owner_process_start": (
+                    _process_start_token(
+                        os.getpid()
+                    )
+                ),
                 "created_at": created_at,
             }
-            write_json_atomic(metadata / "owner.json", owner)
 
-            lifecycle.set(RuntimeState.MATERIALIZING_WORKSPACE)
+            write_json_atomic(
+                metadata
+                / "owner.json",
+                owner,
+            )
 
-            if config.direct_source:
-                copy_warnings: list[str] = []
-                workspace_bytes = 0
-                changes = None
-            else:
-                source_snapshots, copy_warnings, workspace_bytes = (
-                    _materialize_source_workspace(
-                        source_workspace,
-                        workspace_path,
-                        excluded_roots=private_source_paths,
-                    )
-                )
+            lifecycle.set(
+                RuntimeState.MATERIALIZING_WORKSPACE
+            )
 
-                # The mountpoint is reserved even when the source contains an
-                # incompatible top-level entry with this name.
-                (workspace_path / "@source").mkdir(exist_ok=True)
+            copy_warnings, workspace_bytes = _materialize_source_workspace(
+                source_workspace,
+                workspace_path,
+                excluded_roots=private_source_paths,
+            )
 
-                changes = WorkspaceChanges.create(
-                    source_workspace=source_workspace,
-                    workspace=workspace_path,
-                    state=metadata,
-                    home=home,
-                    source_snapshots=source_snapshots,
-                )
-
-            lifecycle.set(RuntimeState.PROVISIONING_RUNTIME)
+            lifecycle.set(
+                RuntimeState.PROVISIONING_RUNTIME
+            )
 
             definitions = tuple(
                 default_tool_definitions()
@@ -292,7 +435,9 @@ class WorkspaceContext:
             )
 
             standalone = tuple(
-                default_runtime_assets(browser_path=browser_path)
+                default_runtime_assets(
+                    browser_path=browser_path
+                )
                 if runtime_assets is None
                 else runtime_assets
             )
@@ -300,18 +445,22 @@ class WorkspaceContext:
             provisioning = RuntimeProvisioner(
                 runtime_root=runtime,
                 copy_budget_bytes=(
-                    policy.storage.provisioning_copy_budget_bytes
+                    provisioning_copy_budget_bytes
                 ),
             ).provision(
                 definitions,
                 standalone_assets=standalone,
             )
 
-            lifecycle.set(RuntimeState.BUILDING_ENVIRONMENT)
+            lifecycle.set(
+                RuntimeState.BUILDING_ENVIRONMENT
+            )
 
-            dependency_warnings = _create_dependency_environment(
-                env,
-                provisioning,
+            dependency_warnings = (
+                _create_dependency_environment(
+                    env,
+                    provisioning,
+                )
             )
 
             for directory in (
@@ -331,19 +480,24 @@ class WorkspaceContext:
                 cache / "playwright",
                 cache / "python",
             ):
-                directory.mkdir(parents=True, exist_ok=True)
+                directory.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
 
             warnings = tuple(
                 janitor_warnings
                 + copy_warnings
-                + provisioning.warnings
+                + list(
+                    provisioning.warnings
+                )
                 + dependency_warnings
             )
 
             instance = cls(
                 source_workspace=source_workspace,
+                library=library_path,
                 workspace=workspace_path,
-                library=library,
                 root=root,
                 home=home,
                 tmp=tmp,
@@ -355,68 +509,129 @@ class WorkspaceContext:
                 env=env,
                 metadata=metadata,
                 runtime_state=runtime_state,
-                changes=changes,
                 provisioning=provisioning,
-                runtime_config=policy,
-                direct_source=config.direct_source,
-                private_source_paths=private_source_paths,
+                private_source_paths=(
+                    private_source_paths
+                ),
                 created_at=created_at,
-                workspace_initial_bytes=workspace_bytes,
+                workspace_initial_bytes=(
+                    workspace_bytes
+                ),
                 startup_warnings=warnings,
                 processes=processes,
                 _lifecycle=lifecycle,
+                environment_info=(
+                    EnvironmentInfo.collect_environment()
+                ),
+                aggressive_environment_normalization=(
+                    aggressive_environment_normalization
+                ),
+                environment_overrides=tuple(
+                    (
+                        str(name),
+                        str(value),
+                    )
+                    for name, value in (
+                        environment_overrides
+                        or {}
+                    ).items()
+                ),
+                env_soft_limit_bytes=(
+                    env_soft_limit_bytes
+                ),
+                cache_soft_limit_bytes=(
+                    cache_soft_limit_bytes
+                ),
+                tmp_soft_limit_bytes=(
+                    tmp_soft_limit_bytes
+                ),
             )
 
-            lifecycle.set(RuntimeState.ACTIVE)
+            lifecycle.set(
+                RuntimeState.ACTIVE
+            )
+
             instance.write_runtime_manifest(
                 workspace_bytes=workspace_bytes
             )
+
             return instance
 
         except Exception:
-            lifecycle.set(RuntimeState.FAILED)
-            _remove_tree(root)
+            lifecycle.set(
+                RuntimeState.FAILED
+            )
+
+            _remove_tree(
+                root
+            )
+
             raise
 
     @property
-    def runtime_id(self) -> str:
+    def runtime_id(
+        self,
+    ) -> str:
+        """Return the process-runtime directory identifier."""
         return self.root.name
 
     @property
-    def lifecycle_state(self) -> RuntimeState:
+    def lifecycle_state(
+        self,
+    ) -> RuntimeState:
         return self._lifecycle.state
 
     @property
-    def is_closing(self) -> bool:
+    def is_closing(
+        self,
+    ) -> bool:
         return self.lifecycle_state in {
             RuntimeState.CLOSING,
             RuntimeState.CLOSED,
         }
 
-    def ensure_active(self) -> None:
-        if self.lifecycle_state is not RuntimeState.ACTIVE:
+    def ensure_active(
+        self,
+    ) -> None:
+        """Reject new runtime work once shutdown has begun."""
+        if (
+            self.lifecycle_state
+            is not RuntimeState.ACTIVE
+        ):
             raise RuntimeClosingError(
                 "Agent Runtime is not accepting work "
                 f"({self.lifecycle_state.value})."
             )
 
-    def begin_closing(self) -> bool:
-        began = self._lifecycle.begin_closing()
+    def begin_closing(
+        self,
+    ) -> bool:
+        """Begin runtime shutdown and stop accepting child processes."""
+        began = (
+            self._lifecycle.begin_closing()
+        )
+
         self.processes.begin_closing()
+
         return began
 
     @property
-    def disabled_tool_ids(self) -> frozenset[str]:
-        """Tools whose semantics require the disposable workspace bridge."""
-        if self.direct_source:
-            return frozenset({"commit", "materialize"})
+    def disabled_tool_ids(
+        self,
+    ) -> frozenset[str]:
+        """Return lifecycle-level tool exclusions."""
         return frozenset()
 
     @property
-    def allowed_roots(self) -> tuple[Path, ...]:
-        """Model-facing roots; controller metadata is intentionally absent."""
+    def allowed_roots(
+        self,
+    ) -> tuple[Path, ...]:
+        """Return roots exposed to ordinary model-facing filesystem tools.
+
+        ``source_workspace``, ``library``, and controller metadata are
+        deliberately absent.
+        """
         return (
-            self.source_workspace,
             self.workspace,
             self.home,
             self.tmp,
@@ -426,8 +641,10 @@ class WorkspaceContext:
         )
 
     @property
-    def writable_roots(self) -> tuple[Path, ...]:
-        """Writable data-plane roots. The provisioned runtime is immutable."""
+    def writable_roots(
+        self,
+    ) -> tuple[Path, ...]:
+        """Return model-facing writable data-plane roots."""
         return (
             self.workspace,
             self.home,
@@ -437,84 +654,174 @@ class WorkspaceContext:
         )
 
     @property
-    def runtime_readonly_binds(self) -> tuple[tuple[Path, Path], ...]:
-        return self.provisioning.readonly_binds
+    def runtime_readonly_binds(
+        self,
+    ) -> tuple[
+        tuple[Path, Path],
+        ...,
+    ]:
+        """Compatibility passthrough for provisioned runtime binds."""
+        return (
+            self.provisioning.readonly_binds
+        )
 
-    def resolve_command(self, command: str) -> Path | None:
+    def resolve_command(
+        self,
+        command: str,
+    ) -> Path | None:
+        """Resolve a provisioned command while the runtime is active."""
         if self.is_closing:
             return None
-        return self.provisioning.resolve_command(command)
 
-    def resolve_path(self, path: str | Path) -> Path:
-        raw = str(path)
+        return (
+            self.provisioning.resolve_command(
+                command
+            )
+        )
+
+    def resolve_path(
+        self,
+        path: str | Path,
+    ) -> Path:
+        """Resolve a model-facing path and enforce the allowed-root boundary."""
+        raw = str(
+            path
+        )
+
         alias_raw = raw
 
-        while alias_raw.startswith("./"):
-            alias_raw = alias_raw[2:]
+        while alias_raw.startswith(
+            "./"
+        ):
+            alias_raw = (
+                alias_raw[2:]
+            )
 
-        alias_match = _PATH_ALIAS_PATTERN.fullmatch(alias_raw)
+        alias_match = (
+            _PATH_ALIAS_PATTERN.fullmatch(
+                alias_raw
+            )
+        )
 
         if alias_match:
-            alias, remainder = alias_match.groups()
-            base = self._alias_root(alias)
+            alias, remainder = (
+                alias_match.groups()
+            )
+
+            base = self._alias_root(
+                alias
+            )
+
             resolved = (
                 base
                 if not remainder
-                else base / remainder
+                else base
+                / remainder
             ).resolve()
 
-        elif raw == "~" or raw.startswith("~/"):
-            remainder = "" if raw == "~" else raw[2:]
+        elif (
+            raw == "~"
+            or raw.startswith(
+                "~/"
+            )
+        ):
+            remainder = (
+                ""
+                if raw == "~"
+                else raw[2:]
+            )
+
             resolved = (
                 self.home
                 if not remainder
-                else self.home / remainder
+                else self.home
+                / remainder
             ).resolve()
 
         else:
-            candidate = Path(raw)
-            if not candidate.is_absolute():
-                candidate = self.workspace / candidate
-            resolved = candidate.resolve()
+            candidate = Path(
+                raw
+            )
 
-        self.require_allowed_path(resolved)
+            if not candidate.is_absolute():
+                candidate = (
+                    self.workspace
+                    / candidate
+                )
+
+            resolved = (
+                candidate.resolve()
+            )
+
+        self.require_allowed_path(
+            resolved
+        )
+
         return resolved
 
     def require_allowed_path(
         self,
         path: str | Path,
     ) -> Path:
-        resolved = Path(path).resolve()
+        """Require a path to belong to the model-facing runtime filesystem."""
+        resolved = Path(
+            path
+        ).resolve()
 
-        if self._is_within(self.library, resolved):
+        if self._is_within(
+            self.library,
+            resolved,
+        ):
             raise ValueError(
                 "Path belongs to the Citra document library and is not "
                 "accessible through ordinary filesystem tools."
             )
 
-        if self.is_controller_private_source_path(resolved):
+        if self._is_within(
+            self.source_workspace,
+            resolved,
+        ):
+            raise ValueError(
+                "Path belongs to the controller-owned source workspace and "
+                "is not model-facing."
+            )
+
+        if (
+            self.is_controller_private_source_path(
+                resolved
+            )
+        ):
             raise ValueError(
                 "Path belongs to Citra controller configuration and is not "
                 "model-facing."
             )
 
         if any(
-            self._is_within(root, resolved)
+            self._is_within(
+                root,
+                resolved,
+            )
             for root in self.allowed_roots
         ):
             return resolved
 
         raise ValueError(
-            f"Path is outside the model-facing filesystem: {resolved}"
+            "Path is outside the model-facing filesystem: "
+            f"{resolved}"
         )
 
     def is_valid_read_path(
         self,
         path: str | Path,
     ) -> bool:
+        """Return whether an ordinary model-facing read may access ``path``."""
         try:
-            self.require_allowed_path(path)
+            self.require_allowed_path(
+                path
+            )
+
             return True
+
         except ValueError:
             return False
 
@@ -522,40 +829,68 @@ class WorkspaceContext:
         self,
         path: str | Path,
     ) -> bool:
-        """Return whether a source path contains operator-owned Citra state."""
-        resolved = Path(path).resolve()
+        """Return whether a path belongs to excluded controller source state."""
+        resolved = Path(
+            path
+        ).resolve()
 
         return any(
             resolved == private
-            or self._is_within(private, resolved)
-            for private in self.private_source_paths
+            or self._is_within(
+                private,
+                resolved,
+            )
+            for private
+            in self.private_source_paths
         )
 
     def require_writable_path(
         self,
         path: str | Path,
     ) -> Path:
-        resolved = self.resolve_path(path)
+        """Resolve ``path`` and require it to belong to a writable root."""
+        resolved = (
+            self.resolve_path(
+                path
+            )
+        )
 
         if any(
-            self._is_within(root, resolved)
+            self._is_within(
+                root,
+                resolved,
+            )
             for root in self.writable_roots
         ):
             return resolved
 
         raise ValueError(
-            f"Path is read-only: {self.display_path(resolved)}"
+            "Path is read-only: "
+            f"{self.display_path(resolved)}"
         )
 
     def display_path(
         self,
         path: str | Path,
     ) -> str:
-        resolved = Path(path).resolve()
+        """Render a controller/runtime path using model-facing aliases."""
+        resolved = Path(
+            path
+        ).resolve()
 
         try:
-            relative = resolved.relative_to(self.workspace)
-            return "." if not relative.parts else relative.as_posix()
+            relative = (
+                resolved.relative_to(
+                    self.workspace
+                )
+            )
+
+            return (
+                "."
+                if not relative.parts
+                else relative.as_posix()
+            )
+
         except ValueError:
             pass
 
@@ -563,10 +898,6 @@ class WorkspaceContext:
             (
                 AvailablePathAlias.LIBRARY.value,
                 self.library,
-            ),
-            (
-                AvailablePathAlias.SOURCE.value,
-                self.source_workspace,
             ),
             (
                 AvailablePathAlias.TMP.value,
@@ -600,24 +931,47 @@ class WorkspaceContext:
 
         for alias, root in aliases:
             try:
-                relative = resolved.relative_to(root)
+                relative = (
+                    resolved.relative_to(
+                        root
+                    )
+                )
+
             except ValueError:
                 continue
 
             return (
                 f"@{alias}"
                 if not relative.parts
-                else f"@{alias}/{relative.as_posix()}"
+                else (
+                    f"@{alias}/"
+                    f"{relative.as_posix()}"
+                )
             )
 
-        return str(resolved)
+        # Controller-only callers may still inspect a private path.
+        # Never invent a model-facing @source alias for it.
+        return str(
+            resolved
+        )
 
     def environment(
         self,
-        extra: Mapping[str, str] | None = None,
+        extra: Mapping[
+            str,
+            str,
+        ]
+        | None = None,
     ) -> dict[str, str]:
-        """Build the canonical environment shared by every runtime process."""
-        inherited: dict[str, str] = {}
+        """Build the canonical environment shared by runtime processes.
+
+        The input project path is deliberately not exported. Processes receive
+        only the copied project root.
+        """
+        inherited: dict[
+            str,
+            str,
+        ] = {}
 
         for name in (
             "PATH",
@@ -633,123 +987,269 @@ class WorkspaceContext:
             "GOROOT",
             "NODE_PATH",
         ):
-            value = os.environ.get(name)
+            value = os.environ.get(
+                name
+            )
+
             if value is not None:
-                inherited[name] = value
+                inherited[
+                    name
+                ] = value
 
         path_entries = [
-            self.env / "python" / "bin",
-            self.env / "npm" / "bin",
-            self.env / "cargo" / "bin",
-            self.env / "gem" / "bin",
-            self.env / "go" / "bin",
-            self.runtime / "bin",
+            self.env
+            / "python"
+            / "bin",
+            self.env
+            / "npm"
+            / "bin",
+            self.env
+            / "cargo"
+            / "bin",
+            self.env
+            / "gem"
+            / "bin",
+            self.env
+            / "go"
+            / "bin",
+            self.runtime
+            / "bin",
         ]
 
-        inherited_path = inherited.get("PATH", "")
+        inherited_path = (
+            inherited.get(
+                "PATH",
+                "",
+            )
+        )
 
         path_values = [
-            str(path)
+            str(
+                path
+            )
             for path in path_entries
             if path.exists()
         ]
 
         path_values.extend(
             value
-            for value in inherited_path.split(os.pathsep)
+            for value in inherited_path.split(
+                os.pathsep
+            )
             if value
         )
 
-        inherited["PATH"] = os.pathsep.join(
-            dict.fromkeys(path_values)
+        inherited[
+            "PATH"
+        ] = os.pathsep.join(
+            dict.fromkeys(
+                path_values
+            )
         )
 
-        for definition in self.provisioning.definitions.values():
-            tool = self.provisioning.tools.get(definition.id)
+        for definition in (
+            self.provisioning
+            .definitions
+            .values()
+        ):
+            tool = (
+                self.provisioning
+                .tools
+                .get(
+                    definition.id
+                )
+            )
 
-            if tool is None or not tool.available:
+            if (
+                tool is None
+                or not tool.available
+            ):
                 continue
 
-            for name, value in definition.environment.items():
-                inherited[name] = self._expand_environment_value(
-                    value
+            for name, value in (
+                definition
+                .environment
+                .items()
+            ):
+                inherited[
+                    name
+                ] = (
+                    self._expand_environment_value(
+                        value
+                    )
                 )
 
-        if self.runtime_config.environment.aggressive_normalization:
+        if (
+            self.aggressive_environment_normalization
+        ):
             inherited.update(
                 {
-                    "PIP_CACHE_DIR": str(self.cache / "pip"),
-                    "UV_CACHE_DIR": str(self.cache / "uv"),
-                    "RUFF_CACHE_DIR": str(self.cache / "ruff"),
-                    "npm_config_cache": str(self.cache / "npm"),
-                    "npm_config_prefix": str(self.env / "npm"),
-                    "CARGO_HOME": str(self.env / "cargo"),
-                    "RUSTUP_HOME": str(self.env / "rustup"),
-                    "GEM_HOME": str(self.env / "gem"),
-                    "GEM_PATH": str(self.env / "gem"),
-                    "GOCACHE": str(self.cache / "go-build"),
-                    "GOMODCACHE": str(
-                        self.env / "go" / "pkg" / "mod"
+                    "PIP_CACHE_DIR": str(
+                        self.cache
+                        / "pip"
                     ),
-                    "GOBIN": str(self.env / "go" / "bin"),
+                    "UV_CACHE_DIR": str(
+                        self.cache
+                        / "uv"
+                    ),
+                    "RUFF_CACHE_DIR": str(
+                        self.cache
+                        / "ruff"
+                    ),
+                    "npm_config_cache": str(
+                        self.cache
+                        / "npm"
+                    ),
+                    "npm_config_prefix": str(
+                        self.env
+                        / "npm"
+                    ),
+                    "CARGO_HOME": str(
+                        self.env
+                        / "cargo"
+                    ),
+                    "RUSTUP_HOME": str(
+                        self.env
+                        / "rustup"
+                    ),
+                    "GEM_HOME": str(
+                        self.env
+                        / "gem"
+                    ),
+                    "GEM_PATH": str(
+                        self.env
+                        / "gem"
+                    ),
+                    "GOCACHE": str(
+                        self.cache
+                        / "go-build"
+                    ),
+                    "GOMODCACHE": str(
+                        self.env
+                        / "go"
+                        / "pkg"
+                        / "mod"
+                    ),
+                    "GOBIN": str(
+                        self.env
+                        / "go"
+                        / "bin"
+                    ),
                     "GRADLE_USER_HOME": str(
-                        self.cache / "gradle"
+                        self.cache
+                        / "gradle"
                     ),
                     "PLAYWRIGHT_BROWSERS_PATH": str(
                         self.provisioning.asset_path(
                             "playwright-browsers"
                         )
-                        or self.cache / "playwright"
+                        or self.cache
+                        / "playwright"
                     ),
                     "PYTHONPYCACHEPREFIX": str(
-                        self.cache / "python"
+                        self.cache
+                        / "python"
                     ),
                 }
             )
 
-        for name, value in self.runtime_config.environment.overrides:
-            inherited[name] = self._expand_environment_value(
-                value
+        for name, value in (
+            self.environment_overrides
+        ):
+            inherited[
+                name
+            ] = (
+                self._expand_environment_value(
+                    value
+                )
             )
 
         if extra:
             inherited.update(
                 {
-                    name: str(value)
+                    name: str(
+                        value
+                    )
                     for name, value in extra.items()
                 }
             )
 
         # Isolation-critical paths are forced last and cannot be redirected by
-        # operator overrides or per-process environment additions.
+        # operator or per-process overrides.
         inherited.update(
             {
-                "HOME": str(self.home),
-                "TMPDIR": str(self.tmp),
-                "TMP": str(self.tmp),
-                "TEMP": str(self.tmp),
-                "XDG_CONFIG_HOME": str(self.config),
-                "XDG_CACHE_HOME": str(self.cache / "xdg"),
-                "XDG_DATA_HOME": str(self.data),
-                "XDG_STATE_HOME": str(
-                    self.home / ".local" / "state"
+                "HOME": str(
+                    self.home
                 ),
-                "XDG_RUNTIME_DIR": str(self.runtime_state),
-                "CITRA_WORKSPACE": str(self.workspace),
-                "CITRA_SOURCE": str(self.source_workspace),
-                "CITRA_LIBRARY": str(self.library),
-                "CITRA_AGENT_ROOT": str(self.root),
-                "CITRA_RUNTIME": str(self.runtime),
-                "CITRA_ENV": str(self.env),
-                "CITRA_TMP": str(self.tmp),
-                "CITRA_CACHE": str(self.cache),
+                "TMPDIR": str(
+                    self.tmp
+                ),
+                "TMP": str(
+                    self.tmp
+                ),
+                "TEMP": str(
+                    self.tmp
+                ),
+                "XDG_CONFIG_HOME": str(
+                    self.config
+                ),
+                "XDG_CACHE_HOME": str(
+                    self.cache
+                    / "xdg"
+                ),
+                "XDG_DATA_HOME": str(
+                    self.data
+                ),
+                "XDG_STATE_HOME": str(
+                    self.home
+                    / ".local"
+                    / "state"
+                ),
+                "XDG_RUNTIME_DIR": str(
+                    self.runtime_state
+                ),
+                "CITRA_PROJECT_ROOT": str(
+                    self.workspace
+                ),
+                "CITRA_AGENT_ROOT": str(
+                    self.root
+                ),
+                "CITRA_RUNTIME": str(
+                    self.runtime
+                ),
+                "CITRA_ENV": str(
+                    self.env
+                ),
+                "CITRA_TMP": str(
+                    self.tmp
+                ),
+                "CITRA_CACHE": str(
+                    self.cache
+                ),
             }
         )
 
-        python_environment = self.env / "python"
+        # Remove the previous source/library path leaks even when a caller
+        # attempts to reintroduce them through environment overrides.
+        inherited.pop(
+            "CITRA_SOURCE",
+            None,
+        )
+
+        inherited.pop(
+            "CITRA_LIBRARY",
+            None,
+        )
+
+        python_environment = (
+            self.env
+            / "python"
+        )
 
         if python_environment.is_dir():
-            inherited["VIRTUAL_ENV"] = str(
+            inherited[
+                "VIRTUAL_ENV"
+            ] = str(
                 python_environment
             )
 
@@ -759,9 +1259,9 @@ class WorkspaceContext:
         self,
         value: str,
     ) -> str:
+        """Expand only model-facing/runtime aliases in an environment value."""
         replacements = {
             "workspace": self.workspace,
-            "source": self.source_workspace,
             "runtime": self.runtime,
             "env": self.env,
             "cache": self.cache,
@@ -771,23 +1271,41 @@ class WorkspaceContext:
 
         result = value
 
-        for name, path in replacements.items():
+        for name, path in (
+            replacements.items()
+        ):
             result = result.replace(
                 f"{{{name}}}",
-                str(path),
+                str(
+                    path
+                ),
             )
+
             result = result.replace(
                 f"${{@{name}}}",
-                str(path),
+                str(
+                    path
+                ),
             )
 
-            alias = f"@{name}"
+            alias = (
+                f"@{name}"
+            )
 
             if result == alias:
-                result = str(path)
-            elif result.startswith(alias + "/"):
                 result = str(
-                    path / result[len(alias) + 1 :]
+                    path
+                )
+
+            elif result.startswith(
+                alias + "/"
+            ):
+                result = str(
+                    path
+                    / result[
+                        len(alias)
+                        + 1 :
+                    ]
                 )
 
         return result
@@ -798,23 +1316,41 @@ class WorkspaceContext:
     ) -> Path | None:
         """Resolve a newly installed executable only from mutable env roots."""
         for directory in (
-            self.env / "python" / "bin",
-            self.env / "npm" / "bin",
-            self.env / "cargo" / "bin",
-            self.env / "gem" / "bin",
-            self.env / "go" / "bin",
+            self.env
+            / "python"
+            / "bin",
+            self.env
+            / "npm"
+            / "bin",
+            self.env
+            / "cargo"
+            / "bin",
+            self.env
+            / "gem"
+            / "bin",
+            self.env
+            / "go"
+            / "bin",
         ):
-            candidate = directory / command
+            candidate = (
+                directory
+                / command
+            )
 
-            if candidate.is_file() and os.access(
-                candidate,
-                os.X_OK,
+            if (
+                candidate.is_file()
+                and os.access(
+                    candidate,
+                    os.X_OK,
+                )
             ):
                 self.provisioning.register_staged_command(
                     command,
                     candidate,
                 )
+
                 self.write_runtime_manifest()
+
                 return candidate
 
         return None
@@ -824,21 +1360,30 @@ class WorkspaceContext:
         *,
         workspace_bytes: int | None = None,
     ) -> None:
-        storage = self.storage_usage()
+        """Write controller-only runtime diagnostics and ownership metadata."""
+        storage = (
+            self.storage_usage()
+        )
 
-        payload: dict[str, object] = {
+        payload: dict[
+            str,
+            object,
+        ] = {
             "schema_version": 1,
             "runtime_id": self.runtime_id,
             "owner_pid": os.getpid(),
             "created_at": self.created_at,
-            "source": str(self.source_workspace),
-            "workspace_mode": (
-                "direct-source"
-                if self.direct_source
-                else "isolated-copy"
+            "source": str(
+                self.source_workspace
             ),
+            "workspace": str(
+                self.workspace
+            ),
+            "workspace_mode": "isolated-copy",
             "state": self.lifecycle_state.value,
-            "active_child_processes": self.processes.active_count,
+            "active_child_processes": (
+                self.processes.active_count
+            ),
             "workspace_initial_bytes": (
                 self.workspace_initial_bytes
                 if workspace_bytes is None
@@ -846,25 +1391,25 @@ class WorkspaceContext:
             ),
             "environment": {
                 "aggressive_normalization": (
-                    self.runtime_config.environment.aggressive_normalization
+                    self.aggressive_environment_normalization
                 ),
                 "override_names": [
                     name
                     for name, _ in (
-                        self.runtime_config.environment.overrides
+                        self.environment_overrides
                     )
                 ],
             },
             "storage": storage,
             "storage_soft_limits": {
                 "env_bytes": (
-                    self.runtime_config.storage.env_soft_limit_bytes
+                    self.env_soft_limit_bytes
                 ),
                 "cache_bytes": (
-                    self.runtime_config.storage.cache_soft_limit_bytes
+                    self.cache_soft_limit_bytes
                 ),
                 "tmp_bytes": (
-                    self.runtime_config.storage.tmp_soft_limit_bytes
+                    self.tmp_soft_limit_bytes
                 ),
             },
             "startup_warnings": list(
@@ -877,15 +1422,25 @@ class WorkspaceContext:
         }
 
         write_json_atomic(
-            self.metadata / "runtime-manifest.json",
+            self.metadata
+            / "runtime-manifest.json",
             payload,
         )
 
-    def storage_usage(self) -> dict[str, int]:
+    def storage_usage(
+        self,
+    ) -> dict[str, int]:
+        """Return current usage of Citra-controlled mutable runtime areas."""
         return {
-            "env_bytes": _directory_size(self.env),
-            "cache_bytes": _directory_size(self.cache),
-            "tmp_bytes": _directory_size(self.tmp),
+            "env_bytes": _directory_size(
+                self.env
+            ),
+            "cache_bytes": _directory_size(
+                self.cache
+            ),
+            "tmp_bytes": _directory_size(
+                self.tmp
+            ),
         }
 
     def require_soft_capacity(
@@ -903,9 +1458,15 @@ class WorkspaceContext:
             )
 
         limits = {
-            "env": self.runtime_config.storage.env_soft_limit_bytes,
-            "cache": self.runtime_config.storage.cache_soft_limit_bytes,
-            "tmp": self.runtime_config.storage.tmp_soft_limit_bytes,
+            "env": (
+                self.env_soft_limit_bytes
+            ),
+            "cache": (
+                self.cache_soft_limit_bytes
+            ),
+            "tmp": (
+                self.tmp_soft_limit_bytes
+            ),
         }
 
         roots = {
@@ -916,30 +1477,48 @@ class WorkspaceContext:
 
         if area not in limits:
             raise ValueError(
-                f"Unknown Agent Runtime storage area: {area}"
+                "Unknown Agent Runtime storage area: "
+                f"{area}"
             )
 
-        used = _directory_size(roots[area])
+        used = _directory_size(
+            roots[
+                area
+            ]
+        )
 
-        if used + expected_bytes > limits[area]:
+        limit = limits[
+            area
+        ]
+
+        if (
+            used
+            + expected_bytes
+            > limit
+        ):
             raise RuntimeError(
                 f"Agent Runtime @{area} soft limit would be exceeded: "
                 f"used={used}, requested={expected_bytes}, "
-                f"limit={limits[area]} bytes."
+                f"limit={limit} bytes."
             )
 
-    def soft_limit_warnings(self) -> tuple[str, ...]:
-        usage = self.storage_usage()
+    def soft_limit_warnings(
+        self,
+    ) -> tuple[str, ...]:
+        """Return human-readable storage soft-limit warnings."""
+        usage = (
+            self.storage_usage()
+        )
 
         limits = {
             "env_bytes": (
-                self.runtime_config.storage.env_soft_limit_bytes
+                self.env_soft_limit_bytes
             ),
             "cache_bytes": (
-                self.runtime_config.storage.cache_soft_limit_bytes
+                self.cache_soft_limit_bytes
             ),
             "tmp_bytes": (
-                self.runtime_config.storage.tmp_soft_limit_bytes
+                self.tmp_soft_limit_bytes
             ),
         }
 
@@ -950,35 +1529,53 @@ class WorkspaceContext:
             if usage[name] > limit
         )
 
-    def runtime_diagnostics(self) -> dict[str, object]:
+    def runtime_diagnostics(
+        self,
+    ) -> dict[str, object]:
+        """Return controller-facing runtime diagnostics."""
         return {
             "runtime_id": self.runtime_id,
-            "root": str(self.root),
-            "workspace": str(self.workspace),
-            "source": str(self.source_workspace),
-            "workspace_mode": (
-                "direct-source"
-                if self.direct_source
-                else "isolated-copy"
+            "root": str(
+                self.root
             ),
-            "runtime": str(self.runtime),
-            "dependency_environment": str(self.env),
-            "state": self.lifecycle_state.value,
+            "workspace": str(
+                self.workspace
+            ),
+            "source": str(
+                self.source_workspace
+            ),
+            "workspace_mode": "isolated-copy",
+            "runtime": str(
+                self.runtime
+            ),
+            "dependency_environment": str(
+                self.env
+            ),
+            "state": (
+                self.lifecycle_state.value
+            ),
             "active_child_processes": (
                 self.processes.active_count
             ),
             "provisioning_budget_bytes": (
-                self.provisioning.budget_bytes
+                self.provisioning
+                .budget_bytes
             ),
             "provisioning_copied_bytes": (
-                self.provisioning.copied_bytes
+                self.provisioning
+                .copied_bytes
             ),
             "aggressive_normalization": (
-                self.runtime_config.environment.aggressive_normalization
+                self.aggressive_environment_normalization
             ),
-            "storage": self.storage_usage(),
+            "storage": (
+                self.storage_usage()
+            ),
             "tools": (
-                self.provisioning.as_manifest()["tools"]
+                self.provisioning
+                .as_manifest()[
+                    "tools"
+                ]
             ),
             "warnings": [
                 *self.startup_warnings,
@@ -990,8 +1587,18 @@ class WorkspaceContext:
         self,
         *,
         force: bool = False,
+        preserve_workspace: bool = False,
     ) -> None:
-        if self.lifecycle_state is RuntimeState.CLOSED:
+        """Terminate children and remove runtime-only state.
+
+        ``preserve_workspace`` keeps the copied project and its Git repository
+        for the user. This is used by normal application shutdown because Citra
+        never commits on the user's behalf.
+        """
+        if (
+            self.lifecycle_state
+            is RuntimeState.CLOSED
+        ):
             return
 
         self.begin_closing()
@@ -1000,6 +1607,7 @@ class WorkspaceContext:
             self.processes.terminate_all(
                 force=force
             )
+
         except Exception as error:
             raise RuntimeError(
                 "Could not terminate children for Agent Runtime "
@@ -1007,14 +1615,33 @@ class WorkspaceContext:
             ) from error
 
         try:
-            _remove_tree(self.root)
+            if preserve_workspace:
+                for child in self.root.iterdir():
+                    if child == self.workspace:
+                        continue
+                    if child.is_dir() and not child.is_symlink():
+                        _remove_tree(child)
+                    else:
+                        child.unlink(missing_ok=True)
+
+                marker = self.root / ".citra-workspace"
+                marker.write_text(
+                    "This project checkout is preserved for the user.\n",
+                    encoding="utf-8",
+                )
+            else:
+                _remove_tree(
+                    self.root
+                )
+
         except Exception as error:
             raise RuntimeError(
                 "Could not remove Agent Runtime "
                 f"{self.root}: {error}"
             ) from error
+
         finally:
-            if not self.root.exists():
+            if preserve_workspace or not self.root.exists():
                 self._lifecycle.set(
                     RuntimeState.CLOSED
                 )
@@ -1026,14 +1653,19 @@ class WorkspaceContext:
         *,
         encoding: str = "utf-8",
     ) -> Path:
+        """Atomically write text inside a model-facing writable root."""
         self.ensure_active()
 
-        destination = self.require_writable_path(
-            path
+        destination = (
+            self.require_writable_path(
+                path
+            )
         )
 
-        parent = self.require_writable_path(
-            destination.parent
+        parent = (
+            self.require_writable_path(
+                destination.parent
+            )
         )
 
         parent.mkdir(
@@ -1041,8 +1673,13 @@ class WorkspaceContext:
             exist_ok=True,
         )
 
-        descriptor, temporary_raw = tempfile.mkstemp(
-            prefix=f".{destination.name}.",
+        (
+            descriptor,
+            temporary_raw,
+        ) = tempfile.mkstemp(
+            prefix=(
+                f".{destination.name}."
+            ),
             suffix=".tmp",
             dir=parent,
         )
@@ -1057,14 +1694,19 @@ class WorkspaceContext:
                 "w",
                 encoding=encoding,
             ) as file:
-                file.write(text)
+                file.write(
+                    text
+                )
 
-            temporary.replace(destination)
+            temporary.replace(
+                destination
+            )
 
         except Exception:
             temporary.unlink(
                 missing_ok=True
             )
+
             raise
 
         return destination
@@ -1073,23 +1715,43 @@ class WorkspaceContext:
         self,
         alias: str,
     ) -> Path:
-        aliases: dict[str, Path] = {
-            AvailablePathAlias.WORKSPACE.value: self.workspace,
-            AvailablePathAlias.SOURCE.value: self.source_workspace,
-            AvailablePathAlias.HOME.value: self.home,
-            AvailablePathAlias.TMP.value: self.tmp,
-            AvailablePathAlias.CACHE.value: self.cache,
-            AvailablePathAlias.CONFIG.value: self.config,
-            AvailablePathAlias.DATA.value: self.data,
-            AvailablePathAlias.RUNTIME.value: self.runtime,
-            AvailablePathAlias.ENV.value: self.env,
+        """Resolve one model-facing path alias."""
+        aliases: dict[
+            str,
+            Path,
+        ] = {
+            AvailablePathAlias.HOME.value: (
+                self.home
+            ),
+            AvailablePathAlias.TMP.value: (
+                self.tmp
+            ),
+            AvailablePathAlias.CACHE.value: (
+                self.cache
+            ),
+            AvailablePathAlias.CONFIG.value: (
+                self.config
+            ),
+            AvailablePathAlias.DATA.value: (
+                self.data
+            ),
+            AvailablePathAlias.RUNTIME.value: (
+                self.runtime
+            ),
+            AvailablePathAlias.ENV.value: (
+                self.env
+            ),
         }
 
         try:
-            return aliases[alias]
+            return aliases[
+                alias
+            ]
+
         except KeyError as error:
             raise ValueError(
-                f"Unknown workspace path alias: @{alias}"
+                "Unknown workspace path alias: "
+                f"@{alias}"
             ) from error
 
     @staticmethod
@@ -1097,8 +1759,12 @@ class WorkspaceContext:
         root: Path,
         path: Path,
     ) -> bool:
+        """Return whether ``path`` is equal to or below ``root``."""
         try:
-            path.relative_to(root)
+            path.relative_to(
+                root
+            )
+
         except ValueError:
             return False
 
@@ -1116,14 +1782,18 @@ class WorkspaceContext:
             candidates = tuple(
                 parent.iterdir()
             )
+
         except OSError as error:
             return (
-                f"Could not scan runtime parent {parent}: {error}",
+                "Could not scan runtime parent "
+                f"{parent}: {error}",
             )
 
         for candidate in candidates:
-            match = _RUNTIME_DIRECTORY_PATTERN.fullmatch(
-                candidate.name
+            match = (
+                _RUNTIME_DIRECTORY_PATTERN.fullmatch(
+                    candidate.name
+                )
             )
 
             if (
@@ -1131,6 +1801,11 @@ class WorkspaceContext:
                 or candidate.is_symlink()
                 or not candidate.is_dir()
             ):
+                continue
+
+            # A successfully closed checkout belongs to the user and must not
+            # be treated as abandoned runtime state by the next process.
+            if (candidate / ".citra-workspace").is_file():
                 continue
 
             owner_path = (
@@ -1146,19 +1821,37 @@ class WorkspaceContext:
                     )
                 )
 
-                runtime_id = payload["runtime_id"]
-                owner_pid = payload["owner_pid"]
-                owner_start = payload.get(
-                    "owner_process_start"
+                runtime_id = payload[
+                    "runtime_id"
+                ]
+
+                owner_pid = payload[
+                    "owner_pid"
+                ]
+
+                owner_start = (
+                    payload.get(
+                        "owner_process_start"
+                    )
                 )
 
                 if (
-                    runtime_id != candidate.name
-                    or not isinstance(owner_pid, int)
+                    runtime_id
+                    != candidate.name
+                    or not isinstance(
+                        owner_pid,
+                        int,
+                    )
                     or owner_pid <= 0
-                    or int(match.group("pid")) != owner_pid
+                    or int(
+                        match.group(
+                            "pid"
+                        )
+                    )
+                    != owner_pid
                     or (
-                        owner_start is not None
+                        owner_start
+                        is not None
                         and not isinstance(
                             owner_start,
                             str,
@@ -1174,6 +1867,7 @@ class WorkspaceContext:
                     "Left unverified runtime root "
                     f"{candidate}: {error}"
                 )
+
                 continue
 
             if _process_matches(
@@ -1183,14 +1877,19 @@ class WorkspaceContext:
                 continue
 
             try:
-                _remove_tree(candidate)
+                _remove_tree(
+                    candidate
+                )
+
             except Exception as error:
                 warnings.append(
                     "Could not remove stale runtime "
                     f"{candidate}: {error}"
                 )
 
-        return tuple(warnings)
+        return tuple(
+            warnings
+        )
 
     # ------------------------------------------------------------------
     # Persistent controlled document library compatibility
@@ -1200,25 +1899,33 @@ class WorkspaceContext:
         self,
         path: str | Path,
     ) -> Path:
-        raw = str(path)
+        """Resolve a dedicated @library path for controller library tools."""
+        raw = str(
+            path
+        )
 
         if raw == "@library":
             return self.library
 
         prefix = "@library/"
 
-        if not raw.startswith(prefix):
+        if not raw.startswith(
+            prefix
+        ):
             raise ValueError(
                 "Library paths must begin with '@library'."
             )
 
-        remainder = raw[len(prefix) :]
+        remainder = raw[
+            len(prefix) :
+        ]
 
         if not remainder:
             return self.library
 
         resolved = (
-            self.library / remainder
+            self.library
+            / remainder
         ).resolve()
 
         if not self._is_within(
@@ -1237,8 +1944,11 @@ class WorkspaceContext:
         location: str = "@library",
         recursive: bool = True,
     ) -> tuple[Path, ...]:
-        directory = self.resolve_library_path(
-            location
+        """List controlled Citra documents under @library."""
+        directory = (
+            self.resolve_library_path(
+                location
+            )
         )
 
         if not directory.exists():
@@ -1251,9 +1961,13 @@ class WorkspaceContext:
             )
 
         iterator = (
-            directory.rglob("*.citra.xml")
+            directory.rglob(
+                "*.citra.xml"
+            )
             if recursive
-            else directory.glob("*.citra.xml")
+            else directory.glob(
+                "*.citra.xml"
+            )
         )
 
         documents: list[Path] = []
@@ -1262,7 +1976,9 @@ class WorkspaceContext:
             if not path.is_file():
                 continue
 
-            resolved = path.resolve()
+            resolved = (
+                path.resolve()
+            )
 
             if self._is_within(
                 self.library,
@@ -1276,7 +1992,9 @@ class WorkspaceContext:
             sorted(
                 documents,
                 key=lambda path: (
-                    self.display_path(path).casefold()
+                    self.display_path(
+                        path
+                    ).casefold()
                 ),
             )
         )
@@ -1287,19 +2005,17 @@ def _materialize_source_workspace(
     workspace_root: Path,
     *,
     excluded_roots: Sequence[Path] = (),
-) -> tuple[
-    dict[str, SourceSnapshot],
-    list[str],
-    int,
-]:
-    snapshots: dict[str, SourceSnapshot] = {}
+) -> tuple[list[str], int]:
+    """Copy the input project into the model-facing current project.
+
+    The complete project, including version-control metadata, is copied.
+    Source-owned regular files and symlinks are copied as project content;
+    Citra itself does not add any source bridge or alias.
+    """
     warnings: list[str] = []
+
     total_bytes = 0
 
-    # _private_source_exclusions() resolves these before passing them here.
-    # Because traversal is top-down, an excluded directory is skipped before
-    # recursion enters it. Descendant containment tests are therefore
-    # unnecessary for every filesystem entry.
     excluded = frozenset(
         excluded_roots
     )
@@ -1311,10 +2027,14 @@ def _materialize_source_workspace(
     ) -> None:
         nonlocal total_bytes
 
-        with os.scandir(source) as entries:
+        with os.scandir(
+            source
+        ) as entries:
             ordered = sorted(
                 entries,
-                key=lambda entry: entry.name,
+                key=lambda entry: (
+                    entry.name
+                ),
             )
 
         for entry in ordered:
@@ -1323,29 +2043,21 @@ def _materialize_source_workspace(
             )
 
             child_relative = (
-                relative / entry.name
+                relative
+                / entry.name
             )
 
-            # Exact membership is sufficient. If this is a directory, skipping
-            # it also skips its entire subtree.
             if child_source in excluded:
                 warnings.append(
                     "Skipped controller-private source entry: "
                     f"{child_relative.as_posix()}"
                 )
-                continue
 
-            # Because protected directories are pruned before recursion, only
-            # the current entry name needs to be checked.
-            if entry.name in _PROTECTED_WORKSPACE_PARTS:
-                warnings.append(
-                    "Skipped protected source entry: "
-                    f"{child_relative.as_posix()}"
-                )
                 continue
 
             child_destination = (
-                destination / entry.name
+                destination
+                / entry.name
             )
 
             metadata = entry.stat(
@@ -1358,7 +2070,9 @@ def _materialize_source_workspace(
                 child_relative.as_posix()
             )
 
-            if stat.S_ISDIR(mode):
+            if stat.S_ISDIR(
+                mode
+            ):
                 child_destination.mkdir()
 
                 copy_directory(
@@ -1374,7 +2088,9 @@ def _materialize_source_workspace(
                 )
 
                 child_destination.chmod(
-                    stat.S_IMODE(metadata.st_mode)
+                    stat.S_IMODE(
+                        metadata.st_mode
+                    )
                     | stat.S_IRUSR
                     | stat.S_IWUSR
                     | stat.S_IXUSR
@@ -1382,58 +2098,32 @@ def _materialize_source_workspace(
 
                 continue
 
-            if stat.S_ISLNK(mode):
-                before = _snapshot_source_path(
-                    child_source
-                )
-
+            if stat.S_ISLNK(
+                mode
+            ):
                 child_destination.symlink_to(
-                    os.readlink(child_source)
-                )
-
-                after = _snapshot_source_path(
-                    child_source
-                )
-
-                if before != after:
-                    raise RuntimeError(
-                        "Source changed during workspace materialization: "
-                        f"{relative_text}"
+                    os.readlink(
+                        child_source
                     )
+                )
 
-                snapshots[
-                    relative_text
-                ] = after
-
-                total_bytes += metadata.st_size
+                total_bytes += (
+                    metadata.st_size
+                )
 
                 continue
 
-            if stat.S_ISREG(mode):
-                before = _snapshot_source_path(
-                    child_source
-                )
-
+            if stat.S_ISREG(
+                mode
+            ):
                 _copy_regular_file(
                     child_source,
                     child_destination,
                 )
 
-                after = _snapshot_source_path(
-                    child_source
+                total_bytes += (
+                    metadata.st_size
                 )
-
-                if before != after:
-                    raise RuntimeError(
-                        "Source changed during workspace materialization: "
-                        f"{relative_text}"
-                    )
-
-                snapshots[
-                    relative_text
-                ] = after
-
-                total_bytes += metadata.st_size
 
                 continue
 
@@ -1449,7 +2139,6 @@ def _materialize_source_workspace(
     )
 
     return (
-        snapshots,
         warnings,
         total_bytes,
     )
@@ -1459,7 +2148,7 @@ def _private_source_exclusions(
     source_root: Path,
     library: Path,
 ) -> tuple[Path, ...]:
-    """Return controller-owned paths that must never enter the workspace copy."""
+    """Return controller-owned paths that must never enter the copied source."""
     candidates = [
         library
     ]
@@ -1468,21 +2157,28 @@ def _private_source_exclusions(
         "CITRA_ROOT",
         "CITRA_CONFIG_PATH",
     ):
-        raw = os.environ.get(name)
+        raw = os.environ.get(
+            name
+        )
 
         if raw:
             candidates.append(
-                Path(raw).expanduser()
+                Path(
+                    raw
+                ).expanduser()
             )
 
     result: list[Path] = []
 
     for candidate in candidates:
-        resolved = candidate.resolve()
+        resolved = (
+            candidate.resolve()
+        )
 
-        if resolved == source_root:
-            # A malformed configuration must not silently omit the whole
-            # selected project; normal path validation will handle it later.
+        if (
+            resolved
+            == source_root
+        ):
             continue
 
         if WorkspaceContext._is_within(
@@ -1494,7 +2190,9 @@ def _private_source_exclusions(
             )
 
     return tuple(
-        dict.fromkeys(result)
+        dict.fromkeys(
+            result
+        )
     )
 
 
@@ -1511,8 +2209,12 @@ def _copy_regular_file(
         ficlone = 0x40049409
 
         with (
-            source.open("rb") as source_stream,
-            destination.open("xb") as target,
+            source.open(
+                "rb"
+            ) as source_stream,
+            destination.open(
+                "xb"
+            ) as target,
         ):
             fcntl.ioctl(
                 target.fileno(),
@@ -1522,7 +2224,10 @@ def _copy_regular_file(
 
         cloned = True
 
-    except (ImportError, OSError):
+    except (
+        ImportError,
+        OSError,
+    ):
         destination.unlink(
             missing_ok=True
         )
@@ -1533,6 +2238,7 @@ def _copy_regular_file(
             destination,
             follow_symlinks=False,
         )
+
     else:
         shutil.copy2(
             source,
@@ -1549,70 +2255,26 @@ def _copy_regular_file(
     )
 
 
-def _snapshot_source_path(
-    path: Path,
-) -> SourceSnapshot:
-    metadata = path.lstat()
-
-    mode = stat.S_IMODE(
-        metadata.st_mode
-    )
-
-    if stat.S_ISLNK(
-        metadata.st_mode
-    ):
-        return SourceSnapshot(
-            kind="symlink",
-            mode=mode,
-            size=metadata.st_size,
-            symlink_target=os.readlink(
-                path
-            ),
-        )
-
-    if not stat.S_ISREG(
-        metadata.st_mode
-    ):
-        raise ValueError(
-            "Only regular files and symlinks can be copied: "
-            f"{path}"
-        )
-
-    digest = hashlib.sha256()
-
-    with path.open("rb") as source:
-        for block in iter(
-            lambda: source.read(
-                1024 * 1024
-            ),
-            b"",
-        ):
-            digest.update(
-                block
-            )
-
-    return SourceSnapshot(
-        kind="file",
-        mode=mode,
-        size=metadata.st_size,
-        sha256=digest.hexdigest(),
-    )
-
-
 def _create_dependency_environment(
     env_root: Path,
     provisioning: RuntimeProvisioning,
 ) -> list[str]:
+    """Create the shared Python dependency environment when Python exists."""
     warnings: list[str] = []
 
     if not (
-        provisioning.has_command("python3")
-        or provisioning.has_command("python")
+        provisioning.has_command(
+            "python3"
+        )
+        or provisioning.has_command(
+            "python"
+        )
     ):
         return warnings
 
     destination = (
-        env_root / "python"
+        env_root
+        / "python"
     )
 
     try:
@@ -1624,6 +2286,7 @@ def _create_dependency_environment(
         ).create(
             destination
         )
+
     except Exception as error:
         warnings.append(
             "Could not create shared Python environment: "
@@ -1636,6 +2299,7 @@ def _create_dependency_environment(
 def _directory_size(
     root: Path,
 ) -> int:
+    """Return an approximate recursive size without following symlinks."""
     total = 0
 
     if not root.exists():
@@ -1646,15 +2310,22 @@ def _directory_size(
     ]
 
     while stack:
-        directory = stack.pop()
+        directory = (
+            stack.pop()
+        )
 
         try:
-            with os.scandir(directory) as entries:
+            with os.scandir(
+                directory
+            ) as entries:
                 for entry in entries:
                     try:
-                        metadata = entry.stat(
-                            follow_symlinks=False
+                        metadata = (
+                            entry.stat(
+                                follow_symlinks=False
+                            )
                         )
+
                     except OSError:
                         continue
 
@@ -1662,10 +2333,15 @@ def _directory_size(
                         metadata.st_mode
                     ):
                         stack.append(
-                            Path(entry.path)
+                            Path(
+                                entry.path
+                            )
                         )
+
                     else:
-                        total += metadata.st_size
+                        total += (
+                            metadata.st_size
+                        )
 
         except OSError:
             continue
@@ -1676,6 +2352,7 @@ def _directory_size(
 def _process_start_token(
     pid: int,
 ) -> str | None:
+    """Read the Linux process start token used to avoid PID-reuse mistakes."""
     try:
         raw = Path(
             f"/proc/{pid}/stat"
@@ -1688,7 +2365,9 @@ def _process_start_token(
             1,
         )[1].split()
 
-        return suffix[19]
+        return suffix[
+            19
+        ]
 
     except (
         IndexError,
@@ -1701,18 +2380,23 @@ def _process_matches(
     pid: int,
     expected_start: str | None,
 ) -> bool:
+    """Return whether a PID still refers to the expected live process."""
     try:
         os.kill(
             pid,
             0,
         )
+
     except ProcessLookupError:
         return False
+
     except PermissionError:
         return True
 
-    current_start = _process_start_token(
-        pid
+    current_start = (
+        _process_start_token(
+            pid
+        )
     )
 
     if (
@@ -1730,6 +2414,7 @@ def _process_matches(
 def _remove_tree(
     root: Path,
 ) -> None:
+    """Best-effort permission repair followed by recursive runtime removal."""
     if not root.exists():
         return
 
@@ -1746,7 +2431,10 @@ def _remove_tree(
         )
 
         for name in filenames:
-            path = base / name
+            path = (
+                base
+                / name
+            )
 
             if path.is_symlink():
                 continue
@@ -1758,11 +2446,15 @@ def _remove_tree(
                     )
                     | 0o600
                 )
+
             except OSError:
                 pass
 
         for name in dirnames:
-            path = base / name
+            path = (
+                base
+                / name
+            )
 
             if path.is_symlink():
                 continue
@@ -1774,6 +2466,7 @@ def _remove_tree(
                     )
                     | 0o700
                 )
+
             except OSError:
                 pass
 
@@ -1784,6 +2477,7 @@ def _remove_tree(
             )
             | 0o700
         )
+
     except OSError:
         pass
 

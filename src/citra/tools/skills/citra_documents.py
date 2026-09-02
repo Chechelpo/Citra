@@ -12,9 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CitraDocsPromptEnvironment:
-    source_documents: tuple[str, ...]
-    workspace_documents: tuple[str, ...]
-    direct_source: bool
+    project_documents: tuple[str, ...]
 
 
 class CitraDocsSkill(Skill):
@@ -41,9 +39,7 @@ class CitraDocsSkill(Skill):
 
         return _PROMPT.format(
             project_documents=_project_documents(environment),
-            addressing_policy=_addressing_policy(
-                environment.direct_source
-            ),
+            addressing_policy=_addressing_policy(),
         )
 
 
@@ -53,17 +49,11 @@ def _collect_environment(
     workspace = context.workspace
 
     return CitraDocsPromptEnvironment(
-        source_documents=_discover_documents(
-            workspace.source_workspace,
-            display_prefix="@source",
-            is_private=workspace.is_controller_private_source_path,
-        ),
-        workspace_documents=_discover_documents(
+        project_documents=_discover_documents(
             workspace.workspace,
-            display_prefix="@workspace",
+            display_prefix=".",
             is_private=workspace.is_controller_private_source_path,
         ),
-        direct_source=bool(getattr(workspace, "direct_source", False)),
     )
 
 
@@ -114,49 +104,18 @@ def _format_documents(
 
 
 def _project_documents(environment: CitraDocsPromptEnvironment) -> str:
-    if environment.direct_source:
-        return f"""\
-### Active project documents
-
-These authoritative, writable documents currently exist in the direct project
-root:
-
-{_format_documents(environment.workspace_documents)}
-
-`@workspace` and `@source` address the same files. Document-tool edits affect
-the source immediately; there is no staging/Commit step."""
     return f"""\
-### Source documents
+### Project documents
 
-These documents currently exist in the permanent source workspace:
+These Citra documents currently exist in the project:
 
-{_format_documents(environment.source_documents)}
-
-Source documents are authoritative and read-only to ordinary tools. Inspect
-them when they contain relevant project knowledge. If one must be changed,
-edit its already-present counterpart in the writable workspace and follow
-Citra's normal staging/Commit workflow rather than modifying `@source`
-directly.
-
-### Workspace documents
-
-These Citra documents currently exist in the writable agent workspace:
-
-{_format_documents(environment.workspace_documents)}"""
+{_format_documents(environment.project_documents)}"""
 
 
-def _addressing_policy(direct_source: bool) -> str:
-    if direct_source:
-        return (
-            "The current document tool addresses authoritative documents in "
-            "the active direct project root by logical name."
-        )
+def _addressing_policy() -> str:
     return (
-        "The current document tool addresses documents in the active workspace "
-        "by logical name. A detected source document or a document nested "
-        "somewhere the tool cannot directly address should be edited through "
-        "its corresponding writable workspace path or placed in the "
-        "appropriate writable document location before editing."
+        "The document tool addresses project documents by logical name. "
+        "Ordinary project paths are relative to `.`."
     )
 
 
@@ -207,7 +166,7 @@ tools.
 Use `document` listing when the current library contents matter, since any
 initial library list in the system prompt is only an orientation snapshot.
 
-Workspace documents may be modified with the `document` tool.
+Project documents may be modified with the `document` tool.
 
 The detected lists are informational snapshots generated when this skill is
 loaded. Documents may be created, changed, or removed later.

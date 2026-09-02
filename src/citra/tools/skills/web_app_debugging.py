@@ -61,7 +61,7 @@ The main tools for this workflow are:
 * `subprocess` for lifecycle-scoped development servers and other persistent
   processes;
 * `browser` for interacting with the running application in headless Chromium;
-* source inspection, LSP, Grep, and diagnostics for locating the implementation
+* source inspection, LSP, text search, and diagnostics for locating the implementation
   responsible for observed behavior.
 
 ## General workflow
@@ -250,7 +250,7 @@ Prefer LSP when symbol identity matters:
 * inferred types;
 * diagnostics.
 
-Prefer Grep for:
+Prefer focused text search for:
 
 * literal error messages;
 * route strings;

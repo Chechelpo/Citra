@@ -7,11 +7,11 @@ import subprocess
 import tempfile
 import unittest
 
-from citra.tools.lsp.config import LspConfig
-from citra.tools.lsp.language import Language
-from citra.tools.lsp.manager import LspManager
-from citra.tools.lsp.positions import SourcePosition
-from citra.tools.lsp.servers import SERVERS
+from citra.utils.lsp.config import LspConfig
+from citra.utils.lsp.language import Language
+from citra.utils.lsp.manager import LspManager
+from citra.utils.lsp.positions import SourcePosition
+from citra.utils.lsp.servers import SERVERS
 
 from tests.test_lsp_reliability import WorkspaceStub
 

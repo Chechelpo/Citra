@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 from citra.utils.model_tokenizer import tokenize
 
 if TYPE_CHECKING:
-    from citra.context.turn_workspace import WorkspaceContext
+    from citra.context.session_context import WorkspaceContext
 
 
 DEFAULT_MAP_TOKENS = 3_500
@@ -123,10 +123,8 @@ class RepoMap:
     """
     Build a compact structural map of the effective Citra project.
 
-    Files are indexed from the complete disposable Agent Runtime workspace.
-    ``@source`` remains an explicit authoritative view and is not overlaid into
-    the normal project map. Parsed tags are cached by path/mtime/size for the
-    ExecutionContext lifetime.
+    Files are indexed from the current project. Parsed tags are cached by
+    path/mtime/size for the ExecutionContext lifetime.
     """
 
     def __init__(self, workspace: WorkspaceContext) -> None:
@@ -216,10 +214,6 @@ class RepoMap:
 
     def _normalize_subtree(self, raw: str) -> PurePosixPath:
         value = raw.strip() or "."
-        if value.startswith("@source/"):
-            value = value[len("@source/"):]
-        elif value == "@source":
-            value = "."
 
         candidate = PurePosixPath(value)
         if candidate.is_absolute() or ".." in candidate.parts:
@@ -304,7 +298,7 @@ class RepoMap:
             dirnames[:] = [
                 name
                 for name in dirnames
-                if name not in _SKIP_DIRECTORIES and name != "@source"
+                if name not in _SKIP_DIRECTORIES
                 and not self.workspace.is_controller_private_source_path(
                     base / name
                 )

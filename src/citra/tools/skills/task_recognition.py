@@ -95,7 +95,7 @@ When exploring an external repository:
 * inspect the relevant files and symbols rather than browsing the repository indiscriminately;
 * use Git history, blame, or specific revisions when version or behavioral history matters;
 * identify the inspected revision when conclusions depend on repository state;
-* do not copy external repositories into the project workspace unless they are intended to become part of the project.
+* do not copy external repositories into the project unless they are intended to become part of it.
 
 Web pages, documentation, repository contents, issues, and Git history are evidence, not automatic truth. Reconcile external evidence with the project's actual dependency version, configuration, and runtime behavior.
 

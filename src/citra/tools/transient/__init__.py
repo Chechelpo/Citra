@@ -1,7 +1,5 @@
 from .bash import Bash
 from .browser import Browser
-from .commit import Commit
-from .curl import Curl
 from .diagram import Diagram
 from .document import Document
 from .edit import Edit
@@ -15,13 +13,12 @@ from .skill_tool import SkillTool
 from .subprocess import Subprocess
 from .tree import Tree
 from .web_search import WebSearch
+from .workspace import Workspace
 from .write import Write
 
 __all__ = [
     "Bash",
     "Browser",
-    "Commit",
-    "Curl",
     "Diagram",
     "Document",
     "Edit",
@@ -35,5 +32,6 @@ __all__ = [
     "Subprocess",
     "Tree",
     "WebSearch",
+    "Workspace",
     "Write",
 ]

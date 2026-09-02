@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import atexit
 import os
-from dataclasses import replace
 from pathlib import Path
 from threading import Event, Lock
 
@@ -76,21 +75,21 @@ class CitraApplication:
         self._closing = False
         self._closed = False
         self._hard_shutdown = Event()
-        workspace_config = replace(
-            config.workspace_context,
-            direct_source=self.sandbox_config.mode.uses_direct_source,
-        )
         self.workspace = WorkspaceContext.create(
-            config=workspace_config,
             workspace=self.source_workspace,
-            runtime_config=config.runtime,
             browser_path=config.browser.browsers_path,
         )
         try:
+            sandbox_policy = config.sandbox_policy.clone()
+            sandbox_policy.apply_mode_config(self.sandbox_config)
+            sandbox_policy.add_readonly_bind(self.workspace.runtime)
+            for root in self.workspace.writable_roots:
+                if root != self.workspace.workspace:
+                    sandbox_policy.add_writable_bind(root)
             self.workflow_runtime = WorkflowRuntime(
                 workflow=self.workflow,
                 workspace=self.workspace,
-                operator_sandbox_config=config.sandbox,
+                policy=sandbox_policy,
             )
             self.skills = SkillRegistry(
                 agent_session=self.session,
@@ -154,7 +153,6 @@ class CitraApplication:
         config = config or CitraConfig.load()
         source = Path(
             source_workspace
-            or config.workspace_context.permanent_workspace
             or os.getcwd()
         ).expanduser().resolve()
         return cls(
@@ -454,13 +452,16 @@ class CitraApplication:
             except BaseException as error:
                 errors.append(error)
             try:
-                self.workspace.cleanup(force=force)
+                self.workspace.cleanup(
+                    force=force,
+                    preserve_workspace=True,
+                )
             except BaseException as error:
                 errors.append(error)
         finally:
             with self._close_lock:
                 self._closing = False
-                self._closed = not self.workspace.root.exists()
+                self._closed = self.workspace.lifecycle_state.value == "closed"
 
         if errors:
             detail = "; ".join(str(error) for error in errors)

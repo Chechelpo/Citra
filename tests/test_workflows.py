@@ -33,7 +33,7 @@ def _mode(name: str, sandbox_mode: SandboxMode) -> UserMode:
 
 
 def test_workflow_policy_optionally_overrides_mode_policy() -> None:
-    mode = _mode("mode", SandboxMode.ONLY_SOURCE)
+    mode = _mode("mode", SandboxMode.PARTIAL_SANDBOX)
     inherited = simple_workflow(mode)
     override = SingleModeWorkflow(
         name="override",
@@ -54,7 +54,6 @@ def test_workflow_runtime_owns_the_concrete_sandbox() -> None:
     runtime = WorkflowRuntime(
         workflow=workflow,
         workspace=SimpleNamespace(),
-        operator_sandbox_config=SimpleNamespace(),
         sandbox=sandbox,
     )
 

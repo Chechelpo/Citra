@@ -14,8 +14,12 @@ class ScopedFilesystem:
     """Path resolver whose authority is limited to sandbox data mounts."""
 
     def __init__(self) -> None:
-        self.workspace = self._required_path("CITRA_WORKSPACE")
-        self.source_workspace = self._required_path("CITRA_SOURCE")
+        project_raw = os.environ.get("CITRA_PROJECT_ROOT")
+        self.workspace = (
+            Path(project_raw).resolve()
+            if project_raw
+            else Path.cwd().resolve()
+        )
         self.home = self._required_path("HOME")
         self.tmp = self._required_path("CITRA_TMP")
         self.cache = self._required_path("CITRA_CACHE")
@@ -42,8 +46,6 @@ class ScopedFilesystem:
 
         self._denied_roots = (self.library,)
         self._aliases: dict[str, Path] = {
-            "workspace": self.workspace,
-            "source": self.source_workspace,
             "home": self.home,
             "tmp": self.tmp,
             "cache": self.cache,
@@ -52,12 +54,13 @@ class ScopedFilesystem:
             "data": self.data,
             "runtime": self.runtime,
         }
-        self._read_roots = (self.source_workspace, *self._aliases.values())
+        self._read_roots = (self.workspace, *self._aliases.values())
         self._write_roots = tuple(
             root
             for name, root in self._aliases.items()
-            if name not in {"source", "runtime"}
+            if name != "runtime"
         )
+        self._write_roots = (self.workspace, *self._write_roots)
 
     @staticmethod
     def _required_path(name: str) -> Path:
@@ -120,7 +123,6 @@ class ScopedFilesystem:
         resolved = Path(value).resolve()
         ordered = (
             ("", self.workspace),
-            ("source", self.source_workspace),
             ("tmp", self.tmp),
             ("home", self.home),
             ("cache", self.cache),

@@ -1,4 +1,4 @@
-"""Host-runtime discovery for ESLint sandbox compatibility."""
+"""Host-runtime discovery for Ruff sandbox compatibility."""
 
 from __future__ import annotations
 
@@ -9,25 +9,18 @@ import shlex
 import shutil
 from typing import TYPE_CHECKING
 
-from citra.sandbox.runtime_discovery.base import (
-    RuntimeDiscovery,
-    RuntimeDiscoveryResult,
-)
-
-if TYPE_CHECKING:
-    from citra.context.turn_workspace import WorkspaceContext
-
+from ._base import RuntimeDiscovery, RuntimeDiscoveryResult
 
 logger = logging.getLogger(__name__)
 
-_COMMAND = "eslint"
+_COMMAND = "ruff"
 
 
-class EslintRuntimeDiscovery(RuntimeDiscovery):
-    """Expose the host ESLint launcher and supporting runtime read-only.
+class RuffRuntimeDiscovery(RuntimeDiscovery):
+    """Expose the host Ruff launcher and supporting runtime read-only.
 
-    ESLint is resolved before Bubblewrap is created. If the host executable
-    is unavailable, discovery is advisory: a warning is logged and no bind is
+    Ruff is resolved before Bubblewrap is created. If the host executable is
+    unavailable, discovery is advisory: a warning is logged and no bind is
     contributed.
     """
 
@@ -37,7 +30,7 @@ class EslintRuntimeDiscovery(RuntimeDiscovery):
         if executable_raw is None:
             logger.warning(
                 "Runtime discovery could not find %r on the host PATH; "
-                "ESLint will not receive automatic read-only sandbox binds.",
+                "Ruff will not receive automatic read-only sandbox binds.",
                 _COMMAND,
             )
             return RuntimeDiscoveryResult()
@@ -48,7 +41,7 @@ class EslintRuntimeDiscovery(RuntimeDiscovery):
 
 
 def _runtime_binds(executable: Path) -> tuple[Path, ...]:
-    """Return minimal host paths needed to launch one discovered tool."""
+    """Return the minimal host paths needed to launch one discovered tool."""
     executable = executable.expanduser().absolute()
     resolved = executable.resolve()
 
@@ -59,29 +52,13 @@ def _runtime_binds(executable: Path) -> tuple[Path, ...]:
 
     _append_python_environment_root(candidates, executable)
     _append_python_environment_root(candidates, resolved)
-    _append_node_runtime_root(candidates, executable)
-    _append_node_runtime_root(candidates, resolved)
-    _append_node_modules_prefix(candidates, executable)
-    _append_node_modules_prefix(candidates, resolved)
 
     interpreter = _shebang_interpreter(executable)
     if interpreter is not None:
         interpreter = interpreter.expanduser().absolute()
-        resolved_interpreter = interpreter.resolve()
-
-        candidates.extend(
-            (
-                interpreter.parent,
-                resolved_interpreter.parent,
-            )
-        )
-
+        candidates.extend((interpreter.parent, interpreter.resolve().parent))
         _append_python_environment_root(candidates, interpreter)
-        _append_python_environment_root(candidates, resolved_interpreter)
-        _append_node_runtime_root(candidates, interpreter)
-        _append_node_runtime_root(candidates, resolved_interpreter)
-        _append_node_modules_prefix(candidates, interpreter)
-        _append_node_modules_prefix(candidates, resolved_interpreter)
+        _append_python_environment_root(candidates, interpreter.resolve())
 
     return _minimal_existing_paths(candidates)
 
@@ -90,7 +67,7 @@ def _append_python_environment_root(
     candidates: list[Path],
     executable: Path,
 ) -> None:
-    """Include an owning Python virtual environment when detectable."""
+    """Include an owning Python virtual environment when one is detectable."""
     parent = executable.parent
     if parent.name not in {"bin", "Scripts"}:
         return
@@ -100,56 +77,13 @@ def _append_python_environment_root(
         candidates.append(environment_root)
 
 
-def _append_node_runtime_root(
-    candidates: list[Path],
-    executable: Path,
-) -> None:
-    """Include a conventional Node installation root when detectable.
-
-    This primarily covers layouts such as NVM installations where ``node``
-    and globally installed package launchers live beneath one version root.
-    """
-    parent = executable.parent
-    if parent.name != "bin":
-        return
-
-    root = parent.parent
-    if (
-        (root / "bin" / "node").exists()
-        or (root / "lib" / "node_modules").is_dir()
-    ):
-        candidates.append(root)
-
-
-def _append_node_modules_prefix(
-    candidates: list[Path],
-    executable: Path,
-) -> None:
-    """Include the prefix owning a ``node_modules`` tree when present."""
-    parts = executable.parts
-    try:
-        index = parts.index("node_modules")
-    except ValueError:
-        return
-
-    if index <= 0:
-        return
-
-    if executable.is_absolute():
-        prefix = Path(executable.anchor, *parts[1:index])
-    else:
-        prefix = Path(*parts[:index])
-
-    if prefix.exists():
-        candidates.append(prefix)
-
-
 def _shebang_interpreter(executable: Path) -> Path | None:
-    """Resolve the interpreter referenced by a script shebang.
+    """Resolve an absolute interpreter referenced by a script shebang.
 
-    Absolute interpreters are returned directly. ``/usr/bin/env`` shebangs
-    are resolved through the host PATH when they name an interpreter
-    explicitly, including ``env -S`` forms.
+    This covers wrappers installed in locations such as ``~/.local/bin`` whose
+    shebang points into a uv/pip-managed virtual environment hidden by the
+    sandbox. ``/usr/bin/env`` shebangs are resolved through the host PATH when
+    they name an interpreter explicitly.
     """
     try:
         with executable.open("rb") as stream:
@@ -187,9 +121,7 @@ def _shebang_interpreter(executable: Path) -> Path | None:
     return Path(resolved) if resolved is not None else None
 
 
-def _minimal_existing_paths(
-    candidates: list[Path],
-) -> tuple[Path, ...]:
+def _minimal_existing_paths(candidates: list[Path]) -> tuple[Path, ...]:
     """Deduplicate existing paths and remove children covered by a parent."""
     unique: list[Path] = []
     seen: set[str] = set()

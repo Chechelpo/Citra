@@ -41,7 +41,7 @@ class BashNetworkTests(unittest.TestCase):
     def test_network_requires_reason(self) -> None:
         tool, context = self._tool()
         with self.assertRaisesRegex(ValueError, "reason"):
-            tool._execute({"cmd": "curl https://example.com", "network": True})
+            tool._execute({"cmd": "python -m pip index versions example", "network": True})
         context.sandbox.run.assert_not_called()
 
     def test_denial_prevents_execution(self) -> None:
@@ -52,13 +52,13 @@ class BashNetworkTests(unittest.TestCase):
         ) as prompt:
             result = tool._execute(
                 {
-                    "cmd": "curl https://example.com",
+                    "cmd": "python -m pip index versions example",
                     "network": True,
                     "reason": "Download public test data.",
                 }
             )
         question = prompt.call_args.args[0]["question"]
-        self.assertIn("curl https://example.com", question)
+        self.assertIn("python -m pip index", question)
         self.assertIn("Download public test data.", question)
         self.assertIn("permission-denied", result)
         context.sandbox.run.assert_not_called()
@@ -71,7 +71,7 @@ class BashNetworkTests(unittest.TestCase):
         ):
             tool._execute(
                 {
-                    "cmd": "git clone https://example.com/repo.git",
+                    "cmd": "python -m pip index versions example",
                     "network": True,
                     "reason": "Obtain the repository requested by the user.",
                 }
@@ -85,13 +85,23 @@ class BashNetworkTests(unittest.TestCase):
         ) as prompt:
             tool._execute(
                 {
-                    "cmd": "curl https://example.com",
+                    "cmd": "python -m pip index versions example",
                     "network": True,
                     "reason": "Check endpoint availability.",
                 }
             )
         prompt.assert_not_called()
         self.assertTrue(context.sandbox.run.call_args.kwargs["network"])
+
+    def test_git_mutation_is_reserved_for_constrained_tools(self) -> None:
+        tool, context = self._tool()
+        for command in ("git add .", "git commit -m bad", "git restore file.py"):
+            with self.subTest(command=command), self.assertRaisesRegex(
+                ValueError,
+                "Git commands are not available",
+            ):
+                tool._execute({"cmd": command})
+        context.sandbox.run.assert_not_called()
 
 
 if __name__ == "__main__":

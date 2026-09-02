@@ -54,8 +54,7 @@ class Tree(Tool):
                         schema=JsonSchema.string(
                             description=(
                                 "Project-relative subtree or @tmp path to map. "
-                                "Defaults to the entire project. '@source' is "
-                                "accepted as a project-relative source alias."
+                                "Defaults to the entire project."
                             ),
                         ),
                         required=False,

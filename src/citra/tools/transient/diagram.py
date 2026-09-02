@@ -23,7 +23,7 @@ class Diagram(Tool):
     """
     Create and maintain Mermaid diagrams for Citra documents.
 
-    A workspace document named::
+    A project document named::
 
         architecture.citra.xml
 
@@ -60,7 +60,7 @@ class Diagram(Tool):
                 "rendered SVG assets beneath "
                 "'<document>.citra.assets/diagrams/' beside the owning "
                 "document. Use 'location' to target either the active "
-                "workspace or Citra's persistent document library. "
+                "current project or Citra's persistent document library. "
                 "Use simple Mermaid diagrams for architecture, flows, "
                 "sequences, states, classes, ER models, timelines, Gantt "
                 "charts, mindmaps, Git graphs, charts, and similar "
@@ -95,10 +95,10 @@ class Diagram(Tool):
                         schema=JsonSchema.string(
                             description=(
                                 "Location containing the owning Citra document. "
-                                "Defaults to '@workspace'. Use '@library' or "
+                                "Defaults to '.'. Use '@library' or "
                                 "'@library/<folder>' for persistent library "
-                                "documents. '@workspace/<folder>' is also "
-                                "supported for nested workspace documents."
+                                "documents. A project-relative folder such as "
+                                "'docs' is also supported."
                             ),
                         ),
                         required=False,
@@ -293,7 +293,7 @@ class Diagram(Tool):
             str(
                 arguments.get(
                     "location",
-                    "@workspace",
+                    ".",
                 )
             )
         )
@@ -1018,24 +1018,9 @@ class Diagram(Tool):
                 )
             )
 
-        if (
-            location == "@workspace"
-            or location.startswith(
-                "@workspace/"
-            )
-        ):
-            path = self.context.workspace.resolve_path(
-                location
-            )
-
-            return self.context.workspace.require_writable_path(
-                path
-            )
-
-        raise ValueError(
-            "Diagram location must be '@workspace', "
-            "'@workspace/<folder>', '@library', or "
-            "'@library/<folder>'."
+        path = self.context.workspace.resolve_path(location)
+        return self.context.workspace.require_writable_path(
+            path
         )
 
     def _document_path(
@@ -1196,11 +1181,7 @@ class Diagram(Tool):
             )
 
         if (
-            normalized == "@workspace"
-            or normalized.startswith(
-                "@workspace/"
-            )
-            or normalized == "@library"
+            normalized == "@library"
             or normalized.startswith(
                 "@library/"
             )
@@ -1209,11 +1190,12 @@ class Diagram(Tool):
                 "/"
             )
 
-        raise ValueError(
-            "Document location must be '@workspace', "
-            "'@workspace/<folder>', '@library', or "
-            "'@library/<folder>'."
-        )
+        candidate = Path(normalized)
+        if candidate.is_absolute() or ".." in candidate.parts or normalized.startswith("@"):
+            raise ValueError(
+                "Document location must stay inside the current project."
+            )
+        return normalized.rstrip("/")
 
     @classmethod
     def _validate_operation_arguments(
@@ -1407,7 +1389,7 @@ class Diagram(Tool):
         location = str(
             arguments.get(
                 "location",
-                "@workspace",
+                ".",
             )
         )
 

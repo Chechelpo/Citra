@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from citra.context.libraries.repository_library import RepositoryLibrary
 from citra.utils.git_utility import GitRepositoryUtility, GitUtilityError
 
 
@@ -121,35 +120,3 @@ def test_remote_policy_rejects_non_github_https(tmp_path: Path):
     with pytest.raises(ValueError, match="file://"):
         utility.cache_path((tmp_path / "repo.git").as_uri())
 
-
-def test_repository_library_git_hooks_end_to_end(tmp_path: Path, monkeypatch):
-    url, first, second, _ = _create_remote(tmp_path)
-    utility = GitRepositoryUtility(
-        tmp_path / ".citra/git/repos",
-        allow_file_urls=True,
-    )
-
-    # RepositoryLibrary intentionally only accepts GitHub URLs, so for this
-    # offline integration test we preserve its persistence behavior while
-    # substituting its URL canonicalization boundary with the local file URL.
-    library = RepositoryLibrary(
-        tmp_path / ".citra/library/repos",
-        git_utility=utility,
-    )
-
-    monkeypatch.setattr(library, "_canonicalize_repo_url", lambda _: url)
-    monkeypatch.setattr(library, "_parse_repo_identity", lambda _: ("local", "repo"))
-    monkeypatch.setattr(
-        library,
-        "_get_repo_folder_name",
-        lambda _: "repo-localtest",
-    )
-
-    created = library.create_repo_from_git(url)
-    assert "Created documented repository" in created
-    assert second in created
-
-    changed = library.changed_source_files(url, first, second)
-    assert "old.txt" in changed
-    assert "renamed.txt" in changed
-    assert "src/app.py" in changed

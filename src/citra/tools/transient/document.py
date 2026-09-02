@@ -30,13 +30,13 @@ class Document(Tool):
     """
     Read and edit structured Citra documents.
 
-    Documents live either in the lifecycle workspace or in Citra's persistent
+    Documents live either in the current project or in Citra's persistent
     document library. The model interacts with sections and Markdown and never
     needs direct XML access.
 
-    Workspace document::
+    Project document::
 
-        @workspace/architecture.citra.xml
+        ./architecture.citra.xml
 
     Library document::
 
@@ -64,7 +64,7 @@ class Document(Tool):
     _SECTIONS_TAG = "sections"
     _SECTION_TAG = "section"
 
-    _WORKSPACE_ALIAS = "@workspace"
+    _PROJECT_ROOT = "."
     _LIBRARY_ALIAS = "@library"
 
     DEFINITION = ChatCompletionTool(
@@ -75,9 +75,9 @@ class Document(Tool):
                 "documents. Documents are stored as '<name>.citra.xml' and "
                 "have an automatically generated '<name>.html' view. "
                 "Use location='@library' for Citra's persistent document "
-                "library, or omit location to use '@workspace'. Nested "
-                "library/workspace folders may be selected with values such "
-                "as '@library/python'. Pass the logical document name without "
+                "library, or omit location to use the current project. Nested "
+                "project folders may use paths such as 'docs'; library folders "
+                "use values such as '@library/python'. Pass the logical document name without "
                 "the '.citra.xml' suffix. Use 'list' to discover documents, "
                 "'inspect' before reading unfamiliar documents, and bounded "
                 "section reads for large documents."
@@ -111,10 +111,10 @@ class Document(Tool):
                         name="location",
                         schema=JsonSchema.string(
                             description=(
-                                "Document directory. Defaults to '@workspace'. "
+                                "Document directory. Defaults to '.'. "
                                 "Use '@library' for persistent documents. "
                                 "Nested locations such as '@library/python' "
-                                "and '@workspace/docs' are supported."
+                                "and 'docs' are supported."
                             ),
                         ),
                         required=False,
@@ -920,7 +920,7 @@ class Document(Tool):
             resolved,
         ):
             raise ValueError(
-                "Document locations outside @workspace and @library "
+                "Document locations outside the project and @library "
                 "are not supported."
             )
 
@@ -980,11 +980,10 @@ class Document(Tool):
             )
 
             if not relative.parts:
-                return self._WORKSPACE_ALIAS
+                return self._PROJECT_ROOT
 
             return (
-                f"{self._WORKSPACE_ALIAS}/"
-                f"{relative.as_posix()}"
+                f"./{relative.as_posix()}"
             )
 
         return self.context.workspace.display_path(
@@ -2126,14 +2125,9 @@ class Document(Tool):
         location: str | None,
     ) -> str:
         if location is None:
-            return cls._WORKSPACE_ALIAS
+            return cls._PROJECT_ROOT
 
         normalized = location.strip()
-
-        while normalized.startswith(
-            "./"
-        ):
-            normalized = normalized[2:]
 
         normalized = normalized.rstrip(
             "/"
@@ -2150,21 +2144,20 @@ class Document(Tool):
             )
 
         if (
-            normalized == cls._WORKSPACE_ALIAS
-            or normalized.startswith(
-                f"{cls._WORKSPACE_ALIAS}/"
-            )
-            or normalized == cls._LIBRARY_ALIAS
+            normalized == cls._LIBRARY_ALIAS
             or normalized.startswith(
                 f"{cls._LIBRARY_ALIAS}/"
             )
         ):
             return normalized
 
-        raise ValueError(
-            "Document location must be '@workspace', '@library', "
-            "or a nested path below one of those aliases."
-        )
+        candidate = Path(normalized)
+        if candidate.is_absolute() or ".." in candidate.parts or normalized.startswith("@"):
+            raise ValueError(
+                "Document location must stay inside the current project."
+            )
+        return normalized
+
 
     @classmethod
     def _validate_operation_arguments(
@@ -2314,7 +2307,7 @@ class Document(Tool):
         )
 
         parts.append(
-            f"location={location or self._WORKSPACE_ALIAS!r}"
+            f"location={location or self._PROJECT_ROOT!r}"
         )
 
         if "recursive" in arguments:

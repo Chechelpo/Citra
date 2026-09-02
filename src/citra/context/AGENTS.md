@@ -1,208 +1,51 @@
-# AGENTS.md — `citra.context`
+# `citra.context`
 
-> Execution context and configuration loading.
+This package owns the process-lifetime project runtime and the execution
+context shared by tools.
 
-This package provides workflow-lifetime Agent Runtime configuration,
-provisioning, workspace, staging, and execution services used by every tool
-and command.
+## Project ownership
 
----
+- `WorkspaceContext.create()` receives the controller-owned project path and
+  copies the complete project, including VCS metadata, into the runtime project
+  root before model execution begins.
+- Model-facing paths are relative to that copied project. `.` is the project
+  root. Do not add a second project alias, source bridge, source mount, or
+  materialization/apply workflow.
+- The controller source path is private and must not appear in prompts, tool
+  schemas, ordinary filesystem aliases, or model process environments.
+- Project changes stay uncommitted. The user owns Git commits. The model may
+  restore exact tracked files only through the `workspace` tool.
+- Runtime/home/cache/tmp/env roots remain lifecycle-owned. The document library
+  is available only through its trusted semantic tools.
 
-## Files
+## Configuration
 
-### `execution_context.py`
+`CITRA_CONFIG_PATH` names a directory with these domains:
 
-`ExecutionContext` is a **frozen dataclass** created once by
-`CitraApplication` for the life of the process. It captures:
+| File | Purpose |
+|------|---------|
+| `models.toml` | Named profiles and orchestrator/subagent selectors. |
+| `tools.toml` | Bash, subprocess, browser, web-search, and LSP settings. |
+| `sandbox.toml` | Operator sandbox policy. |
+| `linting.toml` | Optional project lint fallback. |
 
-| Property       | Source                                        |
-|----------------|-----------------------------------------------|
-| `os`           | `platform.system()` (normalized: `darwin`→`macos`) |
-| `workspace`    | lifecycle-scoped Agent Runtime facade           |
-| `config`       | supplied `CitraConfig`, or `CITRA_CONFIG_PATH` fallback |
-| `mode`         | currently active workflow role mode             |
-| `workflow`     | selected process-lifetime workflow and sandbox owner |
-| `workflow_runtime` | concrete workflow-owned sandbox and active run state |
-| `model_config` | shortcut → `config.model`                     |
-| `web_search_config` | shortcut → `config.web_search`          |
-| `sandbox`      | Bubblewrap execution broker                    |
-| `filesystem`   | fixed-operation sandbox filesystem client      |
-| `lsp_manager`  | persistent language-server manager             |
+`CitraConfig.load()` aggregates these files. `tools.toml`, `models.toml`, and
+`sandbox.toml` are required; `linting.toml` is optional. Curl is not a Citra
+tool or config domain; network command-line work uses Bash policy.
 
-**Key method:** `has_command(cmd)` — queries the provisioned runtime resolver,
-not the controller's host `PATH`.
+Mode/workflow sandbox contributions are merged into a cloned `SandboxPolicy`
+before `WorkspaceSandbox` is constructed. Operator network denial is
+monotonic, and bind lists are additive.
 
-The dataclass uses private (`__`-prefixed) fields set via
-`object.__setattr__` in `__post_init__` because frozen dataclasses
-prohibit normal assignment.
+Lint placeholders are `{path}`, `{relative_path}`, and `{project}`. Project
+auto-detection reads the nearest `pyproject.toml` inside the copied project.
 
-### `config_loader.py`
+## Execution context
 
-Configuration uses frozen dataclasses, including:
+`ExecutionContext` owns references to the selected config, mode, workflow,
+sandbox, scoped filesystem client, LSP manager, browser, subprocess manager,
+repository map, and lint runner. Workflow phase changes may rebind the active
+mode, skills, and run, but must reuse process-lifetime services.
 
-- **`ModelConfig` / `ModelConfigStore`** — named model profiles containing
-  provider identity, limits, reasoning, credentials, and retry policy. The
-  canonical model file is `.citra/config/models.toml`; its TOML layout is
-  `[models]` with separate `orchestrator` and `subagent` selectors and any
-  number of `[models.<name>]` tables. The legacy `active` key remains
-  accepted as an alias for the orchestrator selector to keep older files
-  working. When `subagent` is omitted, subagents reuse the orchestrator
-  profile; set it to a different profile name to give subagents their own
-  model. `CitraConfig.model()` resolves the orchestrator profile for the
-  process owner and any context that has not been pinned, while
-  `CitraConfig.with_default_model_profile(name)` produces a copy of the
-  config that resolves to a different default — the subagent factory uses
-  this to honor `models.subagent`. Legacy single `[model]` files remain
-  readable when `CITRA_CONFIG_PATH` explicitly points at an old monolithic
-  config.
-- **`RetryConfig`** — attempts, request timeout, and backoff bounds.
-- **`WebSearchConfig`** — `host_url`.
-- **`WorkspaceContextConfig`** — source and temporary-root selection. Its
-  historical `direct_source` field remains parseable, but the selected mode's
-  `SandboxMode` is authoritative for the project view.
-- **`MemoryConfig`** — enables or fully removes durable model-facing memory.
-- **`LspContextConfig`** — enable flag and protocol timeouts.
-- **`LintContextConfig` / `LintRuleConfig`** — global fallback lint policy.
-  Successful `edit`/`write` operations first detect supported lint policy in
-  the permanent source project's `pyproject.toml`; when none is detected they
-  use these global rules. If neither source nor global policy exists, linting
-  is disabled. Policies are never merged. Commands run with network access
-  disabled, alongside automatic LSP diagnostics.
-- **`BashConfig`** — network permission and Bash defaults.
-- **`SubprocessConfig`** — subprocess network permission and output caps.
-- **`BrowserConfig`** — Playwright path, timeouts, and unsafe-action policy.
-- **`CurlConfig`** — always-allow network, permission, and timeout limits.
-- **`NotificationConfig`** — `prompt_bell`.
-- **`SandboxContextConfig`** — operator Bubblewrap policy (binds, namespaces,
-  environment handling). Operator binds extend mode binds and the global
-  network setting may only further restrict the selected mode.
-- **`RuntimeConfig`** and its storage/environment/cleanup children — hard
-  provisioning budget, mutable-state soft limits, normalization/overrides,
-  and stale-root cleanup.
-- **`CitraConfig`** — top-level config assembled from the split configuration
-  directory. Missing required keys raise `ValueError`; model, web-search, and
-  workspace configuration remain required.
-
-`CitraConfig.load()` resolves **`CITRA_CONFIG_PATH`** from the environment. The
-canonical value is the `.citra/config` directory containing exactly these
-configuration domains:
-
-| File | Contents |
-|------|----------|
-| `tools.toml` | `[web-search]`, `[workspace]`, `[memory]`, `[runtime.*]`, `[browser]`, `[sandbox]`, `[subprocess]`, `[bash]`, `[curl]`, `[lsp]`, `[notifications]`, and future non-model/non-lint operational sections. |
-| `models.toml` | `[models]`, its `active` selector, named model profiles, and retry tables. |
-| `linting.toml` | Optional global fallback `[lint]` and `[[lint.rules]]`. |
-| `mode.toml` | Optional `default` mode used by the simple workflow. |
-| `workflow.toml` | Optional `default` workflow; built-in default is `simple`. |
-
-`tools.toml` and `models.toml` are required in the canonical directory layout;
-`linting.toml`, `mode.toml`, and `workflow.toml` are optional. A historical
-single TOML file is still accepted when `CITRA_CONFIG_PATH` explicitly points
-to a file. `start.sh` prefers the split layout and only falls back to the old
-`.citra/config.toml` with a migration warning. TOML parsing uses the stdlib
-`tomllib` module.
-
-### Lint policy precedence
-
-Post-edit linting is gated by the global `[lint].enabled` master switch and
-uses one policy source, never a merge. When the switch is enabled:
-
-1. Source-project linting detected from the nearest `@source/pyproject.toml`.
-2. Global fallback rules from `.citra/config/linting.toml`.
-3. No linting.
-
-Linting is enabled by default. When `lint.enabled = false`, Citra performs no
-linting at all, including source-project auto-detection. `lint.enabled = true`
-is valid with zero global rules, which enables project-declared linting while
-leaving the global fallback empty. If `linting.toml` is absent, this enabled,
-empty-fallback behavior is used.
-
-In isolated-copy mode the source project is permanent/read-only to ordinary
-model tools, so staged edits cannot weaken the policy that verifies those same
-edits. Direct-source mode intentionally trades away that separation. Ruff is
-the first auto-detected project linter: `[tool.ruff.lint]` enables a per-file
-`ruff check` using that `pyproject.toml`; `[tool.ruff.format]` additionally
-enables `ruff format --check`. Direct file checks use `--force-exclude` so
-project exclusions remain effective.
-
-Global linting remains deliberately command-driven. A typical fallback can
-declare:
-
-```toml
-[lint]
-timeout = 30
-max_output_length = 20000
-
-[[lint.rules]]
-name = "ruff"
-command = [
-  "ruff",
-  "check",
-  "--config",
-  "{source}/pyproject.toml",
-  "{path}",
-]
-include = ["**/*.py"]
-exclude = ["generated/**"]
-cwd = "@source"
-```
-
-Linting is enabled by default. `lint.enabled = false` is the master off
-switch; `lint.enabled = true` may be used with no `[[lint.rules]]` entries to
-permit project-declared linting without a global fallback. Commands are
-executed directly as argv, never through a shell, and always with sandbox
-networking disabled.
-
-Supported command/cwd placeholders are:
-
-| Placeholder | Meaning |
-|-------------|---------|
-| `{path}` | Absolute path to the edited file in Citra's writable workspace. |
-| `{relative_path}` | Project-relative POSIX path of the edited file. |
-| `{workspace}` | Citra's writable project workspace root. |
-| `{source}` | Permanent read-only source workspace root. |
-
-The explicit global command is responsible for selecting its lint policy. It
-is only used when no supported source-project linter is detected. For example,
-a global fallback may invoke Ruff, `npm run lint`, or another toolchain. Lint
-rules apply only to files in the editable workspace; scratch paths such as
-`@tmp` and the read-only `@source` tree are not linted.
-
-### `__init__.py`
-
-Re-exports the public configuration, execution, workspace, and staging types.
-
----
-
-## Important notes for agents
-
-- `CitraApplication` normally constructs `ExecutionContext` with the one
-  lifecycle workspace and shared services. Tests may inject those services.
-- The config directory comes from the **`CITRA_CONFIG_PATH`** env var, which is
-  set by `start.sh`, unless a parsed config is explicitly supplied. Canonically
-  it is `.citra/config`; direct legacy file paths remain supported.
-- `ExecutionContext` is frozen for lifecycle services. The workflow controller
-  may rebind only its active `mode`, `skills`, and `workflow_run` references at
-  a serial phase boundary; long-lived services are referenced rather than
-  replaced.
-- Workflow selection happens before `WorkspaceContext` or `WorkspaceSandbox`
-  is created. A workflow may override the sandbox policy; otherwise its
-  initial mode's policy is inherited. The resolved policy is frozen for the
-  workflow lifetime. Serial phase changes update `ExecutionContext.mode` but
-  reuse the exact workspace, sandbox, runtime, LSP, process, interaction, and
-  subagent services.
-- Serial workflow roles receive fresh `AgentSession` and `SkillRegistry`
-  objects while sharing the task-scoped `ConversationMemory`. Only the
-  original task, shared filesystem state, structured memory, and immediately
-  previous role's final assistant message cross phase boundaries.
-- A subagent gets separate mutable home/cache/tmp/process state but reuses a
-  worker-local resolver over the parent's immutable provisioned runtime assets.
-  Its nested runtime must be cleaned when the worker finishes.
-- By default, the complete source snapshot is present in the writable
-  workspace at startup. General filesystem tools use `context.filesystem`;
-  staging/apply is the narrow, conflict-checked bridge back to read-only
-  `@source`. A direct-source mode instead makes the permanent source the active
-  workspace; mode-declared tool availability governs related tool exposure.
-- `runtime/` is immutable and `metadata/` is controller-only. Mutable
-  dependency, cache, home, and temporary state belongs under the Agent Runtime
-  and must use its canonical environment and command resolver.
+Keep controller diagnostics distinct from model-facing descriptions. Internal
+manifests may record source/runtime paths; prompts and tool results may not.

@@ -1,9 +1,11 @@
-from .execution_context import ExecutionContext
-from .config_loader import (
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from citra.config import (
     BashConfig,
     BrowserConfig,
     CitraConfig,
-    CurlConfig,
     LintContextConfig,
     LintRuleConfig,
     LspContextConfig,
@@ -11,16 +13,10 @@ from .config_loader import (
     ModelConfig,
     NotificationConfig,
     RetryConfig,
-    RuntimeCleanupConfig,
-    RuntimeConfig,
-    RuntimeEnvironmentConfig,
-    RuntimeStorageConfig,
-    SandboxContextConfig,
+    SandboxPolicy,
     SubprocessConfig,
     WebSearchConfig,
-    WorkspaceContextConfig,
 )
-from .available_tools import get_available_tools
 from .runtime import (
     CopyPolicy,
     RuntimeAsset,
@@ -29,15 +25,21 @@ from .runtime import (
     RuntimeProvisioner,
     ToolDefinition,
 )
-from .turn_workspace import RuntimeClosingError, RuntimeState, WorkspaceContext
-from .workspace_changes import (
-    MaterializationResult,
-    WorkspaceChanges,
-    WorkspaceConflictError,
-)
-from .config import ModelConfigStore
+from .session_context import RuntimeClosingError, RuntimeState, WorkspaceContext
+from citra.config import ModelConfigStore
 
 AgentRuntime = WorkspaceContext
+
+if TYPE_CHECKING:
+    from .agent_context import ExecutionContext
+
+
+def __getattr__(name: str):
+    if name == "ExecutionContext":
+        from .agent_context import ExecutionContext
+
+        return ExecutionContext
+    raise AttributeError(name)
 
 __all__ = [
     "ModelConfigStore",
@@ -45,7 +47,6 @@ __all__ = [
     "BrowserConfig",
     "ExecutionContext",
     "CitraConfig",
-    "CurlConfig",
     "LintContextConfig",
     "LintRuleConfig",
     "MemoryConfig",
@@ -53,15 +54,9 @@ __all__ = [
     "LspContextConfig",
     "NotificationConfig",
     "RetryConfig",
-    "RuntimeCleanupConfig",
-    "RuntimeConfig",
-    "RuntimeEnvironmentConfig",
-    "RuntimeStorageConfig",
-    "SandboxContextConfig",
+    "SandboxPolicy",
     "SubprocessConfig",
     "WebSearchConfig",
-    "WorkspaceContextConfig",
-    "get_available_tools",
     "WorkspaceContext",
     "AgentRuntime",
     "RuntimeClosingError",
@@ -72,7 +67,4 @@ __all__ = [
     "RuntimeProcessSupervisor",
     "RuntimeProvisioner",
     "ToolDefinition",
-    "MaterializationResult",
-    "WorkspaceChanges",
-    "WorkspaceConflictError",
 ]

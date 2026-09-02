@@ -17,7 +17,6 @@ from citra.context import (
     CitraConfig,
     ExecutionContext,
     WorkspaceContext,
-    WorkspaceContextConfig,
 )
 from citra.context.runtime import RuntimeProvisioning
 from citra.tools.skills.skill_registry import SkillRegistry
@@ -49,17 +48,10 @@ def build_subagent_context(
     runtime_root = parent_workspace.root / "subagents" / spec.subagent_id
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    workspace_config = WorkspaceContextConfig(
-        temporary_workspace=str(runtime_root),
-        permanent_workspace=str(write_path),
-        library=str(parent_workspace.library),
-        direct_source=True,
-    )
-
     nested_workspace = WorkspaceContext.create(
-        config=workspace_config,
         workspace=write_path,
-        runtime_config=parent_config.runtime,
+        temporary_workspace=runtime_root,
+        library=parent_workspace.library,
         tool_definitions=(),
         runtime_assets=(),
     )
@@ -70,8 +62,14 @@ def build_subagent_context(
     # retaining independent process supervision and cleanup.
     workspace = replace(
         nested_workspace,
+        # The parent already materialized the project. Subagents must edit the
+        # selected directory in that same checkout, not a second copy whose
+        # changes would disappear when the worker runtime is cleaned up.
+        source_workspace=parent_workspace.source_workspace,
+        workspace=write_path.resolve(),
         runtime=parent_workspace.runtime,
         provisioning=_fork_runtime_provisioning(parent_workspace),
+        private_source_paths=parent_workspace.private_source_paths,
     )
 
     mode = build_subagent_mode(
@@ -91,10 +89,18 @@ def build_subagent_context(
         mode=mode,
         sandbox_config=mode.sandbox_config,
     )
+    policy = parent_config.sandbox_policy.clone()
+    policy.apply_mode_config(mode.sandbox_config)
+    policy.add_readonly_bind(workspace.runtime)
+    for path in readonly_binds:
+        policy.add_readonly_bind(path)
+    for root in workspace.writable_roots:
+        if root != workspace.workspace:
+            policy.add_writable_bind(root)
     workflow_runtime = WorkflowRuntime(
         workflow=workflow,
         workspace=workspace,
-        operator_sandbox_config=parent_config.sandbox,
+        policy=policy,
     )
     sandbox = workflow_runtime.sandbox
 
@@ -161,9 +167,10 @@ def _subagent_config(
         parent_config.memory,
         enabled=False,
     )
-    new_sandbox = replace(
-        parent_config.sandbox,
-        global_network_disallow=not spec.network,
+    new_sandbox = parent_config.sandbox_policy.clone()
+    new_sandbox.global_disallow_network = bool(
+        parent_config.sandbox_policy.global_disallow_network
+        or not spec.network
     )
     new_lsp = replace(
         parent_config.lsp,
@@ -178,7 +185,7 @@ def _subagent_config(
     return replace(
         parent_config,
         memory=new_memory,
-        sandbox=new_sandbox,
+        sandbox_policy=new_sandbox,
         lsp=new_lsp,
         lint=new_lint,
         default_model_profile=new_default_profile,

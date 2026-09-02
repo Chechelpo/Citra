@@ -16,7 +16,7 @@ from citra.utils.repo_map import RepoMap
 from citra.sandbox import WorkspaceSandbox
 from citra.sandbox import SandboxedFilesystem
 
-from citra.config.config_loader import CitraConfig
+from citra.config import CitraConfig
 
 if TYPE_CHECKING:
     from citra.modes import Mode
@@ -27,7 +27,7 @@ DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
 
 
 @dataclass(frozen=True)
-class AgentContext:
+class ExecutionContext:
     """
     Data class holding the execution context for a single agent (subagent or main).
     """
@@ -132,10 +132,16 @@ class AgentContext:
         if workflow_runtime is None:
             from citra.workflows import WorkflowRuntime
 
+            policy = config.sandbox_policy.clone()
+            policy.apply_mode_config(workflow.resolved_sandbox_config)
+            policy.add_readonly_bind(self.workspace.runtime)
+            for root in self.workspace.writable_roots:
+                if root != self.workspace.workspace:
+                    policy.add_writable_bind(root)
             workflow_runtime = WorkflowRuntime(
                 workflow=workflow,
                 workspace=self.workspace,
-                operator_sandbox_config=config.sandbox,
+                policy=policy,
                 sandbox=self.provided_sandbox,
             )
             object.__setattr__(self, "workflow_runtime", workflow_runtime)
@@ -316,7 +322,7 @@ class AgentContext:
     def web_search_config(
         self,
     ):
-        return self.__config.web_search
+        return self.__config.tools.web_search
 
     def has_command(
         self,

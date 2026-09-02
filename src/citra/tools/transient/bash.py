@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from typing import Any, override
 
 from ...context import ExecutionContext
@@ -12,6 +13,43 @@ from ...utils.json_schema import (
 )
 from ..tool import Tool, ToolDefinition
 from .prompt_user import PromptUser
+
+
+_SHELL_SEPARATORS = re.compile(r"[\n;&|]+")
+_SHELL_CONTROL_WORDS = frozenset({"!", "do", "if", "then", "until", "while"})
+
+
+def ensure_no_git_command(command: str) -> None:
+    """Reserve Git operations for the constrained Git/workspace tools."""
+    if re.search(r"(?:\$\(|`)\s*git(?:\s|$)", command):
+        raise ValueError(
+            "Git commands are not available through shell tools. Use the "
+            "git tool for inspection or workspace rollback for exact files; "
+            "commits belong to the user."
+        )
+
+    for segment in _SHELL_SEPARATORS.split(command):
+        try:
+            tokens = shlex.split(segment, comments=True)
+        except ValueError:
+            continue
+        while tokens and tokens[0] in _SHELL_CONTROL_WORDS:
+            tokens.pop(0)
+        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            tokens.pop(0)
+        if tokens and tokens[0] in {"command", "env"}:
+            tokens.pop(0)
+            while tokens and (
+                tokens[0].startswith("-")
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0])
+            ):
+                tokens.pop(0)
+        if tokens and tokens[0].lstrip("(").rsplit("/", 1)[-1] == "git":
+            raise ValueError(
+                "Git commands are not available through shell tools. Use "
+                "the git tool for inspection or workspace rollback for exact "
+                "files; commits belong to the user."
+            )
 
 
 def _bash_request_schema(
@@ -34,7 +72,7 @@ def _bash_request_schema(
             schema=JsonSchema.string(
                 description=(
                     "Working directory for the command. "
-                    "Relative paths resolve from the active workspace."
+                    "Relative paths resolve from the current project."
                 ),
             ),
             required=False,
@@ -126,7 +164,7 @@ def _bash_definition(
             schema=JsonSchema.string(
                 description=(
                     "Working directory for the single command. "
-                    "Relative paths resolve from the active workspace."
+                    "Relative paths resolve from the current project."
                 ),
             ),
             required=False,
@@ -302,7 +340,7 @@ class Bash(Tool):
         timeout_milliseconds=False,
         include_description=True,
         description=(
-            "Execute shell commands in the workspace. Use this for command-line "
+            "Execute shell commands in the current project. Use this for command-line "
             "operations that are not better handled by a specialized tool. "
             "Commands run in the foreground."
         ),
@@ -336,7 +374,7 @@ class Bash(Tool):
         include_description=True,
         description=(
             "Execute a shell command for command-line operations in the "
-            "workspace. Commands run in the foreground. Use the subprocess "
+            "current project. Commands run in the foreground. Use the subprocess "
             "tool when a persistent background process is required."
         ),
     )
@@ -363,7 +401,7 @@ class Bash(Tool):
         timeout_milliseconds=True,
         include_description=True,
         description=(
-            "Execute a shell command in the workspace. Commands run in the "
+            "Execute a shell command in the current project. Commands run in the "
             "foreground. Use subprocess tool for persistent processes."
         ),
     )
@@ -412,7 +450,7 @@ class Bash(Tool):
         timeout_milliseconds=False,
         include_description=False,
         description=(
-            "Execute a shell command in the workspace and return its output. "
+            "Execute a shell command in the current project and return its output. "
             "Commands run synchronously in the foreground."
         ),
     )
@@ -723,6 +761,8 @@ class Bash(Tool):
             raise ValueError(
                 "'cmd' cannot be empty."
             )
+
+        ensure_no_git_command(cmd)
 
         if timeout <= 0:
             raise ValueError(

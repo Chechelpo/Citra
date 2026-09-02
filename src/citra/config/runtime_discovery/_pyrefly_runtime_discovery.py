@@ -9,11 +9,7 @@ import shlex
 import shutil
 from typing import TYPE_CHECKING
 
-from .base import RuntimeDiscovery, RuntimeDiscoveryResult
-
-if TYPE_CHECKING:
-    from citra.context.turn_workspace import WorkspaceContext
-
+from ._base import RuntimeDiscovery, RuntimeDiscoveryResult
 
 logger = logging.getLogger(__name__)
 

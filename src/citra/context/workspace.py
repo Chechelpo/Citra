@@ -1,11 +1,6 @@
-"""Compatibility imports for the lifecycle workspace implementation.
+"""Compatibility imports for the copied-project lifecycle context."""
 
-The authoritative implementation lives in :mod:`citra.context.turn_workspace`.
-Keeping this module prevents older embedders from silently importing the
-obsolete unsandboxed duplicate that previously lived here.
-"""
-
-from .turn_workspace import AvailablePathAlias, WorkspaceContext
+from .session_context import AvailablePathAlias, WorkspaceContext
 
 AgentRuntime = WorkspaceContext
 

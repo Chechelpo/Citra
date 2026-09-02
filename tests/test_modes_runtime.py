@@ -10,6 +10,7 @@ from citra.agent.runner import AgentRunner
 from citra.cli import repl as repl_module
 from citra.cli.repl import select_startup_mode, select_startup_workflow
 from citra.modes import ModeRegistry, SandboxConfig, TaskSteeringConfig, UserMode
+from citra.config import SandboxPolicy
 from citra.utils.prompt import build_system_prompt
 from citra.sandbox import SandboxMode, WorkspaceSandbox
 from citra.workflows import WorkflowRegistry
@@ -120,6 +121,7 @@ def test_repl_selects_mode_before_application_runtime_is_created(
     class _Application:
         config = object()
         source_workspace = Path(".")
+        workspace = SimpleNamespace(workspace=Path("."))
         hard_shutdown_requested = False
 
         def close(self, *, force: bool = False) -> None:
@@ -165,39 +167,41 @@ def test_mode_sandbox_policy_is_authoritative_and_operator_policy_adds(
 ) -> None:
     mode_ro = tmp_path / "mode-ro"
     mode_rw = tmp_path / "mode-rw"
-    sandbox = WorkspaceSandbox(
-        SimpleNamespace(direct_source=True),
-        config=SimpleNamespace(
-            extra_readonly_binds=(str(mode_ro), str(tmp_path / "operator-ro")),
-            extra_writable_binds=(str(tmp_path / "operator-rw"),),
-            global_network_disallow=False,
-        ),
-        mode_config=SandboxConfig(
+    operator_ro = tmp_path / "operator-ro"
+    operator_rw = tmp_path / "operator-rw"
+    for path in (mode_ro, mode_rw, operator_ro, operator_rw):
+        path.mkdir()
+    policy = SandboxPolicy(
+        extra_ro_binds=[operator_ro],
+        extra_w_binds=[operator_rw],
+    )
+    policy.apply_mode_config(
+        SandboxConfig(
             mode=SandboxMode.FULL_SANDBOX,
             additional_ro_binds=(mode_ro,),
             additional_w_binds=(mode_rw,),
             global_network_disallow=True,
-        ),
+        )
     )
+    sandbox = WorkspaceSandbox(tmp_path, policy, base_environment={})
 
     assert sandbox.mode is SandboxMode.FULL_SANDBOX
-    assert sandbox._string_setting("extra_readonly_binds", ()) == (
-        str(mode_ro),
-        str(tmp_path / "operator-ro"),
+    assert sandbox.readonly_binds() == (
+        mode_ro,
+        operator_ro,
     )
-    assert sandbox._string_setting("extra_writable_binds", ()) == (
-        str(mode_rw),
-        str(tmp_path / "operator-rw"),
+    assert sandbox.writable_binds() == (
+        tmp_path,
+        mode_rw,
+        operator_rw,
     )
     assert sandbox.allows_network(True) is False
 
 
 def test_operator_can_further_restrict_mode_network() -> None:
-    sandbox = WorkspaceSandbox(
-        SimpleNamespace(direct_source=False),
-        config=SimpleNamespace(global_network_disallow=True),
-        mode_config=SandboxConfig(global_network_disallow=False),
-    )
+    policy = SandboxPolicy(global_disallow_network=True)
+    policy.apply_mode_config(SandboxConfig(global_network_disallow=False))
+    sandbox = WorkspaceSandbox(Path.cwd(), policy, base_environment={})
 
     assert sandbox.allows_network(True) is False
     assert sandbox.allows_network(False) is False
@@ -248,19 +252,24 @@ def test_runner_injects_mode_steering_before_first_request(monkeypatch) -> None:
     requests: list[dict] = []
 
     class _Registry:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
         core_tool_ids: tuple[str, ...] = ()
-        deferred_catalog: ClassVar[dict[str, str]] = {}
+
+        @staticmethod
+        def deferred_catalog(_context) -> dict[str, str]:
+            return {}
 
         @staticmethod
         def instantiate(*_args, **_kwargs) -> dict:
             return {}
 
-    monkeypatch.setattr(runner_module, "TOOL_REGISTRY", _Registry())
-    monkeypatch.setattr(
-        runner_module,
-        "EnableTools",
-        lambda **_kwargs: object(),
-    )
+        @staticmethod
+        def index_by_model_name(_tools) -> dict:
+            return {}
+
+    monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
 
     def api_call(**kwargs) -> dict:
         requests.append(kwargs)
@@ -279,8 +288,8 @@ def test_runner_injects_mode_steering_before_first_request(monkeypatch) -> None:
     }
 
 
-def test_sandbox_mode_controls_project_view() -> None:
-    assert SandboxMode.FULL_ACCESS.uses_direct_source is True
-    assert SandboxMode.ONLY_SOURCE.uses_direct_source is True
-    assert SandboxMode.PARTIAL_SANDBOX.uses_direct_source is False
-    assert SandboxMode.FULL_SANDBOX.uses_direct_source is False
+def test_builtin_modes_use_the_sandboxed_project_view() -> None:
+    from citra.modes import ChatMode, SimpleTask
+
+    assert ChatMode().sandbox_config.mode is SandboxMode.FULL_SANDBOX
+    assert SimpleTask().sandbox_config.mode is SandboxMode.FULL_SANDBOX

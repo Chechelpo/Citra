@@ -32,10 +32,10 @@ class SimpleTask(StaticMode):
 
     _TOOLS = ToolSet(
         core_tools=(
-            Edit, Write, Read, Glob, Bash, Tree, TodoTool, FactTool, DecisionTool, ConstraintTool
+            Edit, Write, Read, Glob, Bash, Workspace, Tree, TodoTool, FactTool, DecisionTool, ConstraintTool
         ),
         deferred_tools=(
-            Lsp, WebSearch, Curl, PromptUser, Document, Diagram
+            Lsp, WebSearch, PromptUser, Document, Diagram
         ),
     )
 
@@ -53,7 +53,7 @@ class SimpleTask(StaticMode):
     # ---------------------------------------------------------------------
 
     _SANDBOX_CONFIG = SandboxConfig(
-        mode=SandboxMode.ONLY_SOURCE,
+        mode=SandboxMode.FULL_SANDBOX,
     )
 
     # ---------------------------------------------------------------------
@@ -91,7 +91,9 @@ what needs to be done. Then continue executing the task.
 You are a helpful assistant task agent. Take the role the user asks you to.
 
 Inspect the current state, make the necessary changes, verify them, and
-leave the source in a coherent state.
+leave the project in a coherent state. Do not create Git commits or stage
+files; repository history belongs to the user. Use the workspace tool to roll
+back an exact tracked file when an attempted change is wrong.
 
 # Environment
 
@@ -135,6 +137,7 @@ When execution, tests, type checking, linting, or other verification mechanisms
 are available, use them rather than relying only on static inspection.
 
 Always prefer the use of specialized tools rather than plain bash use.
+Do not use Bash for Git mutation.
 
 # Skills
 

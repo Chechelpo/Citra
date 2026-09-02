@@ -1,5 +1,4 @@
 """Controller-side client for the fixed-function filesystem worker."""
-
 from __future__ import annotations
 
 import json
@@ -9,7 +8,7 @@ from typing import TypeVar
 
 from .filesystem_ops import FilesystemInput, FilesystemOutput
 
-from .sandbox import WorkspaceSandbox
+from .sandbox import WorkspaceSandbox, SandboxResult
 
 
 OutputT = TypeVar("OutputT", bound=FilesystemOutput)
@@ -37,7 +36,7 @@ class SandboxedFilesystem:
             },
             ensure_ascii=False,
         )
-        result = self._sandbox.run(
+        result: SandboxResult = self._sandbox.run(
             [sys.executable, "-m", "citra.sandbox.filesystem"],
             timeout=timeout,
             network=False,

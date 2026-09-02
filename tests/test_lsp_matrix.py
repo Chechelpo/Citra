@@ -14,14 +14,14 @@ import types
 from unittest.mock import patch
 
 from citra.commands.lsp import LspCommand
-from citra.tools.lsp.client import LspClient
-from citra.tools.lsp.config import LspConfig, ServerConfig
-from citra.tools.lsp.errors import LspDiagnosticsTimeout, LspUnavailable
-from citra.tools.lsp.installer import available_managers, execute_install
-from citra.tools.lsp.language import Language
-from citra.tools.lsp.manager import ClientKey, LspManager
-from citra.tools.lsp.servers import SERVERS
-from citra.tools.lsp.transport import JsonRpcTransport
+from citra.utils.lsp.client import LspClient
+from citra.utils.lsp.config import LspConfig, ServerConfig
+from citra.utils.lsp.errors import LspDiagnosticsTimeout, LspUnavailable
+from citra.utils.lsp.installer import available_managers, execute_install
+from citra.utils.lsp.language import Language
+from citra.utils.lsp.manager import ClientKey, LspManager
+from citra.utils.lsp.servers import SERVERS
+from citra.utils.lsp.transport import JsonRpcTransport
 
 from tests.test_lsp_reliability import FakeFilesystem, FakeSandbox, WorkspaceStub
 
@@ -295,7 +295,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             class ExistingClient:
                 transport = SimpleNamespace(process=LiveProcess())
 
-            from citra.tools.lsp.manager import ClientKey
+            from citra.utils.lsp.manager import ClientKey
             manager._clients[ClientKey(root, "vue")] = ExistingClient()  # type: ignore[assignment]
 
             with patch.object(manager, "stop", return_value=1), patch.object(
@@ -658,7 +658,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                 result = tool.execute(
                     {
                         "action": "status",
-                        "path": "@source/src/citra/tools/lsp/language.py",
+                        "path": "src/citra/utils/lsp/language.py",
                         "line": 1,
                         "character": 1,
                     }

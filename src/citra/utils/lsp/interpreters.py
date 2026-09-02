@@ -16,7 +16,7 @@ agnostic:
 * :class:`InterpreterResolver` is the :class:`typing.Protocol` used by
   :class:`~citra.utils.lsp.servers.base.ServerDefinition` to plug a resolver
   in. The protocol only needs a project root and the active
-  :class:`~citra.context.turn_workspace.WorkspaceContext`; it does not depend
+  :class:`~citra.context.session_context.WorkspaceContext`; it does not depend
   on any LSP internals.
 * :func:`find_python_venv` and :func:`resolve_python` implement the Python
   case in full.
@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from citra.context.turn_workspace import WorkspaceContext
+    from citra.context.session_context import WorkspaceContext
 
 
 logger = logging.getLogger(__name__)

@@ -83,7 +83,7 @@ class Write(Tool):
     """
     Writes or replaces a complete text file.
 
-    Relative paths are resolved against the active workspace.
+    Relative paths are resolved against the current project.
     """
 
     TOOL_ID = "write"
@@ -99,8 +99,7 @@ class Write(Tool):
             "Write complete text content to a file. "
             "Creates the file if it does not exist and completely "
             "overwrites it if it does exist. Writes are restricted "
-            "to the isolated agent workspace and lifecycle agent "
-            "filesystem. @source is read-only. "
+            "to the current project and lifecycle scratch directories. "
             "Use edit instead when only a specific existing fragment "
             "should be changed. After a successful write, Citra "
             "automatically runs available LSP diagnostics and configured "
@@ -108,7 +107,7 @@ class Write(Tool):
         ),
         path_description=(
             "Destination file path. Relative paths are resolved "
-            "against the active workspace."
+            "against the current project."
         ),
         include_diagnostics=True,
     )

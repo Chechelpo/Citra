@@ -4,12 +4,12 @@ from pathlib import Path
 import subprocess
 import sys
 
-from citra.tools.lsp.client import LspClient
-from citra.tools.lsp.capabilities import LspCapabilities
-from citra.tools.lsp.config import LspConfig, ServerConfig
-from citra.tools.lsp.language import Language, detect_language, server_for_language
-from citra.tools.lsp.positions import SourcePosition
-from citra.tools.lsp.transport import JsonRpcTransport
+from citra.utils.lsp.client import LspClient
+from citra.utils.lsp.capabilities import LspCapabilities
+from citra.utils.lsp.config import LspConfig, ServerConfig
+from citra.utils.lsp.language import Language, detect_language, server_for_language
+from citra.utils.lsp.positions import SourcePosition
+from citra.utils.lsp.transport import JsonRpcTransport
 
 
 def test_javascript_and_typescript_use_typescript_language_server() -> None:

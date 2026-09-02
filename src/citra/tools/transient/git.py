@@ -62,6 +62,7 @@ class Git(Tool):
                 "branches, remotes, root, rev_parse, clone, and ls_remote. "
                 "Cannot stage, commit, push, pull, fetch, checkout, reset, "
                 "merge, rebase, clean, stash, or modify repository history. "
+                "The user owns all commits. "
                 "Clone uses network access and defaults to an ephemeral "
                 "directory under @tmp/repos."
             ),
@@ -79,10 +80,8 @@ class Git(Tool):
                         schema=JsonSchema.string(
                             description=(
                                 "Repository directory. Relative paths resolve "
-                                "from the isolated agent workspace. @source "
-                                "addresses the original read-only repository, "
-                                "and @tmp addresses disposable storage. "
-                                "Defaults to @source."
+                                "from the current project; @tmp addresses "
+                                "temporary storage. Defaults to '.'."
                             ),
                         ),
                         required=False,
@@ -331,7 +330,7 @@ class Git(Tool):
         repository = self.context.workspace.resolve_path(
             arguments.get(
                 "path",
-                "@source",
+                ".",
             )
         )
 

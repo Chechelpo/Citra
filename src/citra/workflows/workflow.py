@@ -17,7 +17,8 @@ from citra.sandbox import WorkspaceSandbox
 
 if TYPE_CHECKING:
     from citra.agent import ConversationMemory
-    from citra.context import SandboxContextConfig, WorkspaceContext
+    from citra.config import SandboxPolicy
+    from citra.context import WorkspaceContext
 
 
 @dataclass(frozen=True)
@@ -322,22 +323,22 @@ class WorkflowRuntime:
         *,
         workflow: Workflow,
         workspace: WorkspaceContext,
-        operator_sandbox_config: SandboxContextConfig,
+        policy: SandboxPolicy | None = None,
         sandbox: WorkspaceSandbox | None = None,
     ) -> None:
         workflow.validate()
         self.workflow = workflow
         self.workspace = workspace
         self._sandbox_config = workflow.resolved_sandbox_config
-        self._sandbox = (
-            sandbox
-            if sandbox is not None
-            else WorkspaceSandbox(
-                workspace,
-                config=operator_sandbox_config,
-                mode_config=self._sandbox_config,
+        if sandbox is None:
+            if policy is None:
+                raise ValueError("WorkflowRuntime requires a finalized policy.")
+            sandbox = WorkspaceSandbox(
+                workspace.workspace,
+                policy,
+                base_environment=workspace.environment(),
             )
-        )
+        self._sandbox = sandbox
         if self._sandbox.mode != self._sandbox_config.mode:
             raise RuntimeError(
                 f"Workflow sandbox mode differs from its frozen policy sandbox mode {self.sandbox.mode} vs config mode {self._sandbox_config.mode}"

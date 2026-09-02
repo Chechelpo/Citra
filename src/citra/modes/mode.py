@@ -9,10 +9,36 @@ from typing import TYPE_CHECKING, Any, ClassVar, final
 from citra.tools.default_registry import ToolSet
 from citra.tools.skills.skill import Skill
 from citra.tools.tool import Tool
-from citra.sandbox.sandbox import SandboxMode
+from citra.sandbox.sandbox_mode import SandboxMode
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
+
+
+@dataclass(frozen=True)
+class SandboxConfig:
+    """One mode/workflow contribution to the process sandbox policy."""
+
+    mode: SandboxMode = SandboxMode.FULL_SANDBOX
+    additional_ro_binds: tuple[Path, ...] = ()
+    additional_w_binds: tuple[Path, ...] = ()
+    global_network_disallow: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, SandboxMode):
+            raise TypeError("mode must be a SandboxMode")
+        object.__setattr__(
+            self,
+            "additional_ro_binds",
+            tuple(Path(path).expanduser() for path in self.additional_ro_binds),
+        )
+        object.__setattr__(
+            self,
+            "additional_w_binds",
+            tuple(Path(path).expanduser() for path in self.additional_w_binds),
+        )
+        if not isinstance(self.global_network_disallow, bool):
+            raise TypeError("global_network_disallow must be boolean")
 
 @dataclass(frozen=True)
 class TaskSteeringConfig:
@@ -85,7 +111,7 @@ class Mode(ABC):
 
     @property
     @abstractmethod
-    def sandbox_config(self) -> SandboxMode:
+    def sandbox_config(self) -> SandboxConfig:
         ...
 
     @property
@@ -199,6 +225,9 @@ class Mode(ABC):
             raise ValueError(
                 "Mode name cannot be empty"
             )
+
+        if not isinstance(self.sandbox_config, SandboxConfig):
+            raise TypeError("sandbox_config must be a SandboxConfig")
 
         if not isinstance(self.initial_working_states, tuple):
             raise TypeError("initial_working_states must be a tuple")

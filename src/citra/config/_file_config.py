@@ -12,7 +12,7 @@ class TomlConfig:
 
     @classmethod
     def load(cls: type[T], config_dir: Path) -> T:
-        path = config_dir / cls.FILE_NAME
+        path = Path(config_dir).expanduser().resolve() / cls.FILE_NAME
         if not path.is_file():
             raise FileNotFoundError(path)
 

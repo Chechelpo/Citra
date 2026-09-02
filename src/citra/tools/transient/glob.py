@@ -39,7 +39,7 @@ def _glob_definition(
                         schema=JsonSchema.string(
                             description=(
                                 "Directory to search in. "
-                                "Defaults to the current workspace."
+                                "Defaults to the current project."
                             ),
                         ),
                         required=False,
@@ -125,7 +125,7 @@ class Glob(Tool):
         pattern_name="pattern",
         path_name="dir_path",
         description=(
-            "Find files matching a glob pattern across the workspace. "
+            "Find files matching a glob pattern across the current project. "
             "Results are sorted by modification time with newest files first."
         ),
     )
@@ -175,8 +175,8 @@ class Glob(Tool):
     # ------------------------------------------------------------------
     # ZCode / GLM
     #
-    # ZCode exposes Claude-style capitalized filesystem tools:
-    # Read / Write / Edit / Glob / Grep / Bash.
+    # ZCode exposes Claude-style capitalized filesystem tools. This class
+    # supplies its Glob-compatible schema.
     #
     # Its complete Glob JSON schema is not publicly documented as
     # clearly as the others, so preserve the well-established

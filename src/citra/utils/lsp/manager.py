@@ -643,13 +643,12 @@ class LspManager:
     def _root_for(self, path: Path) -> Path:
         path = self.workspace.require_allowed_path(path)
         # Follow the same public root contract as model-facing filesystem tools.
-        # Prefer the project/source/tmp roots, then any additional lifecycle root
+        # Prefer the project/tmp roots, then any additional lifecycle root
         # exposed through ``allowed_roots``. This keeps @tmp as one project root
         # rather than creating a server per temporary file.
         roots: list[Path] = []
         for name in (
             "workspace",
-            "source_workspace",
             "tmp",
             "home",
             "cache",
@@ -709,9 +708,6 @@ class LspManager:
         if definition.id == "vue":
             plugin = (
                 self._vue_plugin_location(getattr(self.workspace, "workspace", None))
-                or self._vue_plugin_location(
-                    getattr(self.workspace, "source_workspace", None)
-                )
                 or self._vue_plugin_location(None)
             )
             optional["typescript_bridge"] = self._which("typescript-language-server")
@@ -759,7 +755,7 @@ class LspManager:
         if resolver is None:
             return server_config, ()
 
-        project_root = self.workspace.source_workspace
+        project_root = self.workspace.workspace
         try:
             resolved: ResolvedInterpreter = resolver(
                 project_root, workspace=self.workspace

@@ -752,8 +752,9 @@ def test_subagent_config_pins_subagent_profile(
 
     alpha_key = Fernet(fernet).encrypt(b"alpha-secret").decode("ascii")
     beta_key = Fernet(fernet).encrypt(b"beta-secret").decode("ascii")
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
+    config_path = tmp_path / "config"
+    config_path.mkdir()
+    (config_path / "models.toml").write_text(
         f'''\
 [models]
 orchestrator = "alpha"
@@ -773,13 +774,15 @@ id = "beta-model"
 max_input_tokens = 2000
 max_output_tokens = 200
 
-[web-search]
-host_url = "http://search.invalid"
-
-[workspace]
-temporary_workspace = "{tmp_path / 'agent'}"
-permanent_workspace = "{tmp_path / 'source'}"
 ''',
+        encoding="utf-8",
+    )
+    (config_path / "tools.toml").write_text(
+        "[web-search]\nhost_url = 'http://search.invalid'\n",
+        encoding="utf-8",
+    )
+    (config_path / "sandbox.toml").write_text(
+        "[sandbox]\nglobal_network_disallow = false\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("CITRA_CONFIG_PATH", str(config_path))

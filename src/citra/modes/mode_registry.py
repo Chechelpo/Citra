@@ -5,11 +5,11 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from .mode import Mode
-from citra.modes.greenfield import LongTaskHorizon
+from .chat import ChatMode
 
 
 MODE_CONFIG_FILE = "mode.toml"
-BUILTIN_DEFAULT_MODE = LongTaskHorizon._NAME
+BUILTIN_DEFAULT_MODE = ChatMode._NAME
 
 
 class ModeRegistry:
@@ -23,12 +23,9 @@ class ModeRegistry:
         default_mode: str | None = None,
     ) -> None:
         if modes is None:
-            from citra.modes.debugger import DebuggerMode
-            from citra.modes.greenfield import LongTaskHorizon
             from citra.modes.simple_task import SimpleTask
             modes = (
-                DebuggerMode(),
-                LongTaskHorizon(),
+                ChatMode(),
                 SimpleTask()
             )
         installed = tuple(modes)

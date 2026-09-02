@@ -2,7 +2,7 @@
 Constrained mode for subagents.
 
 A subagent only sees a small, sandboxed world: a subset of the filesystem
-tools, ``bash`` (already sandboxed by the runtime), the dedicated
+tools, safe file rollback, ``bash`` (already sandboxed by the runtime), the dedicated
 ``request_guidance`` tool, and no deferred tools, no document/diagram
 tools, no git, no LSP, no other agents.
 
@@ -21,7 +21,7 @@ from citra.modes import Mode, SandboxConfig, TaskSteeringConfig
 from citra.tools.default_registry import ToolSet
 from citra.tools.skills.skill import Skill
 from citra.tools.tool import Tool
-from citra.tools.transient import Bash, Edit, Read, Write
+from citra.tools.transient import Bash, Edit, Read, Workspace, Write
 from citra.sandbox.sandbox import SandboxMode
 
 from .guidance import RequestGuidanceTool
@@ -39,6 +39,7 @@ class SubagentToolset:
     write: type[Tool]
     edit: type[Tool]
     bash: type[Tool]
+    workspace: type[Tool]
     request_guidance: type[Tool]
 
     def to_tool_set(self) -> ToolSet:
@@ -48,6 +49,7 @@ class SubagentToolset:
                 self.write,
                 self.edit,
                 self.bash,
+                self.workspace,
                 self.request_guidance,
             ),
             deferred_tools=(),
@@ -60,6 +62,7 @@ def default_subagent_toolset() -> SubagentToolset:
         write=Write,
         edit=Edit,
         bash=Bash,
+        workspace=Workspace,
         request_guidance=RequestGuidanceTool,
     )
 
@@ -172,7 +175,7 @@ def build_subagent_mode(
 
     The returned mode:
 
-      * exposes only ``read``, ``write``, ``edit``, ``bash`` and the
+      * exposes only ``read``, ``write``, ``edit``, ``workspace``, ``bash`` and the
         subagent's ``request_guidance`` tool;
       * has its sandbox bounded to ``write_path`` (writable) plus the
         declared ``readonly_binds`` (read-only) and the Citra runtime
@@ -254,6 +257,7 @@ def _build_system_prompt(
             ("write", toolset.write),
             ("edit", toolset.edit),
             ("bash", toolset.bash),
+            ("workspace", toolset.workspace),
             ("request_guidance", toolset.request_guidance),
         )
     }
@@ -271,8 +275,8 @@ def _build_system_prompt(
         "",
         "## Environment",
         "",
-        f"- Write directory: `{write_path}` (the only place you may create "
-        "or modify files).",
+        "- Current project: `.` (the only place you may create or modify "
+        "files).",
         "- Read-only binds:",
     ]
 
@@ -292,10 +296,12 @@ def _build_system_prompt(
             "## Available tools",
             "",
             f"- `{public_names['read']}`, `{public_names['write']}`, "
-            f"`{public_names['edit']}`: operate relative to the write directory.",
+            f"`{public_names['edit']}`: operate relative to the current project.",
+            f"- `{public_names['workspace']}`: roll back an exact tracked file "
+            "when an attempted edit is wrong.",
             f"- `{public_names['bash']}`: runs inside the same sandbox; "
             "the Bubblewrap policy "
-            "above determines what it can reach.",
+            "above determines what it can reach. Do not use it for Git mutation.",
             f"- `{public_names['request_guidance']}`: ask the orchestrator a "
             "single, "
             "self-contained question and block until the orchestrator responds. "
@@ -304,8 +310,10 @@ def _build_system_prompt(
             "",
             "## Boundaries",
             "",
-            "- Stay strictly inside the write directory. Do not attempt to "
+            "- Stay strictly inside the current project. Do not attempt to "
             "read or write paths the sandbox or your tools do not expose.",
+            "- Do not stage or commit changes; repository history belongs to "
+            "the user.",
             "- You cannot open other tools. If you think you need a tool you "
             "do not have, ask the orchestrator through "
             f"`{public_names['request_guidance']}`.",

@@ -1,19 +1,12 @@
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
-
-from config._sandbox_policy import SandboxPolicy
-from config._tool_config import ToolConfigs
+from citra.config import SandboxPolicy, ToolConfigs
 
 
 def write_configs(tmp_path: Path):
     (tmp_path / 'tools.toml').write_text('''
 [web-search]
 host_url = "http://localhost"
-
-[curl]
-permission_timeout = 10
 
 [bash]
 
@@ -22,7 +15,6 @@ permission_timeout = 10
 [browser]
 ''')
     (tmp_path / 'sandbox.toml').write_text('''
-mode = "ONLY_SOURCE"
 extra_readonly_binds = ["~/test"]
 ''')
 
@@ -33,5 +25,5 @@ def test_homogenous_load(tmp_path):
     sandbox = SandboxPolicy.load(tmp_path)
 
     assert tools.web_search.host_url == 'http://localhost'
-    assert tools.curl.permission_timeout == 10
+    assert tools.bash.permission_timeout == 30
     assert sandbox.extra_ro_binds[0].name == 'test'

@@ -7,18 +7,17 @@ import shlex
 import tomllib
 from typing import TYPE_CHECKING, Any
 
-from citra.config.config_loader import LintContextConfig, LintRuleConfig
+from citra.config import LintContextConfig, LintRuleConfig
 
 if TYPE_CHECKING:
-    from citra.context.turn_workspace import WorkspaceContext
+    from citra.context.session_context import WorkspaceContext
     from citra.sandbox import WorkspaceSandbox
 
 
 _PLACEHOLDERS = (
     ("{path}", "path"),
     ("{relative_path}", "relative_path"),
-    ("{workspace}", "workspace"),
-    ("{source}", "source"),
+    ("{project}", "project"),
 )
 
 _PROJECT_RUFF_FILES = (
@@ -36,13 +35,12 @@ class LintRunner:
 
     Policy precedence is intentionally exclusive rather than additive:
 
-    1. A supported lint policy declared by the permanent source project's
+    1. A supported lint policy declared by the current project's
        ``pyproject.toml``.
     2. Citra's global ``linting.toml`` policy.
     3. No linting.
 
-    Source policy is read from ``@source`` so an agent cannot weaken lint
-    enforcement merely by editing a staged project configuration.
+    Project policy is read from the same project tree the model edits.
     """
 
     def __init__(
@@ -69,8 +67,8 @@ class LintRunner:
         try:
             relative = path.relative_to(project_root)
         except ValueError:
-            # Lint policy applies only to the editable workspace, not @source
-            # or lifecycle scratch/config directories.
+            # Lint policy applies only to the current project, not lifecycle
+            # scratch/config directories.
             return None
 
         config = self._effective_config(relative)
@@ -133,29 +131,29 @@ class LintRunner:
         return self._truncate(text, config.max_output_length)
 
     def _effective_config(self, relative: Path) -> LintContextConfig:
-        project = self._source_project_config(relative)
+        project = self._project_config(relative)
         if project is not None:
             return project
         return self.config
 
-    def _source_project_config(
+    def _project_config(
         self,
         relative: Path,
     ) -> LintContextConfig | None:
-        """Detect the nearest supported ``pyproject.toml`` policy in ``@source``.
+        """Detect the nearest supported project ``pyproject.toml`` policy.
 
         The editable workspace may represent an assistant filesystem rather than
         one repository. Detection therefore starts beside the corresponding
-        source file and walks toward the source root. Ruff is currently the
+        project file and walks toward the project root. Ruff is currently the
         auto-detected project linter. An explicit ``[tool.ruff.lint]`` table is
         required; ``[tool.ruff.format]`` additionally enables format checking.
         """
-        source_root = self.workspace.source_workspace.resolve()
-        source_path = (source_root / relative).resolve()
-        start = source_path if source_path.is_dir() else source_path.parent
+        project_root = self.workspace.workspace.resolve()
+        project_path = (project_root / relative).resolve()
+        start = project_path if project_path.is_dir() else project_path.parent
 
-        for project_root in self._ancestors_within(start, source_root):
-            pyproject = project_root / "pyproject.toml"
+        for candidate_root in self._ancestors_within(start, project_root):
+            pyproject = candidate_root / "pyproject.toml"
             if not pyproject.is_file():
                 continue
 
@@ -177,7 +175,7 @@ class LintRunner:
 
             return self._ruff_project_config(
                 pyproject=pyproject,
-                project_root=project_root,
+                project_root=candidate_root,
                 ruff=ruff,
             )
 
@@ -211,13 +209,8 @@ class LintRunner:
         # With an explicit --config, Ruff resolves configuration-relative paths
         # against cwd. Use the corresponding writable project root so project
         # globs and src paths keep the same relative shape while Ruff checks the
-        # staged file rather than the permanent source copy.
-        project_relative = project_root.relative_to(
-            self.workspace.source_workspace.resolve()
-        )
-        writable_project_root = (
-            self.workspace.workspace / project_relative
-        ).resolve()
+        # file in the current project.
+        writable_project_root = project_root.resolve()
         config_path = str(pyproject.resolve())
         rules = [
             LintRuleConfig(
@@ -267,8 +260,7 @@ class LintRunner:
         values = {
             "path": str(path),
             "relative_path": relative_path,
-            "workspace": str(self.workspace.workspace),
-            "source": str(self.workspace.source_workspace),
+            "project": str(self.workspace.workspace),
         }
         expanded = template
         for placeholder, name in _PLACEHOLDERS:

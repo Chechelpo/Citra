@@ -10,11 +10,7 @@ from citra.sandbox.filesystem_ops import ReadBinaryInput, ReadBinaryOutput
 from citra.sandbox.filesystem_ops.read_binary import DEFAULT_MAX_BYTES
 from citra.sandbox.filesystem_ops.read_binary import execute as execute_read_binary
 from citra.sandbox.filesystem_ops.scope import ScopedFilesystem
-from citra.tools.default_registry import (
-    _CORE_TOOL_TYPES,
-    _DEFERRED_TOOL_TYPES,
-    all_tools,
-)
+from citra.tools.default_registry import all_tools
 from citra.tools.transient import ReadImage
 
 
@@ -289,12 +285,12 @@ def test_read_binary_execute_rejects_missing_file(
 
 
 def test_read_image_is_in_default_deferred_registry() -> None:
-    assert ReadImage in _DEFERRED_TOOL_TYPES
-    assert ReadImage not in _CORE_TOOL_TYPES
+    assert ReadImage in all_tools(are_deferred=True)
+    assert ReadImage not in all_tools(are_deferred=False)
     assert ReadImage in all_tools(are_deferred=True)
 
 
-def test_read_image_appears_in_greenfield_mode() -> None:
-    from citra.modes.greenfield import LongTaskHorizon
+def test_read_image_appears_in_chat_mode() -> None:
+    from citra.modes.chat import ChatMode
 
-    assert ReadImage in LongTaskHorizon._TOOLS.deferred_tools
+    assert ReadImage in ChatMode._TOOLS.deferred_tools

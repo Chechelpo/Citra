@@ -232,15 +232,15 @@ needs work. Advance to implement once it is genuinely executable.
 
 class ImplementerMode(_RoleMode):
     ROLE = "implement"
-    DESCRIPTION = "Implement the approved plan in the shared workspace."
+    DESCRIPTION = "Implement the approved plan in the current project."
 
     INSTRUCTIONS = """
 Implement the smallest coherent change that satisfies the plan. Inspect files
 before editing, preserve unrelated work, and run focused checks during the
-change. Keep changes in the workflow workspace; do not apply them to the
-authoritative source yet. Advance to test when implementation is ready,
-return to plan when the design is invalid, or repeat implement when another
-implementation pass is required.
+change. Use the workspace tool to roll back exact tracked files when needed.
+Do not create Git commits; the user owns repository history. Advance to test
+when implementation is ready, return to plan when the design is invalid, or
+repeat implement when another implementation pass is required.
 """.strip()
 
     TASK_STEERING = TaskSteeringConfig(
@@ -263,7 +263,7 @@ Check that:
 6. Decisions, changed paths, remaining TODOs, and known risks are synchronized
    with durable memory.
 
-Inspect the actual workspace when answering these questions; do not rely only
+Inspect the actual project when answering these questions; do not rely only
 on what you remember editing.
 
 If the design is no longer sound, route back to plan. If implementation work
@@ -281,8 +281,8 @@ verification, prepare the handoff to test.
             Edit,
             Write,
             Bash,
+            Workspace,
             Lsp,
-            Commit,
             *memory_tools(),
         ),
         deferred_tools=(SubagentTool,),
@@ -342,8 +342,8 @@ class ReviewerMode(_RoleMode):
     INSTRUCTIONS = """
 Review the diff, implementation, tests, failure handling, compatibility, and
 task coverage independently. Do not repair defects in the review phase. If
-the result is correct, stage the intended project changes and apply them to
-the authoritative source through the commit tool, then transition to complete.
+the result is correct, transition to complete. Repository commits are owned
+by the user, not by this workflow.
 Otherwise route to the earliest phase that can correct the problem and give a
 specific revision handoff.
 """.strip()
@@ -372,14 +372,13 @@ Check that:
 7. Durable memory and the eventual handoff describe the final reviewed state,
    not an obsolete implementation plan.
 
-Only apply the intended changes to the authoritative source when the review
-evidence supports completion. Otherwise produce a concrete revision handoff
-and select the appropriate earlier phase.
+Complete only when the review evidence supports the result. Otherwise produce
+a concrete revision handoff and select the appropriate earlier phase.
 """.strip(),
     )
 
     TOOLS = ToolSet(
-        core_tools=(SkillTool, Read, Glob, Tree, Bash, Lsp, Commit, *memory_tools()),
+        core_tools=(SkillTool, Read, Glob, Tree, Bash, Lsp, *memory_tools()),
         deferred_tools=(),
     )
 

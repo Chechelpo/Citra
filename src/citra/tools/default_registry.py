@@ -18,8 +18,6 @@ from .tool import Tool
 from .transient import (
     Bash,
     Browser,
-    Commit,
-    Curl,
     Diagram,
     Document,
     Edit,
@@ -33,6 +31,7 @@ from .transient import (
     Subprocess,
     Tree,
     WebSearch,
+    Workspace,
     Write,
 )
 
@@ -138,8 +137,8 @@ _CORE_TOOL_TYPES: tuple[type[Tool], ...] = (
     Edit,
     Glob,
     Tree,
-    Commit,
     Bash,
+    Workspace,
     PromptUser,
     Lsp,
     SkillTool,
@@ -150,7 +149,6 @@ _DEFERRED_TOOL_TYPES: tuple[type[Tool], ...] = (
     Git,
     Subprocess,
     Browser,
-    Curl,
     WebSearch,
     Document,
     Diagram,

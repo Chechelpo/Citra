@@ -283,7 +283,7 @@ def main(
         workflow_registry=workflow_registry,
     )
     try:
-        print_header(application.config, application.source_workspace)
+        print_header(application.config, application.workspace.workspace)
         while True:
             try:
                 print(separator())
@@ -315,4 +315,10 @@ def main(
             except Exception as error:
                 print(f"{RED}⏺ Error: {error}{RESET}")
     finally:
+        project = application.workspace.workspace
         application.close(force=application.hard_shutdown_requested)
+        if project.is_dir():
+            print(
+                f"{GREEN}⏺ Project checkout preserved at {project}. "
+                f"Review and commit it when ready.{RESET}"
+            )

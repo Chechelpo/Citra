@@ -7,15 +7,11 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-from typing import TYPE_CHECKING
 
-from citra.sandbox.runtime_discovery.base import (
+from ._base import (
     RuntimeDiscovery,
     RuntimeDiscoveryResult,
 )
-
-if TYPE_CHECKING:
-    from citra.context.turn_workspace import WorkspaceContext
 
 
 logger = logging.getLogger(__name__)

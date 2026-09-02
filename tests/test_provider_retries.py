@@ -7,7 +7,8 @@ import urllib.error
 
 import pytest
 
-from citra.utils.chat_completions_api import call_api, _should_retry_http_error
+from citra.utils.chat_completions_api import call_api
+from citra.utils.chat_completions_api.persistent_requests import _should_retry_http_error
 
 
 def test_openrouter_stealth_provider_error_is_retryable() -> None:

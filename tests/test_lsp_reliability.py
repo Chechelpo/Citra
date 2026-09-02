@@ -10,14 +10,14 @@ import time
 import unittest
 from unittest.mock import patch
 
-from citra.tools.lsp.client import LspClient, configuration_for_section
-from citra.tools.lsp.config import LspConfig, ServerConfig
-from citra.tools.lsp.diagnostics import json_fallback_diagnostics
-from citra.tools.lsp.language import Language, detect_language, server_for_language
-from citra.tools.lsp.installer import candidate_for, execute_install
-from citra.tools.lsp.manager import LspManager
-from citra.tools.lsp.servers import SERVERS
-from citra.tools.lsp.transport import JsonRpcTransport
+from citra.utils.lsp.client import LspClient, configuration_for_section
+from citra.utils.lsp.config import LspConfig, ServerConfig
+from citra.utils.lsp.diagnostics import json_fallback_diagnostics
+from citra.utils.lsp.language import Language, detect_language, server_for_language
+from citra.utils.lsp.installer import candidate_for, execute_install
+from citra.utils.lsp.manager import LspManager
+from citra.utils.lsp.servers import SERVERS
+from citra.utils.lsp.transport import JsonRpcTransport
 
 
 HERE = Path(__file__).resolve().parent
@@ -86,8 +86,8 @@ class WorkspaceStub:
         raw = str(value)
         if raw.startswith("@tmp/"):
             return self.require_allowed_path(self.tmp / raw[5:])
-        if raw.startswith("@source/"):
-            return self.require_allowed_path(self.source_workspace / raw[8:])
+        if raw.startswith("./"):
+            return self.require_allowed_path(self.workspace / raw[2:])
         return self.require_allowed_path(self.workspace / raw)
 
     def display_path(self, path):

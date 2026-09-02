@@ -100,8 +100,7 @@ class TestCommand(Command):
         return (
             f"model={model.id}, "
             f"searxng={web.host_url}, "
-            "project="
-            f"{'direct-source' if self.context.workspace.direct_source else 'isolated-copy'}, "
+            "project=copied, "
             "memory="
             f"{'enabled' if self.context.config.memory.enabled else 'disabled'}"
         )
@@ -219,10 +218,7 @@ class TestCommand(Command):
         )
 
     def _check_workspace(self) -> str:
-        self.context.filesystem.execute(
-            "tree",
-            {"path": "@workspace", "max_depth": 0, "limit": 1},
-        )
+        self.context.workspace.resolve_path(".")
         return str(self.context.workspace.workspace)
 
     def _check_language_servers(self) -> str:

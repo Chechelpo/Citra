@@ -3,7 +3,7 @@
 Adapts a vision-friendly OpenAI ``image_url`` payload to Citra's text-based
 tool-result protocol.
 
-The tool reads a binary file from the workspace through the sandbox filesystem
+The tool reads a binary file from the current project through the sandbox filesystem
 worker (the new ``read_binary`` op), validates the file is a real image by
 checking the leading magic bytes for the formats vision-capable OpenAI models
 support, and returns the OpenAI ``image_url`` content-part payload as a JSON
@@ -129,7 +129,7 @@ class ReadImage(Tool):
                         schema=JsonSchema.string(
                             description=(
                                 "Image file path. Examples: "
-                                "'diagram.png', '@source/assets/logo.webp'."
+                                "'diagram.png', 'assets/logo.webp'."
                             )
                         ),
                     ),

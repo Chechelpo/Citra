@@ -41,7 +41,7 @@ class Read(Tool):
                 schema=JsonSchema.string(
                     description=(
                         "File path or glob pattern. Examples: 'main.py', "
-                        "'src/**/*.py', or '@source/pyproject.toml'."
+                        "'src/**/*.py', or 'pyproject.toml'."
                     ),
                 ),
             ),

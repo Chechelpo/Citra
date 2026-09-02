@@ -1,25 +1,18 @@
-from typing import Any
 from enum import IntEnum
+from typing import Any
 
 class SandboxMode(IntEnum):
+    """Host visibility granted to a mode or workflow.
+
+    The project itself is writable in both modes. ``PARTIAL_SANDBOX`` is for
+    explicitly bounded worker contexts; normal user-facing modes use
+    ``FULL_SANDBOX``. Historical full-access and direct-source modes no longer
+    exist.
     """
-    Level of sandboxing required by a mode or workflow override.
 
-    Each level includes the guarantees of the previous level.
-    """
-
-    FULL_ACCESS = 0
-    ONLY_SOURCE = 1
-    PARTIAL_SANDBOX = 2
-    FULL_SANDBOX = 3
-    ONLY_SANDBOX = 4
-    ONLY_FULL_SANDBOX = 5
-
-    @property
-    def uses_direct_source(self) -> bool:
-        """Whether the authoritative source is the active project root."""
-        return self <= SandboxMode.ONLY_SOURCE
-
+    PARTIAL_SANDBOX = 1
+    FULL_SANDBOX = 2
+    
 def _sandbox_mode(
     table: dict[str, Any],
     name: str,

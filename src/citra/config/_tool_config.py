@@ -175,6 +175,24 @@ class ToolConfigs(TomlConfig):
         cls,
         raw: dict[str, Any],
     ) -> ToolConfigs:
+        allowed = {
+            "web-search",
+            "bash",
+            "subprocess",
+            "browser",
+            "lsp",
+        }
+        unknown = set(raw) - allowed
+        if "curl" in unknown:
+            raise ValueError(
+                "The [curl] config section was removed; use [bash] network "
+                "policy for command-line HTTP requests."
+            )
+        if unknown:
+            raise ValueError(
+                "Unsupported tools.toml sections: "
+                + ", ".join(sorted(unknown))
+            )
         return cls(
             web_search=WebSearchConfig.create(
                 _table(raw, "web-search"),

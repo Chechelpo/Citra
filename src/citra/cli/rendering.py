@@ -221,7 +221,7 @@ def memory_tool_for_call(
 
 def print_header(
     config: CitraConfig,
-    source_workspace: Path,
+    workspace: Path,
 ) -> None:
     line = Text()
 
@@ -246,7 +246,7 @@ def print_header(
     )
 
     line.append(
-        str(source_workspace),
+        str(workspace),
         style="dim",
     )
 
