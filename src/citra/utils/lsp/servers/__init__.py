@@ -12,6 +12,7 @@ from .typescript import TYPESCRIPT_LANGUAGE_SERVER
 
 
 def _jdtls_command(executable: str, root: Path, cache: Path) -> tuple[str, ...]:
+    """Handle jdtls command."""
     digest = hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:20]
     data_dir = cache / "lsp" / "jdtls" / digest
     data_dir.mkdir(parents=True, exist_ok=True)

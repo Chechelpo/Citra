@@ -9,6 +9,7 @@ JsonPrimitive = str | int | float | bool | None
 
 
 class JsonType(str, Enum):
+    """Represent JsonType."""
     STRING = "string"
     INTEGER = "integer"
     NUMBER = "number"
@@ -20,6 +21,7 @@ class JsonType(str, Enum):
 
 @dataclass(frozen=True)
 class JsonProperty:
+    """Represent JsonProperty."""
     name: str
     schema: JsonSchema
     required: bool = True
@@ -27,6 +29,7 @@ class JsonProperty:
 
 @dataclass(frozen=True)
 class JsonSchema:
+    """Represent JsonSchema."""
     type: JsonType
 
     description: str | None = None
@@ -42,6 +45,7 @@ class JsonSchema:
     enum: tuple[JsonPrimitive, ...] = ()
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if self.type is JsonType.ARRAY and self.items is None:
             raise ValueError("Array schemas must define 'items'.")
 
@@ -56,6 +60,7 @@ class JsonSchema:
             )
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert the value to dict."""
         result: dict[str, Any] = {
             "type": self.type.value,
         }
@@ -96,6 +101,7 @@ class JsonSchema:
         description: str | None = None,
         enum: tuple[str, ...] = (),
     ) -> JsonSchema:
+        """Handle string."""
         return cls(
             type=JsonType.STRING,
             description=description,
@@ -109,6 +115,7 @@ class JsonSchema:
         description: str | None = None,
         enum: tuple[int, ...] = (),
     ) -> JsonSchema:
+        """Handle integer."""
         return cls(
             type=JsonType.INTEGER,
             description=description,
@@ -121,6 +128,7 @@ class JsonSchema:
         *,
         description: str | None = None,
     ) -> JsonSchema:
+        """Handle number."""
         return cls(
             type=JsonType.NUMBER,
             description=description,
@@ -132,6 +140,7 @@ class JsonSchema:
         *,
         description: str | None = None,
     ) -> JsonSchema:
+        """Handle boolean."""
         return cls(
             type=JsonType.BOOLEAN,
             description=description,
@@ -144,6 +153,7 @@ class JsonSchema:
         *,
         description: str | None = None,
     ) -> JsonSchema:
+        """Handle array."""
         return cls(
             type=JsonType.ARRAY,
             description=description,
@@ -158,6 +168,7 @@ class JsonSchema:
         description: str | None = None,
         additional_properties: bool = False,
     ) -> JsonSchema:
+        """Handle object."""
         return cls(
             type=JsonType.OBJECT,
             description=description,
@@ -168,18 +179,21 @@ class JsonSchema:
 
 @dataclass(frozen=True)
 class FunctionDefinition:
+    """Represent FunctionDefinition."""
     name: str
     description: str
     parameters: JsonSchema
     strict: bool = False
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if self.parameters.type is not JsonType.OBJECT:
             raise ValueError(
                 "Function parameters must be an object schema."
             )
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert the value to dict."""
         return {
             "name": self.name,
             "description": self.description,
@@ -190,6 +204,7 @@ class FunctionDefinition:
 
 @dataclass(frozen=True)
 class ChatCompletionTool:
+    """Represent ChatCompletionTool."""
     function: FunctionDefinition
 
     type: str = field(
@@ -198,6 +213,7 @@ class ChatCompletionTool:
     )
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert the value to dict."""
         return {
             "type": self.type,
             "function": self.function.to_dict(),

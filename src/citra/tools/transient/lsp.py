@@ -29,6 +29,7 @@ from ..tool import Tool, ToolDefinition
 
 
 class Lsp(Tool):
+    """Represent Lsp."""
     TOOL_ID = "lsp"
 
     INVALIDATES_TOOL_CACHE = False
@@ -279,6 +280,7 @@ class Lsp(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -307,6 +309,7 @@ class Lsp(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -319,6 +322,7 @@ class Lsp(Tool):
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Return whether is cacheable."""
         action = arguments.get(
             "action",
             arguments.get("operation"),
@@ -335,6 +339,7 @@ class Lsp(Tool):
         cls,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        """Handle normalize arguments."""
         raw_action = arguments.get(
             "action",
             arguments.get("operation"),
@@ -389,6 +394,7 @@ class Lsp(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         arguments = self._normalize_arguments(
             arguments
         )
@@ -589,6 +595,7 @@ class Lsp(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         normalized = self._normalize_arguments(
             arguments
         )
@@ -636,6 +643,7 @@ class Lsp(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if text == "none":
@@ -646,6 +654,7 @@ class Lsp(Tool):
 
     @staticmethod
     def _position(arguments: dict[str, Any], text: str) -> SourcePosition:
+        """Handle position."""
         line = arguments.get("line")
         character = arguments.get("character")
         if not isinstance(line, int) or not isinstance(character, int):
@@ -675,12 +684,14 @@ class Lsp(Tool):
         return SourcePosition(line=line - 1, character=utf16_character)
 
     def _display_uri(self, uri: str) -> str:
+        """Handle display uri."""
         try:
             return self.context.workspace.display_path(uri_to_path(uri))
         except Exception:
             return uri
 
     def _format_locations(self, value: Any) -> str:
+        """Handle format locations."""
         if value is None:
             return "none"
         items = value if isinstance(value, list) else [value]
@@ -703,6 +714,7 @@ class Lsp(Tool):
 
     @staticmethod
     def _format_hover(value: Any) -> str:
+        """Handle format hover."""
         if not isinstance(value, dict):
             return "none"
         contents = value.get("contents")
@@ -722,11 +734,13 @@ class Lsp(Tool):
 
 
     def _format_symbols(self, value: Any, path: Path) -> str:
+        """Handle format symbols."""
         if not isinstance(value, list) or not value:
             return "none"
         lines: list[str] = []
 
         def walk(items: Iterable[Any], depth: int = 0) -> None:
+            """Handle walk."""
             for item in items:
                 if len(lines) >= 500 or not isinstance(item, dict):
                     continue
@@ -750,6 +764,7 @@ class Lsp(Tool):
 
     @staticmethod
     def _reject(arguments: dict[str, Any], *names: str) -> None:
+        """Handle reject."""
         supplied = [name for name in names if name in arguments]
         if supplied:
             raise ValueError("Arguments not valid for this action: " + ", ".join(supplied))

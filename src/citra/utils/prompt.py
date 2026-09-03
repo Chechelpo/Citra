@@ -34,6 +34,7 @@ def collect_environment(context: ExecutionContext) -> EnvironmentInfo:
 
 
 def format_skills(skills: Iterable[Skill]) -> str:
+    """Handle format skills."""
     return "\n".join(
         f"- **{skill.name}**: {skill.description}"
         for skill in skills

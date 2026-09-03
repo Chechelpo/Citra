@@ -17,6 +17,7 @@ def format_diagnostics(
     display_path: Callable[[Path], str] | None = None,
     limit: int = 250,
 ) -> str | None:
+    """Handle format diagnostics."""
     shown_path = display_path(path) if display_path is not None else str(path)
     lines: list[str] = []
     for diagnostic in diagnostics[:limit]:
@@ -47,6 +48,7 @@ def format_diagnostics(
 
 
 def json_fallback_diagnostics(text: str) -> list[dict[str, Any]]:
+    """Handle json fallback diagnostics."""
     try:
         json.loads(text)
     except json.JSONDecodeError as error:

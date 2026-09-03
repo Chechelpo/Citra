@@ -8,10 +8,12 @@ T = TypeVar('T', bound='TomlConfig')
 
 
 class TomlConfig:
+    """Represent TomlConfig."""
     FILE_NAME: str
 
     @classmethod
     def load(cls: type[T], config_dir: Path) -> T:
+        """Handle load."""
         path = Path(config_dir).expanduser().resolve() / cls.FILE_NAME
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -26,4 +28,5 @@ class TomlConfig:
 
     @classmethod
     def create(cls: type[T], raw: dict[str, Any]) -> T:
+        """Handle create."""
         raise NotImplementedError

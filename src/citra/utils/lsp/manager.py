@@ -69,25 +69,30 @@ def _merge_settings(
 
 @dataclass(frozen=True)
 class ClientKey:
+    """Represent ClientKey."""
     root: Path
     server_id: str
 
 
 @dataclass(frozen=True)
 class LspClientHandle:
+    """Represent LspClientHandle."""
     client: LspClient
     language: Language
     cold_start: bool
 
     def __iter__(self):
         # Backwards compatible with older ``client, language = client_for(...)`` callers.
+        """Handle iter."""
         yield self.client
         yield self.language
 
     def __len__(self) -> int:
+        """Handle len."""
         return 2
 
     def __getitem__(self, index: int):
+        """Handle getitem."""
         return (self.client, self.language)[index]
 
 
@@ -101,6 +106,7 @@ class LspManager:
         *,
         config: LspConfig | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.workspace = workspace
         self.sandbox = sandbox
         self.config = config or LspConfig()
@@ -110,6 +116,7 @@ class LspManager:
         self._closed = False
 
     def client_for(self, path: Path) -> LspClientHandle:
+        """Handle client for."""
         if self._closed:
             raise LspUnavailable("The LSP manager has already been closed.")
         try:
@@ -133,6 +140,7 @@ class LspManager:
         return LspClientHandle(client=client, language=language, cold_start=started)
 
     def _client_for_server(self, server_id: str, root: Path) -> tuple[LspClient, bool]:
+        """Handle client for server."""
         key = ClientKey(root.resolve(), server_id)
         with self._lock:
             existing = self._clients.get(key)
@@ -145,6 +153,7 @@ class LspManager:
             return client, True
 
     def status(self) -> dict[str, Any]:
+        """Handle status."""
         with self._lock:
             running = {
                 server_id: sum(
@@ -183,6 +192,7 @@ class LspManager:
         path: Path,
         text: str,
     ) -> list[dict[str, Any]]:
+        """Handle diagnostics."""
         if not self.config.enabled:
             raise LspUnavailable("LSP support is disabled by configuration.")
         path = self.workspace.require_allowed_path(path)
@@ -214,6 +224,7 @@ class LspManager:
         *,
         filesystem: SandboxedFilesystem,
     ) -> str | None:
+        """Handle diagnostics for path."""
         path = self.workspace.resolve_path(path_raw)
         language = detect_language(path)
         if language is None or not supports_language(language):
@@ -235,6 +246,7 @@ class LspManager:
         )
 
     def stop(self, target: str | None = None) -> int:
+        """Handle stop."""
         server_id = self._normalize_server_target(target) if target else None
         with self._lock:
             selected = [
@@ -251,6 +263,7 @@ class LspManager:
         return len(selected)
 
     def restart(self, target: str | None = None) -> int:
+        """Handle restart."""
         server_id = self._normalize_server_target(target) if target else None
         with self._lock:
             roots = [
@@ -289,6 +302,7 @@ class LspManager:
         *,
         dry_run: bool = False,
     ) -> tuple[InstallResult, ...]:
+        """Handle install."""
         if not target:
             raise ValueError("An LSP install target is required.")
         normalized = target.casefold()
@@ -367,6 +381,7 @@ class LspManager:
         return tuple(results)
 
     def close(self, *, force: bool = False) -> None:
+        """Handle close."""
         with self._lock:
             if self._closed:
                 return
@@ -391,6 +406,7 @@ class LspManager:
         )
 
     def _start(self, server_id: str, root: Path) -> LspClient:
+        """Handle start."""
         if not self.config.enabled:
             raise LspUnavailable("LSP support is disabled by configuration.")
         definition = SERVERS[server_id]
@@ -477,11 +493,13 @@ class LspManager:
         holder: dict[str, LspClient] = {}
 
         def handle_notification(method: str, params: Any) -> None:
+            """Handle handle notification."""
             client = holder.get("client")
             if client is not None:
                 client.handle_notification(method, params)
 
         def handle_request(method: str, params: Any) -> Any:
+            """Handle handle request."""
             client = holder.get("client")
             if client is None:
                 return None
@@ -514,11 +532,14 @@ class LspManager:
         return client
 
     def _wire_vue_client(self, client: LspClient, root: Path) -> None:
+        """Handle wire vue client."""
         def mirror(path: Path, text: str, language: Language) -> None:
+            """Handle mirror."""
             ts_client, _ = self._client_for_server("typescript", root)
             ts_client.sync_document(path, text, language)
 
         def bridge(command_name: str, args: Any, options: dict[str, Any]) -> Any:
+            """Handle bridge."""
             ts_client, _ = self._client_for_server("typescript", root)
             return ts_client.execute_command(
                 "typescript.tsserverRequest",
@@ -529,6 +550,7 @@ class LspManager:
         client.set_tsserver_bridge(bridge)
 
     def _ensure_vue_typescript(self, root: Path) -> None:
+        """Handle ensure vue typescript."""
         if self._which("vue-language-server") is None:
             raise LspUnavailable(
                 "Vue language server is unavailable: vue-language-server is not installed."
@@ -581,6 +603,7 @@ class LspManager:
             raise
 
     def _vue_plugin_location(self, root: Path | None) -> Path | None:
+        """Handle vue plugin location."""
         candidates: list[Path] = []
         if root is not None:
             candidates.extend(
@@ -623,6 +646,7 @@ class LspManager:
         root: Path,
         executable: str | None,
     ) -> tuple[str, ...] | None:
+        """Handle ruby command."""
         bundle = self._which("bundle")
         if bundle and (root / "Gemfile").is_file():
             return (bundle, "exec", "ruby-lsp")
@@ -636,11 +660,13 @@ class LspManager:
         executable: str,
         root: Path,
     ) -> tuple[str, ...]:
+        """Handle command for."""
         if definition.command_factory is not None:
             return definition.command_factory(executable, root, self.workspace.cache)
         return (executable, *definition.arguments)
 
     def _root_for(self, path: Path) -> Path:
+        """Handle root for."""
         path = self.workspace.require_allowed_path(path)
         # Follow the same public root contract as model-facing filesystem tools.
         # Prefer the project/tmp roots, then any additional lifecycle root
@@ -669,10 +695,12 @@ class LspManager:
         raise LspUnavailable(f"LSP path is outside the active workspace: {path}")
 
     def _dispose_client(self, key: ClientKey, client: LspClient) -> None:
+        """Handle dispose client."""
         self._clients.pop(key, None)
         self._shutdown_client(client)
 
     def _shutdown_client(self, client: LspClient, *, force: bool = False) -> None:
+        """Handle shutdown client."""
         process = client.transport.process
         if force:
             self.sandbox.terminate_process(process, force=True)
@@ -687,6 +715,7 @@ class LspManager:
     def _availability(
         self, definition: ServerDefinition
     ) -> tuple[bool, dict[str, Any]]:
+        """Handle availability."""
         executable = self._which(definition.executable)
         dependencies = {
             dependency: self._which(dependency) for dependency in definition.requires
@@ -775,10 +804,12 @@ class LspManager:
         return new_config, tuple(resolved.path_prepend)
 
     def _which(self, command: str) -> str | None:
+        """Handle which."""
         path = self.workspace.resolve_command(command)
         return str(path) if path is not None else None
 
     def _resolve_or_refresh(self, command: str) -> str | None:
+        """Handle resolve or refresh."""
         existing = self._which(command)
         if existing is not None:
             return existing
@@ -786,9 +817,11 @@ class LspManager:
         return str(path) if path is not None else None
 
     def _available_managers(self) -> tuple[str, ...]:
+        """Handle available managers."""
         return available_managers(self._which)
 
     def _java_major_version(self, java: str) -> int | None:
+        """Handle java major version."""
         try:
             completed = self.sandbox.run(
                 [java, "-version"],
@@ -815,9 +848,11 @@ class LspManager:
             return None
 
     def _normalize_server_target(self, target: str) -> str:
+        """Handle normalize server target."""
         return self._definition_for_target(target).id
 
     def _definition_for_target(self, target: str) -> ServerDefinition:
+        """Handle definition for target."""
         normalized = target.casefold().strip()
         normalized = SERVER_ALIASES.get(normalized, normalized)
         definition = SERVERS.get(normalized)

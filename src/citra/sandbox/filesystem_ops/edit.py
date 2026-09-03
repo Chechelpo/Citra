@@ -9,10 +9,12 @@ from .scope import ScopedFilesystem
 
 @dataclass(frozen=True, slots=True)
 class EditOutput(FilesystemOutput):
+    """Represent EditOutput."""
     status: str
 
     @classmethod
     def from_payload(cls, payload: Any) -> "EditOutput":
+        """Create an instance from payload."""
         raw = require_payload_dict(payload)
         status = raw.get("status")
         if not isinstance(status, str):
@@ -20,14 +22,17 @@ class EditOutput(FilesystemOutput):
         return cls(status=status)
 
     def to_payload(self) -> dict[str, Any]:
+        """Convert the value to payload."""
         return {"status": self.status}
 
     def render(self) -> str:
+        """Handle render."""
         return self.status
 
 
 @dataclass(frozen=True, slots=True)
 class EditInput(FilesystemInput[EditOutput]):
+    """Represent EditInput."""
     operation = "edit"
     output_type = EditOutput
 
@@ -38,6 +43,7 @@ class EditInput(FilesystemInput[EditOutput]):
     all: bool = False
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if self.old is not None and self.line is not None:
             raise ValueError("Use either 'old' for replacement or 'line' for insertion, not both.")
         if self.line is not None:
@@ -51,6 +57,7 @@ class EditInput(FilesystemInput[EditOutput]):
 
     @classmethod
     def parse(cls, arguments: dict[str, Any]) -> "EditInput":
+        """Handle parse."""
         path = require_string(arguments, "path")
         new = require_string(arguments, "new")
         old = arguments.get("old")
@@ -72,6 +79,7 @@ class EditInput(FilesystemInput[EditOutput]):
         )
 
     def to_arguments(self) -> dict[str, Any]:
+        """Convert the value to arguments."""
         result: dict[str, Any] = {"path": self.path, "new": self.new}
         if self.line is not None:
             result["line"] = self.line
@@ -83,6 +91,7 @@ class EditInput(FilesystemInput[EditOutput]):
 
 
 def execute(order: EditInput, fs: ScopedFilesystem) -> EditOutput:
+    """Execute the execute operation."""
     path = fs.require_writable_path(order.path)
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {fs.display_path(path)}")

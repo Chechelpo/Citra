@@ -37,6 +37,7 @@ DEFAULT_TREE_SKIPS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class TreeOutput(FilesystemOutput):
+    """Represent TreeOutput."""
     root: str
     lines: tuple[str, ...]
     directories: int
@@ -46,6 +47,7 @@ class TreeOutput(FilesystemOutput):
 
     @classmethod
     def from_payload(cls, payload: Any) -> "TreeOutput":
+        """Create an instance from payload."""
         raw = require_payload_dict(payload)
         root = raw.get("root")
         lines = raw.get("lines")
@@ -76,6 +78,7 @@ class TreeOutput(FilesystemOutput):
         )
 
     def to_payload(self) -> dict[str, Any]:
+        """Convert the value to payload."""
         return {
             "root": self.root,
             "lines": list(self.lines),
@@ -86,6 +89,7 @@ class TreeOutput(FilesystemOutput):
         }
 
     def render(self) -> str:
+        """Handle render."""
         summary = (
             f"{self.directories} "
             f"{'directory' if self.directories == 1 else 'directories'}"
@@ -102,6 +106,7 @@ class TreeOutput(FilesystemOutput):
 
 @dataclass(frozen=True, slots=True)
 class TreeInput(FilesystemInput[TreeOutput]):
+    """Represent TreeInput."""
     operation = "tree"
     output_type = TreeOutput
 
@@ -113,11 +118,13 @@ class TreeInput(FilesystemInput[TreeOutput]):
     use_default_skips: bool = True
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if not 0 <= self.max_depth <= MAX_TREE_DEPTH:
             raise ValueError(f"'max_depth' must be between 0 and {MAX_TREE_DEPTH}.")
 
     @classmethod
     def parse(cls, arguments: dict[str, Any]) -> "TreeInput":
+        """Handle parse."""
         path = optional_string(arguments, "path", ".")
         raw_depth = arguments.get("max_depth", DEFAULT_TREE_DEPTH)
         try:
@@ -139,6 +146,7 @@ class TreeInput(FilesystemInput[TreeOutput]):
         )
 
     def to_arguments(self) -> dict[str, Any]:
+        """Convert the value to arguments."""
         result: dict[str, Any] = {}
         if self.path != ".":
             result["path"] = self.path
@@ -157,12 +165,14 @@ class TreeInput(FilesystemInput[TreeOutput]):
 
 @dataclass
 class _TreeState:
+    """Represent TreeState."""
     files: int = 0
     directories: int = 0
     skipped: int = 0
 
 
 def _tree_skipped(name: str, relative: Path, patterns: set[str]) -> bool:
+    """Handle tree skipped."""
     relative_text = relative.as_posix()
     return any(
         name == pattern
@@ -186,6 +196,7 @@ def _walk_tree(
     lines: list[str],
     state: _TreeState,
 ) -> None:
+    """Handle walk tree."""
     if depth >= max_depth:
         return
 
@@ -253,6 +264,7 @@ def _walk_tree(
 
 
 def execute(order: TreeInput, fs: ScopedFilesystem) -> TreeOutput:
+    """Execute the execute operation."""
     root = fs.require_allowed_path(fs.resolve_path(order.path))
     if not root.exists():
         raise FileNotFoundError(

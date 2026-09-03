@@ -12,6 +12,7 @@ class QuitCommand(Command):
     description = "Exit Citra."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         return CommandResult(
             output="Bye.",
             exit=True,

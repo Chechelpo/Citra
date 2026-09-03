@@ -178,6 +178,7 @@ class Git(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -190,6 +191,7 @@ class Git(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -198,6 +200,7 @@ class Git(Tool):
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Return whether is cacheable."""
         return (
             arguments.get("action")
             not in {
@@ -210,6 +213,7 @@ class Git(Tool):
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Handle invalidates tool cache."""
         return (
             arguments.get("action")
             == "clone"
@@ -220,6 +224,7 @@ class Git(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         if not self.context.has_command(
             "git"
         ):
@@ -267,6 +272,7 @@ class Git(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
 
@@ -300,6 +306,7 @@ class Git(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if not text:
@@ -327,6 +334,7 @@ class Git(Tool):
         arguments: dict[str, Any],
         timeout: int,
     ) -> str:
+        """Handle inspect."""
         repository = self.context.workspace.resolve_path(
             arguments.get(
                 "path",
@@ -368,6 +376,7 @@ class Git(Tool):
         arguments: dict[str, Any],
         timeout: int,
     ) -> str:
+        """Handle clone."""
         url = arguments.get(
             "url"
         )
@@ -473,6 +482,7 @@ class Git(Tool):
         arguments: dict[str, Any],
         timeout: int,
     ) -> str:
+        """Handle ls remote."""
         url = arguments.get(
             "url"
         )
@@ -513,6 +523,7 @@ class Git(Tool):
         action: str,
         arguments: dict[str, Any],
     ) -> list[str]:
+        """Handle inspection arguments."""
         if action == "status":
             return [
                 "status",
@@ -697,6 +708,7 @@ class Git(Tool):
 
     @staticmethod
     def _git_prefix() -> list[str]:
+        """Handle git prefix."""
         return [
             "git",
 
@@ -724,6 +736,7 @@ class Git(Tool):
 
     @staticmethod
     def _git_environment() -> dict[str, str]:
+        """Handle git environment."""
         return {
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_ASKPASS": "/bin/false",
@@ -748,6 +761,7 @@ class Git(Tool):
         self,
         url: str,
     ) -> Path:
+        """Handle allocate clone destination."""
         repositories = (
             self.context.workspace.tmp
             / "repos"
@@ -773,6 +787,7 @@ class Git(Tool):
     def _repository_name(
         url: str,
     ) -> str:
+        """Handle repository name."""
         parsed = urlparse(
             url
         )
@@ -803,6 +818,7 @@ class Git(Tool):
     def _validate_remote_url(
         url: str,
     ) -> None:
+        """Handle validate remote url."""
         parsed = urlparse(
             url
         )
@@ -829,6 +845,7 @@ class Git(Tool):
     def _validate_ref(
         ref: str,
     ) -> None:
+        """Handle validate ref."""
         if not ref:
             raise ValueError(
                 "Git revision cannot be empty."
@@ -857,6 +874,7 @@ class Git(Tool):
     def _validate_repository_file(
         file: str,
     ) -> None:
+        """Handle validate repository file."""
         path = Path(
             file
         )
@@ -878,6 +896,7 @@ class Git(Tool):
         timed_out: bool,
         timeout: int,
     ) -> str:
+        """Handle format result."""
         output = output.strip()
 
         if len(output) > self.MAX_OUTPUT_LENGTH:

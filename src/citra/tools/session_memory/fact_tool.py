@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Citation:
+    """Represent Citation."""
     type: str
     source: str
     line: int | None = None
@@ -30,6 +31,7 @@ class Citation:
 
 @dataclass(frozen=True)
 class FactExtract:
+    """Represent FactExtract."""
     id: int
     content: str
     working_state_id: int | None = None
@@ -220,6 +222,7 @@ class FactTool(MemoryTool[FactExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -233,6 +236,7 @@ class FactTool(MemoryTool[FactExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -244,12 +248,14 @@ class FactTool(MemoryTool[FactExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Facts"
 
     @override
     def get_extracts(
         self,
     ) -> list[FactExtract]:
+        """Return get extracts."""
         return list(
             self.__extracts
         )
@@ -259,6 +265,7 @@ class FactTool(MemoryTool[FactExtract]):
         self,
         extract: FactExtract,
     ) -> str:
+        """Handle format extract."""
         lines = [
             f"- [{extract.id}] {extract.content}",
         ]
@@ -315,10 +322,12 @@ class FactTool(MemoryTool[FactExtract]):
     def should_offer_documentation(
         self,
     ) -> bool:
+        """Return whether should offer documentation."""
         return False
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -329,6 +338,7 @@ class FactTool(MemoryTool[FactExtract]):
         raise ValueError(f"Unsupported fact action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         if arguments.get("working_state_id") is not None:
             raise ValueError("'working_state_id' is invalid for fact action 'add'.")
         if arguments.get("id") is not None or arguments.get("ids") is not None:
@@ -360,6 +370,7 @@ class FactTool(MemoryTool[FactExtract]):
         )
 
     def _promote(self, arguments: dict[str, Any]) -> str:
+        """Handle promote."""
         if arguments.get("id") is not None or arguments.get("ids") is not None:
             raise ValueError("'id' and 'ids' are invalid for fact promotion.")
 
@@ -409,6 +420,7 @@ class FactTool(MemoryTool[FactExtract]):
         )
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         invalid = [
             name
             for name in ("working_state_id", "content", "citations", "facts")
@@ -442,6 +454,7 @@ class FactTool(MemoryTool[FactExtract]):
         *,
         working_state_id: int | None,
     ) -> FactExtract:
+        """Handle append."""
         fact = FactExtract(
             id=self.__next_id,
             content=content,
@@ -454,6 +467,7 @@ class FactTool(MemoryTool[FactExtract]):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
         if arguments.get("working_state_id") is not None:
@@ -475,6 +489,7 @@ class FactTool(MemoryTool[FactExtract]):
         *,
         action: str,
     ) -> list[dict[str, Any]]:
+        """Handle get fact inputs."""
         working_id = arguments.get("working_state_id")
         content = arguments.get("content")
         citations = arguments.get("citations")
@@ -506,6 +521,7 @@ class FactTool(MemoryTool[FactExtract]):
         cls,
         raw_citations: list[dict[str, Any]],
     ) -> tuple[Citation, ...]:
+        """Handle prepare citations."""
         cls._validate_citations(raw_citations)
         return tuple(
             Citation(
@@ -524,6 +540,7 @@ class FactTool(MemoryTool[FactExtract]):
 
     @staticmethod
     def _get_ids(arguments: dict[str, Any]) -> list[int]:
+        """Handle get ids."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None and multiple is not None:
@@ -536,6 +553,7 @@ class FactTool(MemoryTool[FactExtract]):
         return list(ids)
 
     def _find_index(self, fact_id: int) -> int:
+        """Handle find index."""
         for index, fact in enumerate(self.__extracts):
             if fact.id == fact_id:
                 return index
@@ -543,6 +561,7 @@ class FactTool(MemoryTool[FactExtract]):
 
     @staticmethod
     def _validate_citations(citations: list[dict[str, Any]]) -> None:
+        """Handle validate citations."""
         for index, citation in enumerate(citations):
             citation_type = citation["type"]
             source = citation.get("source")
@@ -577,6 +596,7 @@ class FactTool(MemoryTool[FactExtract]):
 
     @staticmethod
     def _ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle ids summary."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None:
@@ -587,8 +607,10 @@ class FactTool(MemoryTool[FactExtract]):
 
     @staticmethod
     def _format_ids(ids: list[int]) -> str:
+        """Handle format ids."""
         return "[" + ", ".join(str(item_id) for item_id in ids) + "]"
 
     @staticmethod
     def _truncate(value: str) -> str:
+        """Handle truncate."""
         return value if len(value) <= 80 else value[:80] + "..."

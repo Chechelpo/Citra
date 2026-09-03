@@ -21,6 +21,7 @@ _LEGACY_PROFILE_NAME = "default"
 
 @dataclass(frozen=True)
 class RetryConfig:
+    """Represent RetryConfig."""
     max_attempts: int = 12
     request_timeout: float = 120.0
     initial_backoff: float = 1.0
@@ -29,6 +30,7 @@ class RetryConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """Represent ModelConfig."""
     host: str
     encrypted_key: str
     id: str
@@ -44,6 +46,7 @@ class ModelConfig:
     )
 
     def decrypt_api_key(self) -> str:
+        """Handle decrypt api key."""
         if self._plaintext_api_key is not None:
             return self._plaintext_api_key
 
@@ -59,6 +62,7 @@ class ModelConfigStore:
         self,
         config_path: str | Path,
     ) -> None:
+        """Initialize the instance."""
         path = Path(config_path).expanduser().resolve()
         self.config_file = (
             path / MODELS_CONFIG_FILE
@@ -72,6 +76,7 @@ class ModelConfigStore:
         cls,
         config_path: str | Path,
     ) -> ModelConfigStore:
+        """Handle load."""
         config_dir = Path(config_path).expanduser().resolve()
         config_file = config_dir / MODELS_CONFIG_FILE
 
@@ -88,6 +93,7 @@ class ModelConfigStore:
     def _load_document(
         self,
     ) -> dict[str, Any]:
+        """Handle load document."""
         with self.config_file.open(
             "rb",
         ) as file:
@@ -104,6 +110,7 @@ class ModelConfigStore:
         self,
         document: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """Handle layout."""
         models = document.get("models")
         if not isinstance(models, dict):
             raise ValueError("models.toml must contain a [models] table.")
@@ -137,21 +144,26 @@ class ModelConfigStore:
         return selectors, profiles
 
     def names(self) -> tuple[str, ...]:
+        """Handle names."""
         _, profiles = self._layout(self._load_document())
         return tuple(profiles)
 
     def orchestrator_name(self) -> str:
+        """Handle orchestrator name."""
         selectors, _ = self._layout(self._load_document())
         return str(selectors.get("orchestrator") or selectors.get("active"))
 
     def active_name(self) -> str:
+        """Handle active name."""
         return self.orchestrator_name()
 
     def subagent_name(self) -> str:
+        """Handle subagent name."""
         selectors, _ = self._layout(self._load_document())
         return str(selectors.get("subagent") or self.orchestrator_name())
 
     def get(self, name: str | None = None) -> ModelConfig:
+        """Handle get."""
         selectors, profiles = self._layout(self._load_document())
         selected = name or str(
             selectors.get("orchestrator") or selectors.get("active")
@@ -244,12 +256,15 @@ class ModelConfigStore:
         )
 
     def set_orchestrator(self, name: str) -> None:
+        """Handle set orchestrator."""
         self._set_selector("orchestrator", name)
 
     def set_active(self, name: str) -> None:
+        """Handle set active."""
         self.set_orchestrator(name)
 
     def set_subagent(self, name: str | None) -> None:
+        """Handle set subagent."""
         if name is None:
             document = self._load_document()
             models = document["models"]
@@ -260,6 +275,7 @@ class ModelConfigStore:
         self._set_selector("subagent", name)
 
     def _set_selector(self, selector: str, name: str) -> None:
+        """Handle set selector."""
         document = self._load_document()
         _, profiles = self._layout(document)
         if name not in profiles:
@@ -272,6 +288,7 @@ class ModelConfigStore:
         self._save_document(document)
 
     def add(self, name: str, *, copy_from: str | None = None) -> None:
+        """Handle add."""
         self._validate_profile_name(name)
         document = self._load_document()
         _, profiles = self._layout(document)
@@ -286,6 +303,7 @@ class ModelConfigStore:
         self._save_document(document)
 
     def delete(self, name: str) -> None:
+        """Handle delete."""
         document = self._load_document()
         selectors, profiles = self._layout(document)
         if name not in profiles:
@@ -302,6 +320,7 @@ class ModelConfigStore:
         self._save_document(document)
 
     def set(self, *, name: str | None = None, **values: Any) -> None:
+        """Handle set."""
         allowed = {
             "host",
             "id",
@@ -335,6 +354,7 @@ class ModelConfigStore:
         self._save_document(document)
 
     def set_retry(self, *, name: str | None = None, **values: Any) -> None:
+        """Handle set retry."""
         allowed = {
             "max_attempts",
             "request_timeout",
@@ -364,6 +384,7 @@ class ModelConfigStore:
         self._save_document(document)
 
     def set_api_key(self, value: str, *, name: str | None = None) -> None:
+        """Handle set api key."""
         if not value:
             raise ValueError("API key cannot be empty.")
         document, _, profile = self._mutable_profile(name)
@@ -372,15 +393,18 @@ class ModelConfigStore:
         self._save_document(document)
 
     def set_host(self, value: str, *, name: str | None = None) -> None:
+        """Handle set host."""
         self.set(name=name, host=value)
 
     def set_model_id(self, value: str, *, name: str | None = None) -> None:
+        """Handle set model id."""
         self.set(name=name, id=value)
 
     def _mutable_profile(
         self,
         name: str | None,
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Handle mutable profile."""
         document = self._load_document()
         selectors, profiles = self._layout(document)
         selected = name or str(
@@ -393,6 +417,7 @@ class ModelConfigStore:
         return document, selected, profile
 
     def _save_document(self, document: dict[str, Any]) -> None:
+        """Handle save document."""
         self._layout(document)
         models = document["models"]
         assert isinstance(models, dict)
@@ -421,11 +446,13 @@ class ModelConfigStore:
 
     @staticmethod
     def _validate_profile_name(name: str) -> None:
+        """Handle validate profile name."""
         if not isinstance(name, str) or _PROFILE_NAME.fullmatch(name) is None:
             raise ValueError(f"Invalid model profile name: {name!r}")
 
     @staticmethod
     def encrypt_secret(value: str) -> str:
+        """Handle encrypt secret."""
         key = load_encryption_key().encode("ascii")
         return Fernet(key).encrypt(value.encode("utf-8")).decode("ascii")
 
@@ -433,6 +460,7 @@ class ModelConfigStore:
     def decrypt_secret(
         encrypted_value: str,
     ) -> str:
+        """Handle decrypt secret."""
         encryption_key: str = load_encryption_key()
 
         if not encryption_key:
@@ -476,6 +504,7 @@ def _required_profile_string(
     key: str,
     profile: str,
 ) -> str:
+    """Handle required profile string."""
     value = raw.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"'models.{profile}.{key}' must be a non-empty string.")
@@ -487,6 +516,7 @@ def _optional_profile_string(
     key: str,
     profile: str,
 ) -> str | None:
+    """Handle optional profile string."""
     value = raw.get(key)
     if value is None:
         return None
@@ -496,6 +526,7 @@ def _optional_profile_string(
 
 
 def _positive_profile_int(raw: dict[str, Any], key: str, profile: str) -> int:
+    """Handle positive profile int."""
     value = raw.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError(f"'models.{profile}.{key}' must be a positive integer.")
@@ -510,6 +541,7 @@ def _positive_number(
     section: str,
     integer: bool = False,
 ) -> int | float:
+    """Handle positive number."""
     value = raw.get(key, default)
     valid_type = isinstance(value, int) if integer else isinstance(value, (int, float))
     if not valid_type or isinstance(value, bool) or value <= 0:
@@ -524,6 +556,7 @@ def _nonnegative_number(
     *,
     section: str,
 ) -> int | float:
+    """Handle nonnegative number."""
     value = raw.get(key, default)
     if (
         not isinstance(value, (int, float))
@@ -535,6 +568,7 @@ def _nonnegative_number(
 
 
 def _toml_value(value: Any) -> str:
+    """Handle toml value."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -544,6 +578,7 @@ def _toml_value(value: Any) -> str:
     raise ValueError(f"Unsupported model configuration value: {value!r}")
 
 def _config_home() -> Path:
+    """Handle config home."""
     xdg = os.environ.get(
         "XDG_CONFIG_HOME"
     )
@@ -555,6 +590,7 @@ def _config_home() -> Path:
 
 
 def _encryption_key_path() -> Path:
+    """Handle encryption key path."""
     return (
         _config_home()
         / "citra"

@@ -25,6 +25,7 @@ def _write_definition(
     include_diagnostics: bool = False,
     include_line_count: bool = False,
 ) -> ChatCompletionTool:
+    """Handle write definition."""
     properties: list[JsonProperty] = [
         JsonProperty(
             name=path_name,
@@ -287,6 +288,7 @@ class Write(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -342,6 +344,7 @@ class Write(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -354,6 +357,7 @@ class Write(Tool):
     def _path_from_arguments(
         arguments: dict[str, Any],
     ) -> str:
+        """Handle path from arguments."""
         for name in (
             "path",
             "file_path",
@@ -370,6 +374,7 @@ class Write(Tool):
     def _content_from_arguments(
         arguments: dict[str, Any],
     ) -> str:
+        """Handle content from arguments."""
         for name in (
             "content",
             "file_text",
@@ -390,6 +395,7 @@ class Write(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         path = self._path_from_arguments(
             arguments
         )
@@ -419,6 +425,7 @@ class Write(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         path = self._path_from_arguments(
             arguments
         )
@@ -437,4 +444,5 @@ class Write(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         return str(result)

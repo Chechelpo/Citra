@@ -19,6 +19,7 @@ class SessionTool(Tool, ABC):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -27,6 +28,7 @@ class SessionTool(Tool, ABC):
 
     @property
     def session(self) -> AgentSession:
+        """Handle session."""
         return self.__session
 
     def rebind_session(self, session: AgentSession) -> None:

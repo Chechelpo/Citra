@@ -11,10 +11,10 @@ import signal
 import subprocess
 from typing import Iterable, Mapping, Sequence
 
-from citra.config import SandboxPolicy
 from citra.sandbox.sandbox_mode import SandboxMode
 
 if TYPE_CHECKING:
+    from citra.config import SandboxPolicy
     from citra.context import WorkspaceContext
 
 
@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SandboxResult:
+    """Captured result of one foreground sandbox command."""
+
     returncode: int
     output: str
     timed_out: bool
@@ -42,13 +44,18 @@ class WorkspaceSandbox:
 
     def __init__(
         self,
-        workspace: WorkspaceContext,
+        workspace: WorkspaceContext | Path,
         policy: SandboxPolicy,
         *,
         base_environment: Mapping[str, str] | None = None,
     ) -> None:
-        self.__workspace = workspace
-        self.__source = workspace.workspace
+        """Initialize the instance."""
+        self.__workspace = workspace if not isinstance(workspace, Path) else None
+        self.__source = (
+            workspace.resolve()
+            if isinstance(workspace, Path)
+            else workspace.workspace
+        )
         self.__policy = policy
 
         self.__base_environment = dict(
@@ -66,23 +73,35 @@ class WorkspaceSandbox:
             )
 
         self._ensure_filesystem_environment()
+        logger.info(
+            "Workspace sandbox initialized",
+            extra={
+                "origin": __name__,
+                "mode": policy.mode.name,
+                "workspace": str(self.__source),
+            },
+        )
 
     @property
     def source(self) -> Path:
+        """Return the writable copied-project root."""
         return self.__source
 
     @property
     def policy(self) -> SandboxPolicy:
+        """Return the finalized policy consumed by this sandbox."""
         return self.__policy
 
     @property
     def mode(self) -> SandboxMode:
+        """Return the workflow-selected sandbox mode."""
         return self.__policy.mode
 
     def allows_network(
         self,
         requested: bool,
     ) -> bool:
+        """Apply the monotonic operator network restriction."""
         if not isinstance(requested, bool):
             raise TypeError(
                 "requested network access must be boolean"
@@ -93,10 +112,22 @@ class WorkspaceSandbox:
             and not self.__policy.global_disallow_network
         )
 
+    def resolve_command(self, command: str) -> Path | None:
+        """Resolve a discovered or staged command in the isolated runtime."""
+        if self.__workspace is None:
+            return None
+        return self.__workspace.resolve_command(command)
+
     def readonly_binds(self) -> tuple[Path, ...]:
-        return self.__policy.readonly_binds
+        """Return sandbox targets exposed read-only."""
+        return tuple(target for _source, target in self.__policy.readonly_mounts)
+
+    def readonly_mounts(self) -> tuple[tuple[Path, Path], ...]:
+        """Return explicit host-source to sandbox-target read-only mounts."""
+        return self.__policy.readonly_mounts
 
     def writable_binds(self) -> tuple[Path, ...]:
+        """Return same-path writable roots available to sandboxed processes."""
         return tuple(
             dict.fromkeys(
                 (
@@ -107,21 +138,25 @@ class WorkspaceSandbox:
         )
 
     def masked_dirs(self) -> tuple[Path, ...]:
+        """Return host directory targets replaced with empty tmpfs mounts."""
         return tuple(
             self.__policy.masked_host_dirs
         )
 
     def masked_files(self) -> tuple[Path, ...]:
+        """Return host file targets replaced with ``/dev/null``."""
         return tuple(
             self.__policy.masked_host_files
         )
 
     def device_binds(self) -> tuple[Path, ...]:
+        """Return explicitly allowed device bind paths."""
         return tuple(
             self.__policy.extra_device_binds
         )
 
     def private_files(self) -> tuple[Path, ...]:
+        """Return private files masked after other policy mounts."""
         return tuple(
             self.__policy.private_files
         )
@@ -131,7 +166,9 @@ class WorkspaceSandbox:
         base: Mapping[str, str] | None = None,
         *,
         overrides: Mapping[str, str] | None = None,
+        path_prepend: Sequence[str | Path] = (),
     ) -> dict[str, str]:
+        """Build a sanitized process environment with an immutable runtime PATH."""
         environment = dict(
             self.__base_environment
             if base is None
@@ -175,6 +212,12 @@ class WorkspaceSandbox:
                     )
 
         environment["CITRA_PROJECT_ROOT"] = str(self.__source)
+        if "PATH" in self.__base_environment:
+            canonical_path = self.__base_environment["PATH"]
+            validated = self._validated_path_prepend(path_prepend)
+            environment["PATH"] = os.pathsep.join(
+                (*validated, canonical_path)
+            )
         environment.pop("CITRA_SOURCE", None)
         environment.pop("CITRA_WORKSPACE", None)
 
@@ -183,11 +226,13 @@ class WorkspaceSandbox:
     def iter_readonly_binds(
         self,
     ) -> Iterable[Path]:
+        """Iterate read-only sandbox targets."""
         yield from self.readonly_binds()
 
     def iter_writable_binds(
         self,
     ) -> Iterable[Path]:
+        """Iterate writable sandbox targets."""
         yield from self.writable_binds()
 
     def build_bwrap_arguments(
@@ -290,10 +335,10 @@ class WorkspaceSandbox:
             for path in policy.masked_host_files
             if path.is_file()
         )
-        readonly_binds = _minimal_readonly_binds(
-            path
-            for path in policy.readonly_binds
-            if path.exists()
+        readonly_mounts = _minimal_readonly_mounts(
+            mount
+            for mount in policy.readonly_mounts
+            if mount[0].exists()
         )
         writable_binds = tuple(
             path
@@ -344,7 +389,7 @@ class WorkspaceSandbox:
         args.extend(
             _mount_parent_arguments(
                 (
-                    *readonly_binds,
+                    *(target for _source, target in readonly_mounts),
                     *writable_binds,
                     *device_binds,
                     *private_files,
@@ -352,12 +397,12 @@ class WorkspaceSandbox:
             )
         )
 
-        for path in _parents_first(readonly_binds):
+        for source, target in readonly_mounts:
             args.extend(
                 (
                     "--ro-bind",
-                    str(path),
-                    str(path),
+                    str(source),
+                    str(target),
                 )
             )
 
@@ -456,8 +501,9 @@ class WorkspaceSandbox:
             overrides=environment,
         )
 
+        resolved_command = self._resolve_command(command)
         bwrap_command = self.build_bwrap_arguments(
-            command=command,
+            command=resolved_command,
             cwd=cwd_path,
             network=network,
         )
@@ -465,6 +511,7 @@ class WorkspaceSandbox:
         logger.debug(
             "Starting Bubblewrap command with %d argument(s).",
             len(bwrap_command),
+            extra={"origin": __name__, "command": resolved_command[0]},
         )
 
         process = subprocess.Popen(
@@ -522,6 +569,7 @@ class WorkspaceSandbox:
         cwd: str | Path | None = None,
         network: bool = False,
         environment: Mapping[str, str] | None = None,
+        path_prepend: Sequence[str | Path] = (),
     ) -> subprocess.Popen[bytes]:
         """Start a long-running sandboxed process owned by its caller."""
         if not command:
@@ -548,9 +596,13 @@ class WorkspaceSandbox:
                 f"Sandbox working directory is outside writable roots: {cwd_path}"
             )
 
-        env = self.build_environment(overrides=environment)
+        env = self.build_environment(
+            overrides=environment,
+            path_prepend=path_prepend,
+        )
+        resolved_command = self._resolve_command(command)
         bwrap_command = self.build_bwrap_arguments(
-            command=command,
+            command=resolved_command,
             cwd=cwd_path,
             network=self.allows_network(network),
         )
@@ -633,20 +685,37 @@ class WorkspaceSandbox:
         filesystem aliases.
         """
 
+        if self.__workspace is not None:
+            environment = self.__workspace.environment()
+            names = (
+                "HOME",
+                "CITRA_TMP",
+                "CITRA_CACHE",
+                "CITRA_ENV",
+                "CITRA_RUNTIME",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_RUNTIME_DIR",
+            )
+            return {name: environment[name] for name in names}
         runtime_root = self.__source / ".citra-runtime"
-
         return {
             "HOME": str(runtime_root / "home"),
             "CITRA_TMP": str(runtime_root / "tmp"),
             "CITRA_CACHE": str(runtime_root / "cache"),
+            "CITRA_ENV": str(runtime_root / "env"),
+            "CITRA_RUNTIME": str(runtime_root / "runtime"),
             "XDG_CONFIG_HOME": str(runtime_root / "config"),
             "XDG_DATA_HOME": str(runtime_root / "data"),
-            "XDG_RUNTIME_DIR": str(runtime_root / "runtime"),
+            "XDG_RUNTIME_DIR": str(runtime_root / "run"),
         }
 
     def _ensure_filesystem_environment(
         self,
     ) -> None:
+        """Create fallback worker directories for path-only sandbox fixtures."""
+        if self.__workspace is not None:
+            return
         runtime_root = self.__source / ".citra-runtime"
 
         for directory in (
@@ -655,12 +724,49 @@ class WorkspaceSandbox:
             runtime_root / "cache",
             runtime_root / "config",
             runtime_root / "data",
-            runtime_root / "runtime",
+            runtime_root / "run",
         ):
             directory.mkdir(
                 parents=True,
                 exist_ok=True,
             )
+
+    def _resolve_command(self, command: Sequence[str]) -> tuple[str, ...]:
+        """Resolve a bare executable through the canonical runtime launcher."""
+        normalized = tuple(str(argument) for argument in command)
+        executable = normalized[0]
+        if "/" in executable or self.__workspace is None:
+            return normalized
+        resolved = self.resolve_command(executable)
+        if resolved is None:
+            logger.warning(
+                "Command is not present in the isolated runtime",
+                extra={"origin": __name__, "command": executable},
+            )
+            return normalized
+        return (str(resolved), *normalized[1:])
+
+    def _validated_path_prepend(
+        self,
+        entries: Sequence[str | Path],
+    ) -> tuple[str, ...]:
+        """Allow PATH extensions only from runtime or writable data roots."""
+        validated: list[str] = []
+        allowed = self.writable_binds()
+        for raw in entries:
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.__source / candidate
+            candidate = candidate.absolute()
+            if candidate == Path("/runtime") or _is_within(Path("/runtime"), candidate):
+                validated.append(str(candidate))
+                continue
+            if not any(_is_within(root, candidate) for root in allowed):
+                raise ValueError(
+                    f"PATH entry is outside the isolated runtime: {candidate}"
+                )
+            validated.append(str(candidate))
+        return tuple(dict.fromkeys(validated))
 
 def _minimal_readonly_binds(paths: Iterable[Path]) -> tuple[Path, ...]:
     """Remove read-only binds already covered by a directory bind."""
@@ -675,6 +781,22 @@ def _minimal_readonly_binds(paths: Iterable[Path]) -> tuple[Path, ...]:
         result.append(path)
 
     return tuple(result)
+
+
+def _minimal_readonly_mounts(
+    mounts: Iterable[tuple[Path, Path]],
+) -> tuple[tuple[Path, Path], ...]:
+    """Deduplicate mounts and order parent targets before descendants."""
+    unique = dict.fromkeys(
+        (source.absolute(), target.absolute())
+        for source, target in mounts
+    )
+    return tuple(
+        sorted(
+            unique,
+            key=lambda item: (len(item[1].parts), str(item[1]), str(item[0])),
+        )
+    )
 
 def _parents_first(paths: Iterable[Path]) -> tuple[Path, ...]:
     """Return unique mount paths with parents ordered before descendants."""
@@ -714,6 +836,7 @@ def _mount_parent_arguments(paths: Iterable[Path]) -> tuple[str, ...]:
 
 
 def _is_within(root: Path, path: Path) -> bool:
+    """Handle is within."""
     try:
         path.relative_to(root)
     except ValueError:

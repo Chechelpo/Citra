@@ -93,6 +93,7 @@ class Commit(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -105,6 +106,7 @@ class Commit(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(context)
 
 
@@ -112,12 +114,14 @@ class Commit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Return whether is cacheable."""
         return arguments.get("action") in {"status", "diff"}
 
     def invalidates_tool_cache(
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Handle invalidates tool cache."""
         return arguments.get("action") not in {"status", "diff"}
 
     @override
@@ -125,6 +129,7 @@ class Commit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         action: str = arguments["action"]
         changes = self.context.workspace.changes
         if changes is None:
@@ -222,6 +227,7 @@ class Commit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
 
@@ -245,6 +251,7 @@ class Commit(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if not text:
@@ -257,6 +264,7 @@ class Commit(Tool):
     def _required_paths(
         arguments: dict[str, Any],
     ) -> list[str]:
+        """Handle required paths."""
         paths = arguments.get("paths")
 
         if not paths:
@@ -271,6 +279,7 @@ class Commit(Tool):
         arguments: dict[str, Any],
         *names: str,
     ) -> None:
+        """Handle reject unused."""
         supplied = [
             name
             for name in names

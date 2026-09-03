@@ -33,6 +33,7 @@ def terminal_bell(stream: TextIO | None = None) -> None:
 
 
 def separator() -> str:
+    """Handle separator."""
     try:
         width = os.get_terminal_size().columns
     except OSError:

@@ -15,6 +15,7 @@ from ._tool_config import (
 
 
 def _config_path() -> Path:
+    """Handle config path."""
     raw = os.environ.get("CITRA_CONFIG_PATH")
     if not raw:
         raise RuntimeError("CITRA_CONFIG_PATH is not defined.")
@@ -22,6 +23,7 @@ def _config_path() -> Path:
 
 
 def get_config() -> CitraConfig:
+    """Return get config."""
     return CitraConfig.load(_config_path())
 
 

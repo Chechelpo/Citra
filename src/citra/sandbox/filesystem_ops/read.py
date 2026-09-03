@@ -26,6 +26,7 @@ class ReadSlice:
     limit: int | None = None
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if not isinstance(self.offset, int) or self.offset < 0:
             raise ValueError("'offset' must be a non-negative integer.")
         if self.limit is not None and (
@@ -35,6 +36,7 @@ class ReadSlice:
 
     @classmethod
     def parse(cls, value: Any, *, index: int | None = None) -> "ReadSlice":
+        """Handle parse."""
         label = "request" if index is None else f"requests[{index}]"
 
         if not isinstance(value, dict):
@@ -55,6 +57,7 @@ class ReadSlice:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert the value to dict."""
         result: dict[str, Any] = {
             "path": self.path,
             "offset": self.offset,
@@ -76,6 +79,7 @@ class ReadEntry:
 
     @classmethod
     def from_payload(cls, payload: Any) -> "ReadEntry":
+        """Create an instance from payload."""
         if not isinstance(payload, dict):
             raise ValueError("Read output entry must be a JSON object.")
 
@@ -96,6 +100,7 @@ class ReadEntry:
         )
 
     def to_payload(self) -> dict[str, Any]:
+        """Convert the value to payload."""
         return {
             "path": self.path,
             "content": self.content,
@@ -112,6 +117,7 @@ class ReadOutput(FilesystemOutput):
 
     @classmethod
     def from_payload(cls, payload: Any) -> "ReadOutput":
+        """Create an instance from payload."""
         raw = require_payload_dict(payload)
 
         entries = raw.get("entries")
@@ -132,6 +138,7 @@ class ReadOutput(FilesystemOutput):
         )
 
     def to_payload(self) -> dict[str, Any]:
+        """Convert the value to payload."""
         return {
             "entries": [
                 entry.to_payload()
@@ -141,6 +148,7 @@ class ReadOutput(FilesystemOutput):
         }
 
     def render(self) -> str:
+        """Handle render."""
         outputs = [
             f"===== {entry.path} =====\n{entry.content}"
             for entry in self.entries
@@ -167,6 +175,7 @@ class ReadInput(FilesystemInput[ReadOutput]):
     single_path: bool = False
 
     def __post_init__(self) -> None:
+        """Validate batch cardinality and single-path consistency."""
         if not self.requests:
             raise ValueError("'requests' must not be empty.")
 
@@ -179,3 +188,80 @@ class ReadInput(FilesystemInput[ReadOutput]):
             raise ValueError(
                 "A single-path read must contain exactly one request."
             )
+
+    @classmethod
+    def parse(cls, arguments: dict[str, Any]) -> "ReadInput":
+        """Parse either one top-level path or a batch of read requests."""
+        if not isinstance(arguments, dict):
+            raise ValueError("Filesystem arguments must be a JSON object.")
+        has_path = "path" in arguments
+        has_requests = "requests" in arguments
+        if has_path == has_requests:
+            raise ValueError("Provide exactly one of 'path' or 'requests'.")
+        if has_path:
+            request = ReadSlice.parse(arguments)
+            return cls(requests=(request,), single_path=True)
+        raw_requests = arguments.get("requests")
+        if not isinstance(raw_requests, list):
+            raise ValueError("'requests' must be an array.")
+        return cls(
+            requests=tuple(
+                ReadSlice.parse(request, index=index)
+                for index, request in enumerate(raw_requests)
+            ),
+            single_path=False,
+        )
+
+    def to_arguments(self) -> dict[str, Any]:
+        """Serialize the normalized read request for the worker protocol."""
+        if self.single_path:
+            return self.requests[0].to_dict()
+        return {"requests": [request.to_dict() for request in self.requests]}
+
+
+def execute(order: ReadInput, fs: ScopedFilesystem) -> ReadOutput:
+    """Read scoped literal paths or glob matches without following directories."""
+    entries: list[ReadEntry] = []
+    single_literal = order.single_path and not globlib.has_magic(order.requests[0].path)
+    for request in order.requests:
+        resolved_pattern = fs.resolve_path(request.path)
+        if globlib.has_magic(request.path):
+            matches = tuple(
+                Path(value)
+                for value in sorted(
+                    globlib.glob(str(resolved_pattern), recursive=True)
+                )
+            )
+        else:
+            matches = (resolved_pattern,)
+        for path in matches:
+            allowed = fs.require_allowed_path(path)
+            if not allowed.is_file():
+                if single_literal:
+                    raise FileNotFoundError(
+                        f"File not found: {fs.display_path(allowed)}"
+                    )
+                continue
+            text = allowed.read_text(encoding="utf-8", errors="strict")
+            selected = request.offset != 0 or request.limit is not None
+            if selected:
+                lines = text.splitlines(keepends=True)
+                stop = (
+                    None
+                    if request.limit is None
+                    else request.offset + request.limit
+                )
+                text = "".join(lines[request.offset:stop])
+            entries.append(
+                ReadEntry(
+                    path=fs.display_path(allowed),
+                    content=text,
+                    selected=selected,
+                )
+            )
+    _logger.info(
+        "Filesystem read completed",
+        requests=len(order.requests),
+        files=len(entries),
+    )
+    return ReadOutput(entries=tuple(entries), single_literal=single_literal)

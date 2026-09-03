@@ -3,20 +3,20 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 import os
 import re
 import shutil
 import subprocess
 
 
+logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CommandCapability:
     """One useful CLI capability with commands ordered by preference."""
 
     name: str
     commands: tuple[str, ...]
-
-
 @dataclass(frozen=True)
 class CommandGroup:
     """Related model-facing command capabilities."""
@@ -29,7 +29,8 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         name="Filesystem",
         capabilities=(
-            CommandCapability("shell", ("bash",)),
+            CommandCapability("shell", ("bash", "sh")),
+            CommandCapability("working directory", ("pwd",)),
             CommandCapability("list", ("ls",)),
             CommandCapability("find files", ("fd", "find")),
             CommandCapability("inspect file", ("file",)),
@@ -40,6 +41,12 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
             ),
             CommandCapability("copy", ("cp",)),
             CommandCapability("move", ("mv",)),
+            CommandCapability("remove", ("rm", "rmdir")),
+            CommandCapability("link", ("ln",)),
+            CommandCapability("permissions", ("chmod", "chown")),
+            CommandCapability("install file", ("install",)),
+            CommandCapability("temporary file", ("mktemp",)),
+            CommandCapability("path components", ("basename", "dirname")),
             CommandCapability(
                 "create directory",
                 ("mkdir",),
@@ -57,6 +64,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         name="Text / data",
         capabilities=(
+            CommandCapability("output", ("printf", "echo", "tee")),
             CommandCapability(
                 "search text",
                 ("rg", "grep"),
@@ -85,6 +93,9 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
             CommandCapability("JSON", ("jq",)),
             CommandCapability("YAML", ("yq",)),
             CommandCapability("XML", ("xmllint",)),
+            CommandCapability("compare", ("diff", "cmp")),
+            CommandCapability("patch", ("patch",)),
+            CommandCapability("encoding", ("base64",)),
         ),
     ),
     CommandGroup(
@@ -355,6 +366,15 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         ),
     ),
     CommandGroup(
+        name="Version control / network",
+        capabilities=(
+            CommandCapability("version control", ("git",)),
+            CommandCapability("HTTP client", ("curl", "wget")),
+            CommandCapability("secure shell", ("ssh", "scp")),
+            CommandCapability("TLS", ("openssl",)),
+        ),
+    ),
+    CommandGroup(
         name="Archives",
         capabilities=(
             CommandCapability(
@@ -392,6 +412,11 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         name="System inspection",
         capabilities=(
+            CommandCapability("identity", ("id", "whoami")),
+            CommandCapability("clock", ("date",)),
+            CommandCapability("delay", ("sleep",)),
+            CommandCapability("signals", ("kill",)),
+            CommandCapability("status commands", ("true", "false")),
             CommandCapability(
                 "processes",
                 ("ps",),
@@ -463,21 +488,34 @@ class RuntimeDiscoveryResult:
 
     ``available_commands`` contains only commands whose entry points were
     found and included in that closure.
+
+    ``command_paths`` records each unresolved entry-point spelling so
+    provisioning can create deterministic launchers below ``/runtime/bin``.
     """
 
     readonly_binds: tuple[Path, ...] = ()
     available_commands: tuple[str, ...] = ()
+    command_paths: tuple[tuple[str, Path], ...] = ()
 
     def has_command(
         self,
         command: str,
     ) -> bool:
+        """Return whether discovery exposed ``command``."""
         return command in self.available_commands
+
+    def executable(self, command: str) -> Path | None:
+        """Return the unresolved host entry point for ``command``."""
+        for name, path in self.command_paths:
+            if name == command:
+                return path
+        return None
 
     def preferred_command(
         self,
         capability: CommandCapability,
     ) -> str | None:
+        """Return the first available command for one capability."""
         for command in capability.commands:
             if command in self.available_commands:
                 return command
@@ -554,8 +592,14 @@ class StandardDiscovery(RuntimeDiscovery):
     def discover(
         cls,
     ) -> RuntimeDiscoveryResult:
+        """Discover entry points and their executable dependency closure."""
+        logger.debug(
+            "Starting command runtime discovery",
+            extra={"origin": __name__, "discovery": cls.__name__},
+        )
         readonly_binds: set[Path] = set()
         available_commands: list[str] = []
+        command_paths: list[tuple[str, Path]] = []
 
         for command in cls.commands:
             executable = cls._resolve_command(
@@ -579,8 +623,9 @@ class StandardDiscovery(RuntimeDiscovery):
             available_commands.append(
                 command
             )
+            command_paths.append((command, executable))
 
-        return RuntimeDiscoveryResult(
+        result = RuntimeDiscoveryResult(
             readonly_binds=tuple(
                 sorted(
                     readonly_binds,
@@ -590,13 +635,25 @@ class StandardDiscovery(RuntimeDiscovery):
             available_commands=tuple(
                 available_commands
             ),
+            command_paths=tuple(command_paths),
         )
+        logger.info(
+            "Command runtime discovery completed",
+            extra={
+                "origin": __name__,
+                "discovery": cls.__name__,
+                "commands": len(result.command_paths),
+                "paths": len(result.readonly_binds),
+            },
+        )
+        return result
 
     @classmethod
     def _discover_command_binds(
         cls,
         executable: Path,
     ) -> set[Path]:
+        """Return the executable, interpreter, prefix, and ELF closure."""
         result: set[Path] = set()
 
         symlink_chain = cls._resolve_symlink_chain(
@@ -680,9 +737,9 @@ class StandardDiscovery(RuntimeDiscovery):
             if target.is_absolute():
                 current = target
             else:
-                current = (
-                    current.parent / target
-                ).absolute()
+                current = Path(
+                    os.path.abspath(current.parent / target)
+                )
 
         return result
 
@@ -740,6 +797,7 @@ class StandardDiscovery(RuntimeDiscovery):
     def _read_shebang_interpreter(
         executable: Path,
     ) -> Path | None:
+        """Resolve a script interpreter, including ``env -S`` shebangs."""
         try:
             with executable.open(
                 "rb"
@@ -767,7 +825,12 @@ class StandardDiscovery(RuntimeDiscovery):
         if not shebang:
             return None
 
-        parts = shebang.split()
+        try:
+            import shlex
+
+            parts = shlex.split(shebang)
+        except ValueError:
+            return None
 
         if not parts:
             return None
@@ -775,13 +838,15 @@ class StandardDiscovery(RuntimeDiscovery):
         interpreter = parts[0]
 
         # Handle "#!/usr/bin/env python".
-        if (
-            Path(interpreter).name == "env"
-            and len(parts) >= 2
-        ):
-            resolved = shutil.which(
-                parts[1]
-            )
+        if Path(interpreter).name == "env":
+            command_parts = parts[1:]
+            if command_parts[:1] == ["-S"]:
+                command_parts = command_parts[1:]
+            while command_parts and command_parts[0].startswith("-"):
+                command_parts = command_parts[1:]
+            if not command_parts:
+                return None
+            resolved = shutil.which(command_parts[0])
 
             if resolved is None:
                 return None
@@ -806,6 +871,7 @@ class StandardDiscovery(RuntimeDiscovery):
     def _is_native_executable(
         path: Path,
     ) -> bool:
+        """Handle is native executable."""
         try:
             with path.open(
                 "rb"
@@ -826,6 +892,7 @@ class StandardDiscovery(RuntimeDiscovery):
     def _is_system_prefix(
         path: Path,
     ) -> bool:
+        """Handle is system prefix."""
         for root in (
             Path("/usr"),
             Path("/bin"),
@@ -846,13 +913,7 @@ class StandardDiscovery(RuntimeDiscovery):
     def _discover_shared_dependencies(
         executable: Path,
     ) -> set[Path]:
-        """
-        Discover ELF dependencies using ldd.
-
-        Both ``foo => /path/foo`` and direct loader lines such as
-        ``/lib64/ld-linux-x86-64.so.2 (...)`` are handled.
-        """
-
+        """Return shared libraries and the dynamic loader reported by ``ldd``."""
         result: set[Path] = set()
 
         try:
@@ -872,6 +933,10 @@ class StandardDiscovery(RuntimeDiscovery):
             OSError,
             subprocess.TimeoutExpired,
         ):
+            logger.debug(
+                "Runtime dependency inspection unavailable",
+                extra={"origin": __name__, "executable": str(executable)},
+            )
             return result
 
         if process.returncode != 0:
@@ -901,6 +966,7 @@ _LDD_DIRECT_PATH = re.compile(
 def _ldd_path(
     line: str,
 ) -> Path | None:
+    """Extract one absolute library path from an ``ldd`` output line."""
     if "=>" in line:
         _, value = line.split(
             "=>",

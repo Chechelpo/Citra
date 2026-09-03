@@ -18,6 +18,7 @@ def _glob_definition(
     path_name: str,
     description: str,
 ) -> ChatCompletionTool:
+    """Handle glob definition."""
     return ChatCompletionTool(
         function=FunctionDefinition(
             name=name,
@@ -52,6 +53,7 @@ def _glob_definition(
 
 
 class Glob(Tool):
+    """Represent Glob."""
     CACHEABLE = True
     INVALIDATES_TOOL_CACHE = False
 
@@ -225,6 +227,7 @@ class Glob(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -283,6 +286,7 @@ class Glob(Tool):
     def _normalize_arguments(
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        """Handle normalize arguments."""
         pattern = arguments.get(
             "pattern",
             arguments.get("pattern"),
@@ -311,6 +315,7 @@ class Glob(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         return self.context.filesystem.execute(
             GlobInput.parse(arguments)
         ).to_budgeted(model_id=self.context.model_config().id, token_count=4_000)
@@ -324,6 +329,7 @@ class Glob(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         normalized = self._normalize_arguments(
             arguments
         )
@@ -350,6 +356,7 @@ class Glob(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if not text or text == "none":

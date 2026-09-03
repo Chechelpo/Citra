@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 class Language(str, Enum):
+    """Represent Language."""
     PYTHON = "python"
     JAVASCRIPT = "javascript"
     TYPESCRIPT = "typescript"
@@ -31,10 +32,12 @@ class Language(str, Enum):
 
     @property
     def file_extensions(self) -> tuple[str, ...]:
+        """Handle file extensions."""
         return _EXTENSIONS[self]
 
     @property
     def language_id(self) -> str:
+        """Handle language id."""
         return _LANGUAGE_IDS[self]
 
 
@@ -116,6 +119,7 @@ IMPLEMENTED_LANGUAGES: frozenset[Language] = frozenset(_LANGUAGE_SERVERS)
 
 
 def _extension_to_language() -> dict[str, Language]:
+    """Handle extension to language."""
     mapping: dict[str, Language] = {}
     for language, exts in _EXTENSIONS.items():
         for ext in exts:
@@ -133,6 +137,7 @@ def detect_language(path: str | Path) -> Language | None:
 
 
 def language_for_extension(extension: str) -> Language | None:
+    """Handle language for extension."""
     ext = extension.casefold()
     if not ext.startswith("."):
         ext = "." + ext
@@ -140,10 +145,12 @@ def language_for_extension(extension: str) -> Language | None:
 
 
 def language_for_path(path: str | Path) -> Language | None:
+    """Handle language for path."""
     return detect_language(path)
 
 
 def language_id_for_path(path: str | Path, language: Language) -> str:
+    """Handle language id for path."""
     suffix = Path(path).suffix.casefold()
     if suffix == ".tsx":
         return "typescriptreact"
@@ -153,14 +160,17 @@ def language_id_for_path(path: str | Path, language: Language) -> str:
 
 
 def is_supported_source_file(path: str | Path) -> bool:
+    """Return whether is supported source file."""
     return detect_language(path) in IMPLEMENTED_LANGUAGES
 
 
 def supports_language(language: Language) -> bool:
+    """Handle supports language."""
     return language in IMPLEMENTED_LANGUAGES
 
 
 def server_for_language(language: Language) -> str:
+    """Handle server for language."""
     try:
         return _LANGUAGE_SERVERS[language]
     except KeyError as error:

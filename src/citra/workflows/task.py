@@ -70,6 +70,7 @@ class TaskWorkflow(StaticWorkflow):
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
+        """Return get system prompt."""
         environment: EnvironmentInfo = collect_environment(context)
         initial_tree = render_tree(
             workspace=context.workspace,

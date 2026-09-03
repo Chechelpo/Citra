@@ -47,6 +47,7 @@ _LAZY_EXPORTS = {
 
 
 def __getattr__(name: str):
+    """Handle getattr."""
     if name in _LAZY_EXPORTS:
         import importlib
 

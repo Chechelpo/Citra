@@ -28,6 +28,7 @@ class SteeringInbox:
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._messages: deque[str] = deque()
         self._lock = Lock()
 
@@ -83,6 +84,7 @@ class SteeringInbox:
             self._messages.clear()
 
     def __len__(self) -> int:
+        """Handle len."""
         with self._lock:
             return len(
                 self._messages

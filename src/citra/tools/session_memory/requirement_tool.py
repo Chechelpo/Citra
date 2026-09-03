@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RequirementExtract:
+    """Represent RequirementExtract."""
     id: int
     content: str
     satisfied: bool = False
@@ -107,6 +108,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (ToolDefinition(definition=cls.DEFINITION),)
 
@@ -115,6 +117,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(context=context, session=session)
         self._extracts: list[RequirementExtract] = []
         self._next_id = 1
@@ -122,14 +125,17 @@ class RequirementTool(MemoryTool[RequirementExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Requirements"
 
     @override
     def get_extracts(self) -> list[RequirementExtract]:
+        """Return get extracts."""
         return list(self._extracts)
 
     @override
     def format_extract(self, extract: RequirementExtract) -> str:
+        """Handle format extract."""
         mark = "x" if extract.satisfied else " "
         text = f"- [{mark}] [R{extract.id}] {extract.content}"
         if extract.evidence:
@@ -138,13 +144,16 @@ class RequirementTool(MemoryTool[RequirementExtract]):
 
     @override
     def should_offer_documentation(self) -> bool:
+        """Return whether should offer documentation."""
         return bool(self._extracts)
 
     def has_unsatisfied_requirements(self) -> bool:
+        """Return whether has unsatisfied requirements."""
         return any(not item.satisfied for item in self._extracts)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -159,6 +168,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         raise ValueError(f"Unsupported requirement action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         self._reject(arguments, ("id", "ids", "evidence"), action="add")
         content = arguments.get("content")
         contents = arguments.get("contents")
@@ -182,6 +192,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         return f"Added {len(added)} requirements {self._format_ids(added)}."
 
     def _update(self, arguments: dict[str, Any]) -> str:
+        """Handle update."""
         self._reject(arguments, ("contents", "ids", "evidence"), action="update")
         requirement_id = arguments.get("id")
         if requirement_id is None:
@@ -206,6 +217,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         *,
         satisfied: bool,
     ) -> str:
+        """Handle set satisfied."""
         action = "satisfy" if satisfied else "reopen"
         self._reject(arguments, ("content", "contents"), action=action)
         if not satisfied and arguments.get("evidence") is not None:
@@ -228,6 +240,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         return f"{verb} requirements {self._format_raw_ids(ids)}."
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         self._reject(
             arguments,
             ("content", "contents", "evidence"),
@@ -243,6 +256,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         return f"Removed requirements {self._format_raw_ids(ids)}."
 
     def _get_ids(self, arguments: dict[str, Any], *, action: str) -> list[int]:
+        """Handle get ids."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None and multiple is not None:
@@ -255,6 +269,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         return list(ids)
 
     def _find_index(self, requirement_id: int) -> int:
+        """Handle find index."""
         for index, item in enumerate(self._extracts):
             if item.id == requirement_id:
                 return index
@@ -267,6 +282,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
         *,
         action: str,
     ) -> None:
+        """Handle reject."""
         invalid = [name for name in names if arguments.get(name) is not None]
         if invalid:
             rendered = ", ".join(f"'{name}'" for name in invalid)
@@ -276,14 +292,17 @@ class RequirementTool(MemoryTool[RequirementExtract]):
 
     @staticmethod
     def _format_ids(items: list[RequirementExtract]) -> str:
+        """Handle format ids."""
         return RequirementTool._format_raw_ids([item.id for item in items])
 
     @staticmethod
     def _format_raw_ids(ids: list[int]) -> str:
+        """Handle format raw ids."""
         return "[" + ", ".join(f"R{item}" for item in ids) + "]"
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         return f"action={action}"
 

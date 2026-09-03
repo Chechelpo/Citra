@@ -1,82 +1,91 @@
+"""Translate modular host discovery into sandbox runtime assets.
+
+The same discovery result drives both modes. ``FULL_SANDBOX`` copies every
+discovered runtime root into ``/runtime/rootfs`` and exposes copied
+compatibility paths. ``PARTIAL_SANDBOX`` exposes the corresponding host roots
+through read-only mounts. Both modes publish commands exclusively through
+``/runtime/bin``.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import logging
 import os
 from pathlib import Path, PurePosixPath
-import shutil
-import sys
-from typing import TYPE_CHECKING
+from typing import Iterable
 
-from .runtime import CopyPolicy, RuntimeAsset, ToolDefinition
-
-
-_DEFAULT_COMMANDS = (
-    "bash",
-    "git",
-    "python3",
-    "python",
-    "node",
-    "npm",
-    "npx",
+from citra.config.runtime_discovery import (
+    RuntimeDiscoveryResult,
+    aggregate_results,
+    get_ro_binds,
 )
+from citra.sandbox.sandbox_mode import SandboxMode
+
+from .workspace_context.runtime import CopyPolicy, RuntimeAsset, ToolDefinition
 
 
-def default_tool_definitions() -> tuple[ToolDefinition, ...]:
-    """Declare the small host command set required by built-in tools.
+logger = logging.getLogger(__name__)
 
-    Commands are exposed as explicit read-only assets so availability checks
-    and the runtime manifest describe the same executable paths the sandbox
-    will use. Missing optional commands remain unavailable without preventing
-    startup.
-    """
+
+def discover_host_runtime() -> RuntimeDiscoveryResult:
+    """Run and aggregate every registered runtime discovery object."""
+    return aggregate_results(get_ro_binds())
+
+
+def default_tool_definitions(
+    *,
+    mode: SandboxMode = SandboxMode.FULL_SANDBOX,
+    discovery: RuntimeDiscoveryResult | None = None,
+) -> tuple[ToolDefinition, ...]:
+    """Create one declarative tool definition per discovered host command."""
+    result = discovery or discover_host_runtime()
+    assets = _discovered_assets(mode=mode, discovery=result)
     definitions: list[ToolDefinition] = []
-    for command in _DEFAULT_COMMANDS:
-        discovered = shutil.which(command)
-        source = (
-            Path(discovered).absolute()
-            if discovered is not None
-            else Path("/__citra_missing_commands__") / command
-        )
-        asset_id = f"host-command:{command}"
-        asset = RuntimeAsset(
-            id=asset_id,
-            source=source,
-            destination=PurePosixPath("commands") / command,
-            policy=CopyPolicy.BIND_ONLY,
-            required=False,
-            bind_target=source,
-            priority=300,
-        )
+    for command, executable in result.command_paths:
+        asset = _containing_asset(executable, assets)
+        if asset is None:
+            logger.error(
+                "Discovered command has no runtime asset",
+                extra={
+                    "origin": __name__,
+                    "command": command,
+                    "executable": str(executable),
+                },
+            )
+            continue
         definitions.append(
             ToolDefinition(
                 id=f"command:{command}",
                 commands=(command,),
                 assets=(asset,),
-                command_assets={command: asset_id},
-                health_check=("{executable}", "--version"),
+                command_assets={command: asset.id},
+                command_sources={command: executable},
+                health_check=None,
             )
         )
+    logger.info(
+        "Runtime command definitions created",
+        extra={"origin": __name__, "mode": mode.name, "count": len(definitions)},
+    )
     return tuple(definitions)
+
 
 def default_runtime_assets(
     *,
+    mode: SandboxMode = SandboxMode.FULL_SANDBOX,
+    discovery: RuntimeDiscoveryResult | None = None,
     browser_path: str | Path | None = None,
 ) -> tuple[RuntimeAsset, ...]:
-    """Declare narrow immutable host compatibility assets.
-
-    These replace the historical blanket read-only bind of ``/``.  They are
-    deliberately recorded in the runtime manifest even when their policy is
-    bind-only, so the effective filesystem can be diagnosed precisely.
-    """
-    assets: list[RuntimeAsset] = []
-    candidates: list[tuple[str, Path, bool]] = [
-        ("os-usr", Path("/usr"), True),
-        ("os-bin", Path("/bin"), True),
-        ("os-lib", Path("/lib"), False),
-        ("os-lib64", Path("/lib64"), False),
+    """Declare discovered runtimes plus Citra and platform compatibility data."""
+    result = discovery or discover_host_runtime()
+    assets = list(_discovered_assets(mode=mode, discovery=result))
+    policy = _copy_policy(mode)
+    compatibility: list[tuple[str, Path, bool]] = [
+        ("citra-package", Path(__file__).resolve().parents[2], True),
         ("etc-ssl", Path("/etc/ssl"), False),
         ("etc-ca-certificates", Path("/etc/ca-certificates"), False),
-        ("etc-alternatives", Path("/etc/alternatives"), False),
+        ("usr-share-ca-certificates", Path("/usr/share/ca-certificates"), False),
         ("etc-passwd", Path("/etc/passwd"), False),
         ("etc-group", Path("/etc/group"), False),
         ("etc-nsswitch", Path("/etc/nsswitch.conf"), False),
@@ -84,73 +93,177 @@ def default_runtime_assets(
         ("etc-ld-conf", Path("/etc/ld.so.conf"), False),
         ("etc-ld-conf-d", Path("/etc/ld.so.conf.d"), False),
         ("etc-hosts", Path("/etc/hosts"), False),
+        ("etc-resolv", Path("/etc/resolv.conf"), False),
         ("etc-localtime", Path("/etc/localtime"), False),
     ]
-
-    install_root = os.environ.get("CITRA_INSTALL_ROOT")
-    inferred_install = Path(__file__).resolve().parents[3]
-    candidates.append(
-        (
-            "citra-install",
-            Path(install_root).expanduser() if install_root else inferred_install,
-            True,
-        )
-    )
-    candidates.append(("citra-python-prefix", Path(sys.prefix), True))
-    if Path(sys.base_prefix) != Path(sys.prefix):
-        candidates.append(
-            ("citra-python-base-prefix", Path(sys.base_prefix), True)
-        )
-
-    for asset_id, source, required in candidates:
-        absolute = source.absolute()
+    for asset_id, source, required in compatibility:
+        absolute = source.expanduser().absolute()
+        if not absolute.exists():
+            continue
+        copy_source = absolute.resolve() if absolute.is_symlink() else absolute
         assets.append(
             RuntimeAsset(
                 id=asset_id,
-                source=absolute,
-                destination=PurePosixPath("compat") / asset_id,
-                policy=CopyPolicy.BIND_ONLY,
+                source=copy_source,
+                destination=_mirrored_destination(copy_source),
+                policy=(
+                    policy
+                    if required or mode is SandboxMode.PARTIAL_SANDBOX
+                    else CopyPolicy.OPTIONAL
+                ),
                 required=required,
                 bind_target=absolute,
-                priority=200,
+                priority=250 if required else 80,
             )
         )
-
-    if browser_path is not None:
-        expanded = Path(browser_path).expanduser().absolute()
-        assets.append(
-            RuntimeAsset(
-                id="playwright-browsers",
-                source=expanded,
-                destination=PurePosixPath("browsers/playwright"),
-                policy=CopyPolicy.COPY_OR_BIND,
-                required=False,
-                bind_target=expanded,
-                priority=10,
+    browser_candidate = (
+        Path(browser_path).expanduser()
+        if browser_path is not None
+        else Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "~/.cache/ms-playwright")).expanduser()
+    )
+    if browser_candidate.exists():
+        browser = browser_candidate.absolute()
+        if browser.exists():
+            assets.append(
+                RuntimeAsset(
+                    id="playwright-browsers",
+                    source=browser,
+                    destination=_mirrored_destination(browser),
+                    policy=policy,
+                    required=False,
+                    bind_target=browser,
+                    priority=120,
+                )
             )
+    result_assets = _minimal_assets(assets)
+    logger.info(
+        "Runtime assets created",
+        extra={
+            "origin": __name__,
+            "mode": mode.name,
+            "count": len(result_assets),
+        },
+    )
+    return result_assets
+
+
+def _discovered_assets(
+    *,
+    mode: SandboxMode,
+    discovery: RuntimeDiscoveryResult,
+) -> tuple[RuntimeAsset, ...]:
+    """Convert discovered host roots into deterministic mirrored assets."""
+    policy = _copy_policy(mode)
+    return tuple(
+        RuntimeAsset(
+            id=_asset_id(path),
+            source=path.expanduser().absolute(),
+            destination=_mirrored_destination(path),
+            policy=policy,
+            required=True,
+            bind_target=path.expanduser().absolute(),
+            priority=300,
         )
-    return tuple(assets)
+        for path in _minimal_paths(discovery.readonly_binds)
+    )
 
 
-def _is_native_executable(path: Path) -> bool:
+def _copy_policy(mode: SandboxMode) -> CopyPolicy:
+    """Return the provisioning policy required by one sandbox mode."""
+    if mode is SandboxMode.FULL_SANDBOX:
+        return CopyPolicy.COPY_REQUIRED
+    if mode is SandboxMode.PARTIAL_SANDBOX:
+        return CopyPolicy.BIND_ONLY
+    raise ValueError(f"Unsupported sandbox mode: {mode!r}")
+
+
+def _minimal_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    """Deduplicate existing paths and remove descendants of directory roots."""
+    unique = tuple(
+        sorted(
+            {
+                path.expanduser().absolute()
+                for path in paths
+                if path.expanduser().exists()
+            },
+            key=lambda item: (len(item.parts), str(item)),
+        )
+    )
+    return tuple(
+        path
+        for path in unique
+        if not any(
+            parent != path and parent.is_dir() and _is_within(parent, path)
+            for parent in unique
+        )
+    )
+
+
+def _minimal_assets(assets: Iterable[RuntimeAsset]) -> tuple[RuntimeAsset, ...]:
+    """Remove duplicate assets and children already covered by a directory."""
+    by_source: dict[Path, RuntimeAsset] = {}
+    for asset in assets:
+        source = asset.source.expanduser().absolute()
+        existing = by_source.get(source)
+        if existing is None or asset.priority > existing.priority:
+            by_source[source] = asset
+    ordered = sorted(
+        by_source.values(),
+        key=lambda item: (len(item.source.parts), str(item.source)),
+    )
+    return tuple(
+        asset
+        for asset in ordered
+        if not any(
+            parent is not asset
+            and parent.source.is_dir()
+            and _is_within(parent.source, asset.source)
+            for parent in ordered
+        )
+    )
+
+
+def _containing_asset(
+    executable: Path,
+    assets: tuple[RuntimeAsset, ...],
+) -> RuntimeAsset | None:
+    """Return the narrowest asset that contains a command entry point."""
+    matches = [
+        asset
+        for asset in assets
+        if asset.source == executable or (
+            asset.source.is_dir() and _is_within(asset.source, executable)
+        )
+    ]
+    return max(matches, key=lambda item: len(item.source.parts), default=None)
+
+
+def _mirrored_destination(path: Path) -> PurePosixPath:
+    """Map an absolute host path below the runtime's mirrored rootfs."""
+    absolute = path.expanduser().absolute()
+    parts = absolute.parts[1:] if absolute.is_absolute() else absolute.parts
+    return PurePosixPath("rootfs", *parts)
+
+
+def _asset_id(path: Path) -> str:
+    """Create a stable collision-resistant identifier for a host path."""
+    normalized = os.path.normpath(str(path.expanduser().absolute()))
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    name = path.name or "root"
+    return f"host:{name}:{digest}"
+
+
+def _is_within(root: Path, path: Path) -> bool:
+    """Return whether ``path`` is lexically below ``root``."""
     try:
-        with path.open("rb") as stream:
-            header = stream.read(4)
-    except OSError:
+        path.absolute().relative_to(root.absolute())
+        return True
+    except ValueError:
         return False
-    return header == b"\x7fELF" or header in {
-        b"\xcf\xfa\xed\xfe",
-        b"\xfe\xed\xfa\xcf",
-        b"\xca\xfe\xba\xbe",
-    }
 
 
-def _is_under_system_root(path: Path) -> bool:
-    for root in (Path("/usr"), Path("/bin"), Path("/lib"), Path("/lib64")):
-        try:
-            path.relative_to(root)
-            return True
-        except ValueError:
-            continue
-    return False
-
+__all__ = [
+    "default_runtime_assets",
+    "default_tool_definitions",
+    "discover_host_runtime",
+]

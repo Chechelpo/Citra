@@ -1,6 +1,6 @@
 """Compatibility imports for the copied-project lifecycle context."""
 
-from .session_context import AvailablePathAlias, WorkspaceContext
+from .workspace_context import AvailablePathAlias, WorkspaceContext
 
 AgentRuntime = WorkspaceContext
 

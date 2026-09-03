@@ -21,12 +21,14 @@ TExtract = TypeVar("TExtract")
 
 @dataclass(frozen=True)
 class PromotionRef:
+    """Represent PromotionRef."""
     kind: str
     memory_id: int
 
 
 @dataclass(frozen=True)
 class WorkingStateExtract:
+    """Represent WorkingStateExtract."""
     id: int
     content: str
     created_turn: int
@@ -36,6 +38,7 @@ class WorkingStateExtract:
 
 @dataclass
 class _WorkingStateRecord:
+    """Represent WorkingStateRecord."""
     extract: WorkingStateExtract
     status: str = "active"
 
@@ -44,6 +47,7 @@ class ConversationMemoryState:
     """Shared provisional state for all memory tools in one AgentSession."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._working_states: dict[int, _WorkingStateRecord] = {}
         self._next_working_state_id = 1
 
@@ -53,6 +57,7 @@ class ConversationMemoryState:
         *,
         turn: int,
     ) -> WorkingStateExtract:
+        """Handle create working state."""
         content = content.strip()
 
         if not content:
@@ -83,6 +88,7 @@ class ConversationMemoryState:
         *,
         require_active: bool = True,
     ) -> WorkingStateExtract:
+        """Return get working state."""
         record = self._working_states.get(
             working_state_id
         )
@@ -106,6 +112,7 @@ class ConversationMemoryState:
     def active_working_states(
         self,
     ) -> list[WorkingStateExtract]:
+        """Handle active working states."""
         return [
             record.extract
             for record in self._working_states.values()
@@ -119,6 +126,7 @@ class ConversationMemoryState:
         *,
         turn: int,
     ) -> WorkingStateExtract:
+        """Handle update working state."""
         current = self.get_working_state(
             working_state_id
         )
@@ -149,6 +157,7 @@ class ConversationMemoryState:
         kind: str,
         memory_id: int,
     ) -> None:
+        """Handle register promotion."""
         current = self.get_working_state(
             working_state_id
         )
@@ -183,6 +192,7 @@ class ConversationMemoryState:
         kind: str,
         memory_id: int,
     ) -> None:
+        """Handle unregister promotion."""
         record = self._working_states.get(
             working_state_id
         )
@@ -209,6 +219,7 @@ class ConversationMemoryState:
         self,
         working_state_id: int,
     ) -> WorkingStateExtract:
+        """Return resolve working state."""
         current = self.get_working_state(
             working_state_id
         )
@@ -230,6 +241,7 @@ class ConversationMemoryState:
         self,
         working_state_id: int,
     ) -> WorkingStateExtract:
+        """Handle discard working state."""
         current = self.get_working_state(
             working_state_id
         )
@@ -343,6 +355,7 @@ class MemoryTool(
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -357,12 +370,14 @@ class MemoryTool(
     def heading(
         self,
     ) -> str:
+        """Handle heading."""
         ...
 
     @abstractmethod
     def get_extracts(
         self,
     ) -> list[TExtract]:
+        """Return get extracts."""
         ...
 
     @abstractmethod
@@ -370,6 +385,7 @@ class MemoryTool(
         self,
         extract: TExtract,
     ) -> str:
+        """Handle format extract."""
         ...
 
     @abstractmethod
@@ -386,6 +402,7 @@ class MemoryTool(
         self,
         working_state_id: int,
     ) -> WorkingStateExtract:
+        """Handle require working state."""
         return self.memory_state.get_working_state(
             working_state_id,
             require_active=True,
@@ -398,6 +415,7 @@ class MemoryTool(
         kind: str,
         memory_id: int,
     ) -> None:
+        """Handle register promotion."""
         self.memory_state.register_promotion(
             working_state_id,
             kind=kind,
@@ -411,6 +429,7 @@ class MemoryTool(
         kind: str,
         memory_id: int,
     ) -> None:
+        """Handle unregister promotion."""
         self.memory_state.unregister_promotion(
             working_state_id,
             kind=kind,
@@ -420,6 +439,7 @@ class MemoryTool(
     def format_for_llm(
         self,
     ) -> str:
+        """Handle format for llm."""
         extracts = self.get_extracts()
 
         if not extracts:

@@ -43,6 +43,7 @@ class NotebookHtmlTextExtractor(HTMLParser):
     def __init__(
         self,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             convert_charrefs=True
         )
@@ -56,6 +57,7 @@ class NotebookHtmlTextExtractor(HTMLParser):
             tuple[str, str | None]
         ],
     ) -> None:
+        """Handle handle starttag."""
         if tag in self.BLOCK_TAGS:
             self.__newline()
 
@@ -80,6 +82,7 @@ class NotebookHtmlTextExtractor(HTMLParser):
         self,
         tag: str,
     ) -> None:
+        """Handle handle endtag."""
         if tag in self.BLOCK_TAGS:
             self.__newline()
 
@@ -87,6 +90,7 @@ class NotebookHtmlTextExtractor(HTMLParser):
         self,
         data: str,
     ) -> None:
+        """Handle handle data."""
         if data:
             self.__parts.append(
                 data
@@ -95,6 +99,7 @@ class NotebookHtmlTextExtractor(HTMLParser):
     def text(
         self,
     ) -> str:
+        """Handle text."""
         text = "".join(
             self.__parts
         )
@@ -129,6 +134,7 @@ class NotebookHtmlTextExtractor(HTMLParser):
     def __newline(
         self,
     ) -> None:
+        """Handle newline."""
         if (
             self.__parts
             and not self.__parts[-1].endswith(

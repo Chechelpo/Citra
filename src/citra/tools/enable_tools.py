@@ -29,6 +29,7 @@ class EnableTools(Tool):
         available_tools: dict[str, str],
         enabled_tool_ids: set[str],
     ) -> None:
+        """Initialize the instance."""
         self.__available_tools = dict(
             available_tools
         )
@@ -49,6 +50,7 @@ class EnableTools(Tool):
     ) -> tuple[ToolDefinition, ...]:
         # EnableTools requires runtime instance state, so its actual
         # definition is supplied by definitions_for_instance().
+        """Handle definitions for context."""
         del context
 
         return ()
@@ -58,6 +60,7 @@ class EnableTools(Tool):
         self,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for instance."""
         del context
 
         catalog = "\n".join(
@@ -108,6 +111,7 @@ class EnableTools(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         requested = tuple(
             dict.fromkeys(
                 arguments["tools"]
@@ -157,6 +161,7 @@ class EnableTools(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         return (
             ", ".join(
                 arguments.get(

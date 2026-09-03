@@ -17,7 +17,7 @@ from citra.context import (
     ExecutionContext,
     WorkspaceContext,
 )
-from citra.context.workspace_context.runtime import RuntimeProvisioning
+from citra.context.runtime import RuntimeProvisioning
 from citra.tools.skills.skill_registry import SkillRegistry
 from citra.workflows import WorkflowRuntime
 
@@ -53,6 +53,7 @@ def build_subagent_context(
         library=parent_workspace.library,
         tool_definitions=(),
         runtime_assets=(),
+        sandbox_mode=parent_workspace.sandbox_mode,
     )
 
     # Worker runtimes own separate mutable home/cache/tmp/process state, but
@@ -82,7 +83,8 @@ def build_subagent_context(
     )
     policy = parent_config.sandbox_policy.clone()
     policy.apply_workflow_config(workflow.sandbox_config)
-    policy.add_readonly_bind(workspace.runtime)
+    policy.add_readonly_bind(workspace.runtime, Path("/runtime"))
+    policy.add_runtime_mounts(workspace.runtime_readonly_binds)
     for path in readonly_binds:
         policy.add_readonly_bind(path)
     for root in workspace.writable_roots:

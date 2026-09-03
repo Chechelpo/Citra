@@ -21,10 +21,12 @@ _MAX_LOG_RESULT_LENGTH = 1000
 
 
 class InvalidToolArguments(ValueError):
+    """Represent InvalidToolArguments."""
     pass
 
 
 class InvalidToolDefinition(ValueError):
+    """Represent InvalidToolDefinition."""
     pass
 
 
@@ -42,6 +44,7 @@ class ToolDefinition:
     primary: bool = False
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if any(
             not matcher.strip()
             for matcher in self.model_family_matchers
@@ -110,6 +113,7 @@ class ToolDefinition:
 
 
 class Tool(ABC):
+    """Represent Tool."""
     HISTORY_ARGUMENT_COMPACT_THRESHOLD_TOKENS : ClassVar[int] = 128
     HISTORY_ARGUMENT_DIGEST_LENGTH: ClassVar[int] = 12
 
@@ -128,6 +132,7 @@ class Tool(ABC):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         self.__context = context
         self.__definition = self._resolve_definition(
             context
@@ -160,6 +165,7 @@ class Tool(ABC):
         self,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for instance."""
         return type(self).definitions_for_context(
             context
         )
@@ -168,6 +174,7 @@ class Tool(ABC):
         self,
         context: ExecutionContext,
     ) -> ChatCompletionTool:
+        """Handle resolve definition."""
         definitions = self.definitions_for_instance(
             context
         )
@@ -196,6 +203,7 @@ class Tool(ABC):
         context: ExecutionContext,
         definitions: tuple[ToolDefinition, ...],
     ) -> ChatCompletionTool:
+        """Handle select definition."""
         model_id = context.config.model().id
 
         if not definitions:
@@ -293,9 +301,11 @@ class Tool(ABC):
 
     @property
     def description(self) -> str:
+        """Handle description."""
         return self.__definition.function.description
 
     def get_as_tool(self) -> dict[str, Any]:
+        """Return get as tool."""
         return self.__definition.to_dict()
 
     def accepts_model_name(
@@ -313,6 +323,7 @@ class Tool(ABC):
 
     @property
     def context(self) -> ExecutionContext:
+        """Handle context."""
         return self.__context
 
     @classmethod
@@ -328,6 +339,7 @@ class Tool(ABC):
         context: ExecutionContext,
     ) -> None:
         # Resolve first so a bad context cannot leave the tool half-rebound.
+        """Handle rebind context."""
         definition = self._resolve_definition(
             context
         )
@@ -344,6 +356,7 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Return whether is cacheable."""
         del arguments
         return self.CACHEABLE
 
@@ -351,6 +364,7 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> bool:
+        """Handle invalidates tool cache."""
         del arguments
         return self.INVALIDATES_TOOL_CACHE
 
@@ -363,6 +377,7 @@ class Tool(ABC):
         arguments: dict[str, Any],
         result: Any,
     ) -> dict[str, Any] | None:
+        """Handle compact history arguments."""
         del arguments, result
         return None
 
@@ -372,11 +387,13 @@ class Tool(ABC):
         *names: str,
         min_token_savings: int = 128,
     ) -> dict[str, Any] | None:
+        """Handle compact history string arguments."""
         model_id = self.context.config.model().id
 
         def history_tokens(
             candidate: dict[str, Any],
         ) -> int:
+            """Handle history tokens."""
             arguments_json = json.dumps(
                 candidate,
                 ensure_ascii=False,
@@ -461,6 +478,7 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> None:
+        """Handle validate arguments."""
         validator = Draft202012Validator(
             self.definition.function.parameters.to_dict()
         )
@@ -508,6 +526,7 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> Any:
+        """Execute the execute operation."""
         self.validate_arguments(
             arguments
         )
@@ -569,6 +588,7 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> Any:
+        """Execute the execute operation."""
         ...
 
     def compact_if_over_budget(
@@ -626,12 +646,14 @@ class Tool(ABC):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         return str(arguments)
 
     def format_result_log(
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         return str(result)
 
     @staticmethod
@@ -639,6 +661,7 @@ class Tool(ABC):
         value: Any,
         max_length: int = _MAX_LOG_RESULT_LENGTH,
     ) -> str:
+        """Handle truncate log value."""
         text = str(value)
 
         if len(text) <= max_length:

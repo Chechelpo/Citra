@@ -25,6 +25,7 @@ class WorkflowRegistry:
         workflows: Iterable[Workflow] | None = None,
         default_workflow: str | None = None,
     ) -> None:
+        """Initialize the instance."""
         if config_path is not None and not isinstance(config_path, (str, Path)):
             raise TypeError("config_path must be a string or Path")
         if default_workflow is not None and (
@@ -67,6 +68,7 @@ class WorkflowRegistry:
 
     @staticmethod
     def _config_path(config_path: str | Path | None) -> Path | None:
+        """Handle config path."""
         if config_path is None:
             return None
         path = Path(config_path).expanduser().resolve()
@@ -78,6 +80,7 @@ class WorkflowRegistry:
 
     @classmethod
     def _load_default(cls, config_path: str | Path | None) -> str | None:
+        """Handle load default."""
         path = cls._config_path(config_path)
         if path is None or not path.is_file():
             return None
@@ -98,17 +101,21 @@ class WorkflowRegistry:
 
     @property
     def workflows(self) -> tuple[Workflow, ...]:
+        """Handle workflows."""
         return tuple(self._workflows.values())
 
     @property
     def default_workflow(self) -> Workflow:
+        """Handle default workflow."""
         return self._default
 
     @property
     def active_workflow(self) -> Workflow:
+        """Handle active workflow."""
         return self._active
 
     def get(self, name: str) -> Workflow:
+        """Handle get."""
         if not isinstance(name, str) or not name.strip():
             raise ValueError("workflow name must be a non-empty string")
         try:
@@ -120,6 +127,7 @@ class WorkflowRegistry:
             ) from error
 
     def select(self, selection: str = "") -> Workflow:
+        """Handle select."""
         if not isinstance(selection, str):
             raise TypeError("selection must be a string")
         value = selection.strip()

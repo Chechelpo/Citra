@@ -21,6 +21,7 @@ _MANAGER_PRIORITY = (
 
 @dataclass(frozen=True)
 class InstallResult:
+    """Represent InstallResult."""
     server_id: str
     command: tuple[str, ...] | None
     dry_run: bool
@@ -30,6 +31,7 @@ class InstallResult:
 
     @property
     def success(self) -> bool:
+        """Handle success."""
         if self.dry_run:
             return True
         return self.returncode == 0 and self.executable_found is not None
@@ -38,6 +40,7 @@ class InstallResult:
 def available_managers(
     resolver: Callable[[str], str | None],
 ) -> tuple[str, ...]:
+    """Handle available managers."""
     return tuple(manager for manager in _MANAGER_PRIORITY if resolver(manager) is not None)
 
 
@@ -45,6 +48,7 @@ def candidate_for(
     definition: ServerDefinition,
     managers: Iterable[str] | None = None,
 ) -> InstallCandidate | None:
+    """Handle candidate for."""
     available = set(managers or ())
     candidates = {candidate.manager: candidate for candidate in definition.install_candidates}
     for manager in _MANAGER_PRIORITY:
@@ -64,6 +68,7 @@ def execute_install(
     environment: dict[str, str] | None = None,
     timeout: float = 300,
 ) -> InstallResult:
+    """Execute the execute install operation."""
     command = candidate.command
     if dry_run:
         return InstallResult(

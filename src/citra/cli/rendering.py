@@ -23,6 +23,7 @@ console = Console(
 
 
 def render_markdown(text: str) -> None:
+    """Handle render markdown."""
     console.print(
         Markdown(text)
     )
@@ -32,6 +33,7 @@ def argument_preview(
     arguments: dict[str, Any],
     limit: int = 50,
 ) -> str:
+    """Handle argument preview."""
     if not arguments:
         return ""
 
@@ -52,6 +54,7 @@ def result_preview(
     result: str,
     line_limit: int = 60,
 ) -> str:
+    """Handle result preview."""
     lines = result.splitlines()
 
     if not lines:
@@ -74,6 +77,7 @@ def result_preview(
 def render_tool_call_start(
     tool_call: ChatCompletionMessageFunctionToolCallParam,
 ) -> dict[str, Any] | None:
+    """Handle render tool call start."""
     function = tool_call["function"]
 
     name = function.get(
@@ -134,6 +138,7 @@ def render_tool_call_start(
 def render_tool_call_result(
     result: str,
 ) -> None:
+    """Handle render tool call result."""
     line = Text()
 
     line.append(
@@ -152,6 +157,7 @@ def render_tool_call_result(
 def render_assistant_text(
     text: str,
 ) -> None:
+    """Handle render assistant text."""
     if not text.strip():
         return
 
@@ -171,6 +177,7 @@ def render_memory_change(
     tools: dict[str, Tool],
     before: str | None,
 ) -> None:
+    """Handle render memory change."""
     after = build_memory_context(
         tools
     )
@@ -197,6 +204,7 @@ def memory_tool_for_call(
     tools: dict[str, Tool],
     tool_call: ChatCompletionMessageFunctionToolCallParam,
 ) -> MemoryTool[Any] | None:
+    """Handle memory tool for call."""
     name = tool_call[
         "function"
     ].get(
@@ -223,6 +231,7 @@ def print_header(
     config: CitraConfig,
     workspace: Path,
 ) -> None:
+    """Handle print header."""
     line = Text()
 
     line.append(

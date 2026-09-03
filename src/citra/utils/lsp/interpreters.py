@@ -95,7 +95,9 @@ class InterpreterResolver(Protocol):
         project_root: Path,
         *,
         workspace: WorkspaceContext,
-    ) -> ResolvedInterpreter: ...
+    ) -> ResolvedInterpreter:
+        """Resolve a project interpreter for one workspace."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +106,7 @@ class InterpreterResolver(Protocol):
 
 
 def _is_windows() -> bool:
+    """Handle is windows."""
     return sys.platform.startswith("win")
 
 

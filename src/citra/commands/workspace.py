@@ -18,6 +18,7 @@ class WorkspaceCommand(Command):
     description = "Show or enter the project checkout."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         raw = args.strip()
         action, _, remainder = raw.partition(" ")
         action = action.lower() or "path"
@@ -33,6 +34,7 @@ class WorkspaceCommand(Command):
 
     @property
     def _project(self) -> Path:
+        """Handle project."""
         project = Path(self.context.workspace.workspace).resolve()
         if not project.is_dir():
             raise NotADirectoryError(
@@ -41,6 +43,7 @@ class WorkspaceCommand(Command):
         return project
 
     def _path_output(self) -> str:
+        """Handle path output."""
         project = self._project
         return "\n".join(
             (
@@ -58,6 +61,7 @@ class WorkspaceCommand(Command):
         )
 
     def _open_shell(self) -> CommandResult:
+        """Handle open shell."""
         project = self._project
         shell = os.environ.get("SHELL")
         if not shell:
@@ -82,6 +86,7 @@ class WorkspaceCommand(Command):
 
     @staticmethod
     def _usage() -> CommandResult:
+        """Handle usage."""
         return CommandResult(
             output="Usage: /workspace [path|shell]"
         )

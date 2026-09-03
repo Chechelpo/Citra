@@ -76,6 +76,7 @@ class LspCapabilities:
         caps = caps or {}
 
         def _has(key: str) -> bool:
+            """Handle has."""
             value = caps.get(key)
             # Provider options may legitimately be an empty object. Presence
             # still means the capability is supported unless the server

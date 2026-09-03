@@ -27,7 +27,9 @@ from ...utils.json_schema import (
 class GuidanceSupervisor(Protocol):
     """Supervisor operation exposed to a worker guidance bridge."""
 
-    def request_guidance(self, subagent_id: str, question: str) -> str: ...
+    def request_guidance(self, subagent_id: str, question: str) -> str:
+        """Block for the orchestrator's answer to a worker question."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ class SubagentGuidanceBridge:
     supervisor: GuidanceSupervisor
 
     def request_guidance(self, question: str) -> str:
+        """Handle request guidance."""
         return self.supervisor.request_guidance(
             self.subagent_id,
             question,
@@ -101,6 +104,7 @@ class RequestGuidanceTool(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(context=context)
         bridge = context.subagents
         if not isinstance(bridge, SubagentGuidanceBridge):
@@ -115,6 +119,7 @@ class RequestGuidanceTool(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (
             ToolDefinition(
@@ -124,6 +129,7 @@ class RequestGuidanceTool(Tool):
 
     @property
     def subagent_id(self) -> str:
+        """Handle subagent id."""
         return self.__bridge.subagent_id
 
     @override
@@ -131,6 +137,7 @@ class RequestGuidanceTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         question = str(arguments.get("question") or "").strip()
         if not question:
             raise ValueError(
@@ -148,6 +155,7 @@ def _request_entry(
     subagent_id: str,
     question: str,
 ) -> dict[str, Any]:
+    """Handle request entry."""
     return {
         "role": "user",
         "content": (
@@ -162,6 +170,7 @@ def _response_entry(
     subagent_id: str,
     response: str,
 ) -> dict[str, Any]:
+    """Handle response entry."""
     return {
         "role": "assistant",
         "content": (

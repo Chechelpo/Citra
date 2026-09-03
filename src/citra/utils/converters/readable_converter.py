@@ -22,12 +22,14 @@ class ReadableConverter(ABC):
     def extensions(
         self,
     ) -> frozenset[str]:
+        """Handle extensions."""
         pass
 
     def supports(
         self,
         path: Path,
     ) -> bool:
+        """Handle supports."""
         return (
             path.is_file()
             and path.suffix.lower()
@@ -40,6 +42,7 @@ class ReadableConverter(ABC):
         *,
         workspace: WorkspaceContext,
     ) -> Path:
+        """Handle convert."""
         path = workspace.require_allowed_path(
             path
         )
@@ -99,6 +102,7 @@ class ReadableConverter(ABC):
         source: Path,
         destination: Path,
     ) -> None:
+        """Handle convert."""
         pass
 
     def _output_path(
@@ -107,6 +111,7 @@ class ReadableConverter(ABC):
         *,
         workspace: WorkspaceContext,
     ) -> Path:
+        """Handle output path."""
         stat = path.stat()
 
         identity = (
@@ -133,6 +138,7 @@ class ReadableConverter(ABC):
     def _temporary_path(
         output: Path,
     ) -> Path:
+        """Handle temporary path."""
         descriptor, raw_path = tempfile.mkstemp(
             prefix=f".{output.stem}-",
             suffix=".tmp",

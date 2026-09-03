@@ -41,6 +41,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class CachedToolResult:
+    """Represent CachedToolResult."""
     generation: int
     result: str
 
@@ -49,14 +50,17 @@ class ToolCallCache:
     """Turn-local cache for deterministic model-facing tool results."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.generation = 0
         self._entries: dict[str, CachedToolResult] = {}
 
     def begin_turn(self) -> None:
+        """Handle begin turn."""
         self.generation = 0
         self._entries.clear()
 
     def invalidate(self) -> None:
+        """Handle invalidate."""
         self.generation += 1
 
     def get(
@@ -64,6 +68,7 @@ class ToolCallCache:
         tool_id: str,
         arguments: dict[str, object],
     ) -> CachedToolResult | None:
+        """Handle get."""
         entry = self._entries.get(
             self._key(tool_id, arguments)
         )
@@ -77,6 +82,7 @@ class ToolCallCache:
         arguments: dict[str, object],
         result: str,
     ) -> None:
+        """Handle put."""
         self._entries[self._key(tool_id, arguments)] = CachedToolResult(
             generation=self.generation,
             result=result,
@@ -87,6 +93,7 @@ class ToolCallCache:
         tool_id: str,
         arguments: dict[str, object],
     ) -> str:
+        """Handle key."""
         encoded = json.dumps(
             arguments,
             ensure_ascii=False,
@@ -195,6 +202,7 @@ class AgentSession:
         model_id: str,
         length: int,
     ) -> list[ChatMessage]:
+        """Return get last messages up to tokenLength."""
         if length < 0:
             raise ValueError(
                 "'length' must be zero or greater."

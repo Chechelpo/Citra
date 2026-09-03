@@ -38,6 +38,7 @@ from .command import Command, CommandResult
 
 @dataclass
 class CheckResult:
+    """Represent CheckResult."""
     name: str
     passed: bool
     detail: str = ""
@@ -45,9 +46,11 @@ class CheckResult:
 
 @dataclass
 class CheckRunner:
+    """Represent CheckRunner."""
     results: list[CheckResult] = field(default_factory=list)
 
     def run(self, name: str, fn: Any) -> None:
+        """Execute the run operation."""
         try:
             detail = fn() or ""
             self.results.append(
@@ -60,9 +63,11 @@ class CheckRunner:
 
     @property
     def all_passed(self) -> bool:
+        """Handle all passed."""
         return all(r.passed for r in self.results)
 
     def render(self) -> str:
+        """Handle render."""
         lines: list[str] = []
 
         for result in self.results:
@@ -94,6 +99,7 @@ class TestCommand(Command):
     # ------------------------------------------------------------------
 
     def _check_config(self) -> str:
+        """Handle check config."""
         model = self.context.model_config()
         web = self.context.web_search_config
 
@@ -106,6 +112,7 @@ class TestCommand(Command):
         )
 
     def _check_model_api(self) -> str:
+        """Handle check model api."""
         model = self.context.model_config()
 
         payload: dict[str, Any] = {
@@ -150,6 +157,7 @@ class TestCommand(Command):
         return f"replied: {text!r}"
 
     def _check_web_search(self) -> str:
+        """Handle check web search."""
         from urllib.parse import urlencode
 
         host = self.context.web_search_config.host_url.rstrip("/")
@@ -183,6 +191,7 @@ class TestCommand(Command):
         return f"{len(results)} result(s)"
 
     def _check_bash(self) -> str:
+        """Handle check bash."""
         path = self.context.resolve_command("bash")
 
         if not path:
@@ -191,6 +200,7 @@ class TestCommand(Command):
         return path
 
     def _check_agent_runtime(self) -> str:
+        """Handle check agent runtime."""
         runtime = self.context.workspace.runtime_diagnostics()
         storage = runtime["storage"]
         tools = runtime.get("tools", {})
@@ -218,10 +228,12 @@ class TestCommand(Command):
         )
 
     def _check_workspace(self) -> str:
+        """Handle check workspace."""
         self.context.workspace.resolve_path(".")
         return str(self.context.workspace.workspace)
 
     def _check_language_servers(self) -> str:
+        """Handle check language servers."""
         manager = self.context.lsp_manager
 
         if not isinstance(manager, LspManager):
@@ -254,6 +266,7 @@ class TestCommand(Command):
     # ------------------------------------------------------------------
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         runner = CheckRunner()
 
         runner.run("Config", self._check_config)

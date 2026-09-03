@@ -18,6 +18,7 @@ class Translator(Skill):
     def __init__(
         self,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             "media-translator",
             "Reverse-engineer how a game stores, references, assembles, and displays translatable text. Use Python managed with uv to build diagnostic and extraction tools, recover localization context, produce a structured translation corpus, and create a model-agnostic LLM translation runner with deterministic validation.",
@@ -29,6 +30,7 @@ class Translator(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
+        """Return get md."""
         return _PROMPT
 
 _PROMPT = """

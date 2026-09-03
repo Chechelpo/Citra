@@ -31,6 +31,7 @@ class ModelCommand(Command):
 
     @override
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         try:
             parts = shlex.split(args)
         except ValueError as error:
@@ -62,6 +63,7 @@ class ModelCommand(Command):
         )
 
     def _show(self, args: list[str]) -> CommandResult:
+        """Handle show."""
         if len(args) > 1:
             return CommandResult(
                 "Expected zero or one profile name.\n\n" + self._usage()
@@ -109,6 +111,7 @@ class ModelCommand(Command):
         )
 
     def _list(self, args: list[str]) -> CommandResult:
+        """Handle list."""
         if args:
             return CommandResult("model list takes no arguments.\n\n" + self._usage())
 
@@ -148,6 +151,7 @@ class ModelCommand(Command):
         return CommandResult("\n".join(lines))
 
     def _use(self, args: list[str]) -> CommandResult:
+        """Handle use."""
         if not args:
             return CommandResult("Expected a role and profile name.\n\n" + self._usage())
 
@@ -186,6 +190,7 @@ class ModelCommand(Command):
         )
 
     def _add(self, args: list[str]) -> CommandResult:
+        """Handle add."""
         if not args:
             return CommandResult("Expected a new profile name.\n\n" + self._usage())
 
@@ -213,6 +218,7 @@ class ModelCommand(Command):
         )
 
     def _delete(self, args: list[str]) -> CommandResult:
+        """Handle delete."""
         if len(args) != 1:
             return CommandResult("Expected a profile name.\n\n" + self._usage())
 
@@ -225,6 +231,7 @@ class ModelCommand(Command):
         return CommandResult(f"Deleted model profile {args[0]}.")
 
     def _set(self, args: list[str]) -> CommandResult:
+        """Handle set."""
         profile: str | None = None
         if args[:1] == ["--profile"]:
             if len(args) < 4:
@@ -294,14 +301,17 @@ class ModelCommand(Command):
         return CommandResult(f"models.{target}.{field} = {rendered}")
 
     def _help(self) -> CommandResult:
+        """Handle help."""
         return CommandResult(self._usage())
 
     @staticmethod
     def _error(operation: str, error: Exception) -> CommandResult:
+        """Handle error."""
         return CommandResult(f"Unable to {operation}: {error}")
 
     @staticmethod
     def _positive_int(value: str, field: str) -> int:
+        """Handle positive int."""
         try:
             parsed = int(value)
         except ValueError as error:
@@ -312,6 +322,7 @@ class ModelCommand(Command):
 
     @staticmethod
     def _positive_float(value: str, field: str) -> float:
+        """Handle positive float."""
         try:
             parsed = float(value)
         except ValueError as error:
@@ -322,6 +333,7 @@ class ModelCommand(Command):
 
     @staticmethod
     def _nonnegative_float(value: str, field: str) -> float:
+        """Handle nonnegative float."""
         try:
             parsed = float(value)
         except ValueError as error:
@@ -332,6 +344,7 @@ class ModelCommand(Command):
 
     @staticmethod
     def _optional_string(value: str) -> str | None:
+        """Handle optional string."""
         normalized = value.strip()
         if normalized.lower() in {"none", "null", "unset", "off"}:
             return None
@@ -339,6 +352,7 @@ class ModelCommand(Command):
 
     @staticmethod
     def _usage() -> str:
+        """Handle usage."""
         return (
             "Usage:\n"
             "  model show [profile]\n"

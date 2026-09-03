@@ -20,6 +20,7 @@ class JupyterNotebookConverter(ReadableConverter):
     def extensions(
         self,
     ) -> frozenset[str]:
+        """Handle extensions."""
         return frozenset(
             {
                 ".ipynb",
@@ -32,6 +33,7 @@ class JupyterNotebookConverter(ReadableConverter):
         source: Path,
         destination: Path,
     ) -> None:
+        """Handle convert."""
         with source.open(
             "r",
             encoding="utf-8",
@@ -95,6 +97,7 @@ class JupyterNotebookConverter(ReadableConverter):
         output: Any,
         metadata: Any,
     ) -> None:
+        """Handle write metadata."""
         if not isinstance(
             metadata,
             dict,
@@ -156,6 +159,7 @@ class JupyterNotebookConverter(ReadableConverter):
         index: int,
         cell: Any,
     ) -> None:
+        """Handle write cell."""
         if not isinstance(
             cell,
             dict,
@@ -247,6 +251,7 @@ class JupyterNotebookConverter(ReadableConverter):
         index: int,
         cell_output: Any,
     ) -> None:
+        """Handle write output."""
         if not isinstance(
             cell_output,
             dict,
@@ -353,6 +358,7 @@ class JupyterNotebookConverter(ReadableConverter):
         output: Any,
         data: dict[str, Any],
     ) -> None:
+        """Handle write display data."""
         if "text/plain" in data:
             self._write_bounded_text(
                 output,
@@ -450,6 +456,7 @@ class JupyterNotebookConverter(ReadableConverter):
         output: Any,
         text: str,
     ) -> None:
+        """Handle write bounded text."""
         text = self._normalize_text(
             text
         )
@@ -492,6 +499,7 @@ class JupyterNotebookConverter(ReadableConverter):
     def _join_text(
         value: Any,
     ) -> str:
+        """Handle join text."""
         if isinstance(
             value,
             str,
@@ -518,6 +526,7 @@ class JupyterNotebookConverter(ReadableConverter):
     def _normalize_text(
         text: str,
     ) -> str:
+        """Handle normalize text."""
         return text.replace(
             "\r\n",
             "\n",
@@ -530,6 +539,7 @@ class JupyterNotebookConverter(ReadableConverter):
     def _is_binary_mime(
         mime: str,
     ) -> bool:
+        """Handle is binary mime."""
         return (
             mime.startswith(
                 "image/"
@@ -551,6 +561,7 @@ class JupyterNotebookConverter(ReadableConverter):
     def _html_to_text(
         html: str,
     ) -> str:
+        """Handle html to text."""
         parser = NotebookHtmlTextExtractor()
 
         try:

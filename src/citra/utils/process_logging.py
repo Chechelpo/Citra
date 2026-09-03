@@ -21,10 +21,12 @@ class _CitraLogFilter(logging.Filter):
     """Keep dependency debug chatter out of the project diagnostic log."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Handle filter."""
         return record.name == "citra" or record.name.startswith("citra.")
 
 
 class _UtcFormatter(logging.Formatter):
+    """Represent UtcFormatter."""
     converter = staticmethod(time.gmtime)
 
 

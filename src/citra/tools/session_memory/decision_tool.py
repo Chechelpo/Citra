@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class DecisionExtract:
+    """Represent DecisionExtract."""
     id: int
     content: str
     working_state_id: int | None = None
@@ -124,6 +125,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -137,6 +139,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -148,12 +151,14 @@ class DecisionTool(MemoryTool[DecisionExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Decisions"
 
     @override
     def get_extracts(
         self,
     ) -> list[DecisionExtract]:
+        """Return get extracts."""
         return list(
             self.__extracts
         )
@@ -163,6 +168,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         self,
         extract: DecisionExtract,
     ) -> str:
+        """Handle format extract."""
         text = (
             f"- [{extract.id}] "
             f"{extract.content}"
@@ -180,6 +186,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
     def should_offer_documentation(
         self,
     ) -> bool:
+        """Return whether should offer documentation."""
         return bool(
             self.__extracts
         )
@@ -188,6 +195,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -198,6 +206,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         raise ValueError(f"Unsupported decision action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         self._reject_fields(
             arguments,
             ("working_state_id", "working_state_ids", "id", "ids"),
@@ -214,6 +223,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         )
 
     def _promote(self, arguments: dict[str, Any]) -> str:
+        """Handle promote."""
         self._reject_fields(arguments, ("contents", "id", "ids"), action="promote")
         working_ids = self._working_ids(arguments)
         content_override = arguments.get("content")
@@ -254,6 +264,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         )
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         self._reject_fields(
             arguments,
             ("content", "contents", "working_state_id", "working_state_ids"),
@@ -276,6 +287,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         return f"Removed {len(selected)} DECISION entries {self._format_ids(ids)}."
 
     def _append(self, content: str, *, working_state_id: int | None) -> DecisionExtract:
+        """Handle append."""
         item = DecisionExtract(
             id=self.__next_id,
             content=content,
@@ -287,6 +299,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
         working = self._working_ids_summary(arguments)
@@ -303,6 +316,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @staticmethod
     def _direct_contents(arguments: dict[str, Any]) -> list[str]:
+        """Handle direct contents."""
         content = arguments.get("content")
         contents = arguments.get("contents")
         if content is not None and contents is not None:
@@ -320,6 +334,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @staticmethod
     def _working_ids(arguments: dict[str, Any]) -> list[int]:
+        """Handle working ids."""
         single = arguments.get("working_state_id")
         multiple = arguments.get("working_state_ids")
         if single is not None and multiple is not None:
@@ -333,6 +348,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @staticmethod
     def _ids(arguments: dict[str, Any]) -> list[int]:
+        """Handle ids."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None and multiple is not None:
@@ -351,6 +367,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
         *,
         action: str,
     ) -> None:
+        """Handle reject fields."""
         invalid = [name for name in names if arguments.get(name) is not None]
         if invalid:
             raise ValueError(
@@ -359,6 +376,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
             )
 
     def _find_index(self, decision_id: int) -> int:
+        """Handle find index."""
         for index, item in enumerate(self.__extracts):
             if item.id == decision_id:
                 return index
@@ -366,6 +384,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @staticmethod
     def _working_ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle working ids summary."""
         single = arguments.get("working_state_id")
         multiple = arguments.get("working_state_ids")
         if single is not None:
@@ -376,6 +395,7 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @staticmethod
     def _ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle ids summary."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None:
@@ -386,8 +406,10 @@ class DecisionTool(MemoryTool[DecisionExtract]):
 
     @staticmethod
     def _format_ids(ids: list[int]) -> str:
+        """Handle format ids."""
         return "[" + ", ".join(str(item_id) for item_id in ids) + "]"
 
     @staticmethod
     def _truncate(value: str) -> str:
+        """Handle truncate."""
         return value if len(value) <= 80 else value[:80] + "..."

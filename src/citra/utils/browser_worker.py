@@ -13,6 +13,7 @@ MAX_TEXT = 100_000
 
 
 def _origin(url: str) -> str:
+    """Handle origin."""
     parsed = urlparse(url)
     scheme = {"ws": "http", "wss": "https"}.get(parsed.scheme, parsed.scheme)
     if scheme not in {"http", "https"} or not parsed.hostname:
@@ -22,7 +23,9 @@ def _origin(url: str) -> str:
 
 
 class BrowserWorker:
+    """Represent BrowserWorker."""
     def __init__(self) -> None:
+        """Initialize the instance."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as error:
@@ -66,6 +69,7 @@ class BrowserWorker:
             self._page.route_web_socket("**/*", self._route_web_socket)
 
     def dispatch(self, request: dict[str, Any]) -> Any:
+        """Handle dispatch."""
         action = request["action"]
         if action == "open":
             url = str(request["url"])
@@ -234,11 +238,13 @@ class BrowserWorker:
         raise ValueError(f"Unsupported browser action: {action}")
 
     def close(self) -> None:
+        """Handle close."""
         self._context.close()
         self._browser.close()
         self._playwright.stop()
 
     def _route(self, route: Any) -> None:
+        """Handle route."""
         scheme = urlparse(route.request.url).scheme
         if scheme in {"about", "data", "blob"}:
             route.continue_()
@@ -254,6 +260,7 @@ class BrowserWorker:
             route.abort("blockedbyclient")
 
     def _route_web_socket(self, socket: Any) -> None:
+        """Handle route web socket."""
         origin = _origin(socket.url)
         if origin and origin in self._allowed_origins:
             socket.connect_to_server()
@@ -262,6 +269,7 @@ class BrowserWorker:
             socket.close()
 
     def _locator(self, request: dict[str, Any]) -> Any:
+        """Handle locator."""
         reference = request.get("ref")
         selector = request.get("selector")
         if reference is not None:
@@ -274,6 +282,7 @@ class BrowserWorker:
         raise ValueError("'ref' or 'selector' is required.")
 
     def _snapshot(self) -> dict[str, Any]:
+        """Handle snapshot."""
         selectors = "a,button,input,textarea,select,[role=button],[tabindex]"
         locator = self._page.locator(selectors)
         count = min(locator.count(), 500)
@@ -306,11 +315,13 @@ class BrowserWorker:
 
     @staticmethod
     def _append(target: list[str], value: str) -> None:
+        """Handle append."""
         target.append(value[:4000])
         del target[:-500]
 
 
 def main() -> None:
+    """Handle main."""
     worker: BrowserWorker | None = None
     try:
         worker = BrowserWorker()

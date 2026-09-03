@@ -50,6 +50,7 @@ class SubagentToolset:
     request_guidance: type[Tool]
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         for name in (
             "read",
             "write",
@@ -63,6 +64,7 @@ class SubagentToolset:
                 raise TypeError(f"{name} must be a Tool subclass")
 
     def to_tool_set(self) -> ToolSet:
+        """Convert the value to tool set."""
         return ToolSet(
             core_tools=(
                 self.read,
@@ -77,6 +79,7 @@ class SubagentToolset:
 
 
 def default_subagent_toolset() -> SubagentToolset:
+    """Handle default subagent toolset."""
     return SubagentToolset(
         read=Read,
         write=Write,
@@ -113,6 +116,7 @@ class SubagentWorkflow(SingleModeWorkflow):
         toolset: SubagentToolset,
         sandbox_config: SandboxConfig,
     ) -> None:
+        """Initialize the instance."""
         if not isinstance(name, str) or not name.strip():
             raise ValueError("name cannot be empty")
         if not isinstance(subagent_id, str) or not subagent_id.strip():
@@ -154,36 +158,44 @@ class SubagentWorkflow(SingleModeWorkflow):
 
     @property
     def name(self) -> str:
+        """Handle name."""
         return self._name
 
     @property
     def description(self) -> str:
+        """Handle description."""
         return self._description
 
     @property
     def tool_set(self) -> ToolSet:
+        """Handle tool set."""
         return self._tool_set
 
     @property
     def skills(self) -> tuple[Skill, ...]:
+        """Handle skills."""
         return self._skills
 
     @property
     def sandbox_config(self) -> SandboxConfig:
+        """Handle sandbox config."""
         return self._sandbox_config
 
     @property
     def task_steering(self) -> TaskSteeringConfig:
+        """Handle task steering."""
         return self._task_steering
 
     @property
     def initial_working_states(self) -> tuple[str, ...]:
+        """Handle initial working states."""
         return self._initial_working_states
 
     def get_system_prompt(
         self,
         context: ExecutionContext,
     ) -> str:
+        """Return get system prompt."""
         return _build_system_prompt(
             subagent_id=self._subagent_id,
             task=self._task,
@@ -257,6 +269,7 @@ def build_subagent_mode(
     system_prompt_addendum: str,
     toolset: SubagentToolset | None = None,
 ) -> SubagentWorkflow:
+    """Handle build subagent mode."""
     return build_subagent_workflow(
         subagent_id=subagent_id,
         task=task,
@@ -313,6 +326,7 @@ def _build_system_prompt(
     toolset: SubagentToolset,
     context: ExecutionContext,
 ) -> str:
+    """Handle build system prompt."""
     public_names = {
         name: tool_type.resolve_definition_for_context(context).function.name
         for name, tool_type in (

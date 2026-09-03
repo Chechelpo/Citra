@@ -6,10 +6,12 @@ from .command import Command, CommandResult
 
 
 class WorkflowCommand(Command):
+    """Represent WorkflowCommand."""
     id = "workflow"
     description = "Inspect the workflow and current serial phase."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         action = args.strip() or "status"
         if action not in {"status", "show", "cancel"}:
             return CommandResult(output="Usage: /workflow [status|cancel]")

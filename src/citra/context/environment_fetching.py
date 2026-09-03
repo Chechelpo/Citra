@@ -19,6 +19,7 @@ class EnvironmentInfo:
 
     @staticmethod
     def collect_environment() -> EnvironmentInfo:
+        """Handle collect environment."""
         now = datetime.now().astimezone()
 
         return EnvironmentInfo(
@@ -32,6 +33,7 @@ class EnvironmentInfo:
         )
 
     def as_prompt_section(self) -> str:
+        """Handle as prompt section."""
         return "\n".join(
             (
                 "## Environment",
@@ -46,6 +48,7 @@ class EnvironmentInfo:
 def _timezone_name(
     value: datetime,
 ) -> str:
+    """Handle timezone name."""
     name = value.tzname()
 
     if name:

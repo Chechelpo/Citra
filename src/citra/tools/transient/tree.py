@@ -111,6 +111,7 @@ class Tree(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -154,6 +155,7 @@ class Tree(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -163,6 +165,7 @@ class Tree(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         if (
             not hasattr(self.context, "repo_map")
             or not hasattr(self.context, "config")
@@ -203,6 +206,7 @@ class Tree(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         parts = [
             f"path={arguments.get('path', '.')}",
         ]
@@ -234,6 +238,7 @@ class Tree(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if not text:

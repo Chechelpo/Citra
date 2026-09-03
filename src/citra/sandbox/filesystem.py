@@ -19,6 +19,7 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 
 def main() -> int:
+    """Handle main."""
     try:
         raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
         if len(raw) > MAX_REQUEST_BYTES:

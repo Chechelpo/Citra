@@ -44,34 +44,42 @@ class _RoleWorkflow(SingleModeWorkflow):
 
     @property
     def name(self) -> str:
+        """Handle name."""
         return f"serial:{self.ROLE}"
 
     @property
     def description(self) -> str:
+        """Handle description."""
         return self.DESCRIPTION
 
     @property
     def tool_set(self) -> ToolSet:
+        """Handle tool set."""
         return self.TOOLS
 
     @property
     def skills(self) -> tuple[Skill, ...]:
+        """Handle skills."""
         return self._AVAILABLE_SKILLS
 
     @property
     def sandbox_config(self) -> SandboxConfig:
+        """Handle sandbox config."""
         return _SERIAL_SANDBOX
 
     @property
     def task_steering(self) -> TaskSteeringConfig:
+        """Handle task steering."""
         return self.TASK_STEERING
 
     @property
     def initial_working_states(self) -> tuple[str, ...]:
+        """Handle initial working states."""
         return ()
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
+        """Return get system prompt."""
         run = context.workflow_runtime.require_active_run()
         step = run.current_step
         checkpoint_name = CheckpointTool.resolve_definition_for_context(
@@ -136,6 +144,7 @@ simulate the next role in this turn.
 
 
 class ExplorerWorkflow(_RoleWorkflow):
+    """Represent ExplorerWorkflow."""
     ROLE = "explore"
     DESCRIPTION = "Inspect the repository and establish grounded constraints."
     
@@ -317,6 +326,7 @@ Return to explore when important information is missing.
 
 
 class PlannerWorkflow(_RoleWorkflow):
+    """Represent PlannerWorkflow."""
     ROLE = "plan"
     DESCRIPTION = "Create an implementation plan from verified evidence."
 
@@ -432,6 +442,7 @@ needs work. Advance to implement once it is genuinely executable.
 
 
 class ImplementerWorkflow(_RoleWorkflow):
+    """Represent ImplementerWorkflow."""
     ROLE = "implement"
     DESCRIPTION = "Implement the approved plan in the current project."
 
@@ -491,6 +502,7 @@ verification, prepare the handoff to test.
 
 
 class TesterWorkflow(_RoleWorkflow):
+    """Represent TesterWorkflow."""
     ROLE = "test"
     DESCRIPTION = "Verify the implementation without repairing it implicitly."
 
@@ -537,6 +549,7 @@ fresh reviewer to judge the completed change.
 
 
 class ReviewerWorkflow(_RoleWorkflow):
+    """Represent ReviewerWorkflow."""
     ROLE = "review"
     DESCRIPTION = "Review the complete change with fresh reasoning."
 
@@ -622,6 +635,7 @@ class SerialRolesWorkflow(Workflow):
     )
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.validate()
         for step in self._steps:
             if step.workflow.sandbox_config != self.sandbox_config:
@@ -632,31 +646,38 @@ class SerialRolesWorkflow(Workflow):
 
     @property
     def name(self) -> str:
+        """Handle name."""
         return "serial_roles"
 
     @property
     def description(self) -> str:
+        """Handle description."""
         return (
             "Isolated explore, plan, implement, test, and review role turns."
         )
 
     @property
     def sandbox_config(self) -> SandboxConfig:
+        """Handle sandbox config."""
         return _SERIAL_SANDBOX
 
     @property
     def initial_workflow(self) -> SingleModeWorkflow:
+        """Handle initial workflow."""
         return self._steps[0].workflow
 
     @property
     def is_serial(self) -> bool:
+        """Return whether is serial."""
         return True
 
     @property
     def requires_memory(self) -> bool:
+        """Handle requires memory."""
         return True
 
     def create_run(self, task: str) -> WorkflowRun:
+        """Handle create run."""
         return WorkflowRun(
             workflow=self,
             task=task,

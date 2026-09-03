@@ -18,6 +18,7 @@ class WebAppDebugging(Skill):
     def __init__(
         self,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             "web-app-debugging",
             "Describes how to run, inspect, reproduce, diagnose, and verify "
@@ -30,6 +31,7 @@ class WebAppDebugging(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
+        """Return get md."""
         if not context.config.memory.enabled:
             return _PROMPT.replace(_MEMORY_INSTRUCTION, "")
         return _PROMPT

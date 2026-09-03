@@ -21,6 +21,7 @@ class DebugCommand(Command):
 
     @override
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         action = args.strip().lower()
 
         if action == "on":
@@ -46,4 +47,5 @@ class DebugCommand(Command):
 
     @staticmethod
     def _usage() -> str:
+        """Handle usage."""
         return "Usage: /debug [on|off]"

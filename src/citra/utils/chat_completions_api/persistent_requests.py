@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
@@ -12,9 +10,7 @@ import time
 from typing import Any, Callable, cast
 import urllib.error
 import urllib.request
-
 from openai.types.chat import ChatCompletionSystemMessageParam
-
 from ...agent import ChatMessage
 from ...config import ModelConfig
 from ...context import ExecutionContext
@@ -23,95 +19,23 @@ from ...tools.tool import Tool
 from ..api import chat_completions_url
 from ..prompt import build_system_prompt
 from .model_normalization import normalize_model_response
-
-from ..terminal import (
-    BLUE,
-    BOLD,
-    CYAN,
-    DIM,
-    GREEN,
-    RED,
-    RESET,
-    YELLOW,
-    separator,
-)
-
-
+from ..terminal import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, separator
 logger = logging.getLogger(__name__)
-
-
-# Set to False to immediately fail on HTTP 429 responses instead of
-# respecting rate-limit responses and retrying them.
 RETRY_ON_RATE_LIMIT: bool = True
-
-# Grey (DIM) diagnostic lines printed around each model request.
-# Toggled at runtime by the /debug REPL command.
 DEBUG_PRINTING: bool = True
-
-# Despite the historical name, this is used as the maximum number of
-# total request attempts, including the initial request.
 DEFAULT_MAX_RETRIES: int = 12
-
 
 def _debug_print(message: str) -> None:
     """Print a grey diagnostic line when debug printing is enabled."""
     logger.debug(message)
     if DEBUG_PRINTING:
-        print(
-            f"{DIM}"
-            f"{message}"
-            f"{RESET}"
-        )
-
+        print(f'{DIM}{message}{RESET}')
 
 class ModelRequestInterrupted(RuntimeError):
     """A pending retry was superseded by newly queued user steering."""
+_RETRYABLE_CLIENT_HTTP_STATUS_CODES: frozenset[int] = frozenset({408, 409, 421, 423, 424, 425})
 
-
-# HTTP 4xx responses normally indicate a problem with the request and
-# should therefore not be retried automatically.
-#
-# These are exceptions which commonly represent temporary conditions:
-#
-#   408 Request Timeout
-#       The server did not receive the request in time.
-#
-#   409 Conflict
-#       Some APIs use this for temporary resource/locking conflicts.
-#       The OpenAI SDK also treats 409 as retryable.
-#
-#   421 Misdirected Request
-#       A proxy/load-balancer may have routed the request incorrectly.
-#
-#   423 Locked
-#       The target resource may only be temporarily locked.
-#
-#   424 Failed Dependency
-#       An upstream dependency may temporarily be unavailable.
-#
-#   425 Too Early
-#       The server explicitly asks the client to retry later.
-#
-#   429 Too Many Requests
-#       Rate limiting. Controlled separately by RETRY_ON_RATE_LIMIT.
-#
-# All HTTP 5xx responses are handled as temporary server-side failures
-# and are retried below.
-_RETRYABLE_CLIENT_HTTP_STATUS_CODES: frozenset[int] = frozenset(
-    {
-        408,
-        409,
-        421,
-        423,
-        424,
-        425,
-    }
-)
-
-
-def merge_consecutive_roles(
-    messages: list[ChatMessage],
-) -> list[ChatMessage]:
+def merge_consecutive_roles(messages: list[ChatMessage]) -> list[ChatMessage]:
     """
     Merge adjacent plain-text messages with the same role.
 
@@ -119,139 +43,50 @@ def merge_consecutive_roles(
     results are preserved exactly.
     """
     merged: list[ChatMessage] = []
-
     for message in messages:
-        current = cast(
-            ChatMessage,
-            dict(message),
-        )
-
+        current = cast(ChatMessage, dict(message))
         if not merged:
-            merged.append(
-                current
-            )
+            merged.append(current)
             continue
-
         previous = merged[-1]
-
-        if not _messages_are_mergeable(
-            previous,
-            current,
-        ):
-            merged.append(
-                current
-            )
+        if not _messages_are_mergeable(previous, current):
+            merged.append(current)
             continue
-
-        previous_content = previous.get(
-            "content"
-        )
-        current_content = current.get(
-            "content"
-        )
-
-        # _messages_are_mergeable() guarantees both content values are
-        # either strings or None and that these messages contain only
-        # role/content fields.
-        previous_dict = cast(
-            dict[str, Any],
-            previous,
-        )
-
+        previous_content = previous.get('content')
+        current_content = current.get('content')
+        previous_dict = cast(dict[str, Any], previous)
         if not previous_content:
-            previous_dict[
-                "content"
-            ] = current_content
+            previous_dict['content'] = current_content
             continue
-
         if not current_content:
             continue
-
-        previous_dict[
-            "content"
-        ] = (
-            f"{previous_content}\n\n"
-            f"{current_content}"
-        )
-
+        previous_dict['content'] = f'{previous_content}\n\n{current_content}'
     return merged
 
-
-def _messages_are_mergeable(
-    first: ChatMessage,
-    second: ChatMessage,
-) -> bool:
-    role = first.get(
-        "role"
-    )
-
-    if role != second.get(
-        "role"
-    ):
+def _messages_are_mergeable(first: ChatMessage, second: ChatMessage) -> bool:
+    """Handle messages are mergeable."""
+    role = first.get('role')
+    if role != second.get('role'):
         return False
-
-    if role not in {
-        "system",
-        "user",
-        "assistant",
-    }:
+    if role not in {'system', 'user', 'assistant'}:
         return False
-
-    # Only merge ordinary role/content messages. Anything carrying
-    # protocol metadata must remain structurally intact.
-    if set(first) - {
-        "role",
-        "content",
-    }:
+    if set(first) - {'role', 'content'}:
         return False
-
-    if set(second) - {
-        "role",
-        "content",
-    }:
+    if set(second) - {'role', 'content'}:
         return False
-
-    first_content = first.get(
-        "content"
-    )
-    second_content = second.get(
-        "content"
-    )
-
-    if (
-        first_content is not None
-        and not isinstance(
-            first_content,
-            str,
-        )
-    ):
+    first_content = first.get('content')
+    second_content = second.get('content')
+    if first_content is not None and (not isinstance(first_content, str)):
         return False
-
-    if (
-        second_content is not None
-        and not isinstance(
-            second_content,
-            str,
-        )
-    ):
+    if second_content is not None and (not isinstance(second_content, str)):
         return False
-
     return True
 
+def system_prompt(context: ExecutionContext) -> str:
+    """Handle system prompt."""
+    return build_system_prompt(context)
 
-def system_prompt(
-    context: ExecutionContext,
-) -> str:
-    return build_system_prompt(
-        context
-    )
-
-
-def _backoff_delay(
-    attempt: int,
-    initial: float,
-    maximum: float,
-) -> float:
+def _backoff_delay(attempt: int, initial: float, maximum: float) -> float:
     """
     Calculate an exponential retry delay with positive jitter.
 
@@ -266,102 +101,33 @@ def _backoff_delay(
     ``attempt`` is the number of the request which just failed and is
     expected to start at 1.
     """
-    base = min(
-        initial
-        * (
-            2
-            ** (
-                attempt
-                - 1
-            )
-        ),
-        maximum,
-    )
+    base = min(initial * 2 ** (attempt - 1), maximum)
+    jitter = random.uniform(0, base * 0.25)
+    return base + jitter
 
-    jitter = random.uniform(
-        0,
-        base * 0.25,
-    )
-
-    return (
-        base
-        + jitter
-    )
-
-
-def _retry_after_error(
-    attempt: int,
-    max_attempts: int,
-    initial_backoff: float,
-    max_backoff: float,
-    error: Exception,
-    *,
-    reason: str,
-    retry_after: float | None = None,
-    interrupt: Callable[[], bool] | None = None,
-) -> None:
+def _retry_after_error(attempt: int, max_attempts: int, initial_backoff: float, max_backoff: float, error: Exception, *, reason: str, retry_after: float | None=None, interrupt: Callable[[], bool] | None=None) -> None:
     """
     Apply retry backoff or raise once attempts are exhausted.
     """
     if interrupt is not None and interrupt():
-        raise ModelRequestInterrupted(
-            "Model retry interrupted by user steering."
-        ) from error
-
+        raise ModelRequestInterrupted('Model retry interrupted by user steering.') from error
     if attempt >= max_attempts:
-        raise RuntimeError(
-            f"Model API {reason} after "
-            f"{max_attempts} attempts."
-        ) from error
-
-    delay = _backoff_delay(
-        attempt=attempt,
-        initial=initial_backoff,
-        maximum=max_backoff,
-    )
-
+        raise RuntimeError(f'Model API {reason} after {max_attempts} attempts.') from error
+    delay = _backoff_delay(attempt=attempt, initial=initial_backoff, maximum=max_backoff)
     if retry_after is not None:
-        delay = max(
-            delay,
-            retry_after,
-        )
-
-    logger.warning(
-        "Model request %s; retrying in %.1fs (attempt %d/%d).",
-        reason,
-        delay,
-        attempt + 1,
-        max_attempts,
-        exc_info=(
-            type(error),
-            error,
-            error.__traceback__,
-        ),
-    )
-
-    print(
-        f"{YELLOW}"
-        f"⏺ Model request {reason}. "
-        f"Retrying in {delay:.1f}s "
-        f"(attempt "
-        f"{attempt + 1}/{max_attempts})..."
-        f"{RESET}"
-    )
-
+        delay = max(delay, retry_after)
+    logger.warning('Model request %s; retrying in %.1fs (attempt %d/%d).', reason, delay, attempt + 1, max_attempts, exc_info=(type(error), error, error.__traceback__))
+    print(f'{YELLOW}⏺ Model request {reason}. Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_attempts})...{RESET}')
     deadline = time.monotonic() + delay
     while True:
         if interrupt is not None and interrupt():
-            raise ModelRequestInterrupted(
-                "Model retry interrupted by user steering."
-            ) from error
+            raise ModelRequestInterrupted('Model retry interrupted by user steering.') from error
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         time.sleep(min(0.25, remaining))
 
-def _retry_after_from_http_date(
-    value: str,
-) -> float | None:
+def _retry_after_from_http_date(value: str) -> float | None:
     """
     Parse an HTTP-date Retry-After value into a delay in seconds.
 
@@ -369,38 +135,15 @@ def _retry_after_from_http_date(
     or an absolute HTTP date. This helper handles the latter form.
     """
     try:
-        retry_at = parsedate_to_datetime(
-            value
-        )
-    except (
-        TypeError,
-        ValueError,
-        OverflowError,
-    ):
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
         return None
-
     if retry_at.tzinfo is None:
-        retry_at = retry_at.replace(
-            tzinfo=timezone.utc
-        )
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, delay)
 
-    delay = (
-        retry_at
-        - datetime.now(
-            timezone.utc
-        )
-    ).total_seconds()
-
-    return max(
-        0.0,
-        delay,
-    )
-
-
-def _get_retry_after(
-    error: urllib.error.HTTPError,
-    body: str,
-) -> float | None:
+def _get_retry_after(error: urllib.error.HTTPError, body: str) -> float | None:
     """
     Extract a server-requested retry delay.
 
@@ -416,121 +159,51 @@ def _get_retry_after(
     instead.
     """
     headers = error.headers
-
     if headers is not None:
-        retry_after_ms = headers.get(
-            "retry-after-ms"
-        )
-
+        retry_after_ms = headers.get('retry-after-ms')
         if retry_after_ms:
             try:
-                value = float(
-                    retry_after_ms
-                )
-
+                value = float(retry_after_ms)
                 if value >= 0:
-                    return (
-                        value
-                        / 1000.0
-                    )
+                    return value / 1000.0
             except ValueError:
                 pass
-
-        retry_after_header = headers.get(
-            "Retry-After"
-        )
-
+        retry_after_header = headers.get('Retry-After')
         if retry_after_header:
             try:
-                value = float(
-                    retry_after_header
-                )
-
+                value = float(retry_after_header)
                 if value >= 0:
                     return value
             except ValueError:
                 pass
-
-            retry_after_date = (
-                _retry_after_from_http_date(
-                    retry_after_header
-                )
-            )
-
+            retry_after_date = _retry_after_from_http_date(retry_after_header)
             if retry_after_date is not None:
                 return retry_after_date
-
     try:
-        data = json.loads(
-            body
-        )
-    except (
-        json.JSONDecodeError,
-        TypeError,
-        ValueError,
-    ):
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
-
-    if not isinstance(
-        data,
-        dict,
-    ):
+    if not isinstance(data, dict):
         return None
-
-    error_data = data.get(
-        "error"
-    )
-
-    if not isinstance(
-        error_data,
-        dict,
-    ):
+    error_data = data.get('error')
+    if not isinstance(error_data, dict):
         error_data = {}
-
-    metadata = error_data.get(
-        "metadata"
-    )
-
-    if not isinstance(
-        metadata,
-        dict,
-    ):
+    metadata = error_data.get('metadata')
+    if not isinstance(metadata, dict):
         metadata = {}
-
-    candidates = (
-        metadata.get(
-            "retry_after_seconds"
-        ),
-        error_data.get(
-            "retry_after_seconds"
-        ),
-        data.get(
-            "retry_after_seconds"
-        ),
-    )
-
+    candidates = (metadata.get('retry_after_seconds'), error_data.get('retry_after_seconds'), data.get('retry_after_seconds'))
     for candidate in candidates:
         if candidate is None:
             continue
-
         try:
-            value = float(
-                candidate
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
+            value = float(candidate)
+        except (TypeError, ValueError):
             continue
-
         if value >= 0:
             return value
-
     return None
 
-def _should_retry_http_status(
-    status: int,
-) -> bool:
+def _should_retry_http_status(status: int) -> bool:
     """
     Decide whether an HTTP status is generically retryable.
 
@@ -552,19 +225,13 @@ def _should_retry_http_status(
     """
     if status == 429:
         return RETRY_ON_RATE_LIMIT
-
     if status in _RETRYABLE_CLIENT_HTTP_STATUS_CODES:
         return True
-
     if 500 <= status <= 599:
         return True
-
     return False
 
-
-def _http_error_fields(
-    body: str,
-) -> list[tuple[str, str]]:
+def _http_error_fields(body: str) -> list[tuple[str, str]]:
     """
     Extract useful classifier fields from a router/provider error body.
 
@@ -580,141 +247,45 @@ def _http_error_fields(
     error bodies cannot recurse indefinitely.
     """
     try:
-        data = json.loads(
-            body
-        )
-    except (
-        json.JSONDecodeError,
-        TypeError,
-        ValueError,
-    ):
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
         stripped = body.strip()
-
         if stripped:
-            return [
-                (
-                    "body",
-                    stripped,
-                )
-            ]
-
+            return [('body', stripped)]
         return []
+    fields: list[tuple[str, str]] = []
+    interesting_keys = {'code', 'error_type', 'message', 'provider', 'provider_code', 'provider_name', 'raw', 'type'}
 
-    fields: list[
-        tuple[str, str]
-    ] = []
-
-    interesting_keys = {
-        "code",
-        "error_type",
-        "message",
-        "provider",
-        "provider_code",
-        "provider_name",
-        "raw",
-        "type",
-    }
-
-    def visit(
-        value: Any,
-        path: str,
-        depth: int = 0,
-    ) -> None:
+    def visit(value: Any, path: str, depth: int=0) -> None:
+        """Handle visit."""
         if depth > 6:
             return
-
-        if isinstance(
-            value,
-            dict,
-        ):
+        if isinstance(value, dict):
             for key, child in value.items():
-                key_text = str(
-                    key
-                )
+                key_text = str(key)
                 normalized_key = key_text.casefold()
-
-                child_path = (
-                    f"{path}.{key_text}"
-                    if path
-                    else key_text
-                )
-
-                if isinstance(
-                    child,
-                    (dict, list),
-                ):
-                    visit(
-                        child,
-                        child_path,
-                        depth + 1,
-                    )
+                child_path = f'{path}.{key_text}' if path else key_text
+                if isinstance(child, (dict, list)):
+                    visit(child, child_path, depth + 1)
                     continue
-
                 if child is None:
                     continue
-
                 if normalized_key in interesting_keys:
-                    fields.append(
-                        (
-                            child_path.casefold(),
-                            str(child),
-                        )
-                    )
-
-                # Routers frequently put the real provider error in a
-                # JSON-encoded metadata.raw string. Parse that representation
-                # as well so codes such as "upstream_404" are visible to the
-                # classifier instead of remaining hidden in an opaque string.
-                if (
-                    normalized_key == "raw"
-                    and isinstance(
-                        child,
-                        str,
-                    )
-                ):
+                    fields.append((child_path.casefold(), str(child)))
+                if normalized_key == 'raw' and isinstance(child, str):
                     try:
-                        nested = json.loads(
-                            child
-                        )
-                    except (
-                        json.JSONDecodeError,
-                        TypeError,
-                        ValueError,
-                    ):
+                        nested = json.loads(child)
+                    except (json.JSONDecodeError, TypeError, ValueError):
                         continue
-
-                    visit(
-                        nested,
-                        f"{child_path}.json",
-                        depth + 1,
-                    )
-
+                    visit(nested, f'{child_path}.json', depth + 1)
             return
-
-        if isinstance(
-            value,
-            list,
-        ):
-            for index, child in enumerate(
-                value[:20]
-            ):
-                visit(
-                    child,
-                    f"{path}[{index}]",
-                    depth + 1,
-                )
-
-    visit(
-        data,
-        "",
-    )
-
+        if isinstance(value, list):
+            for index, child in enumerate(value[:20]):
+                visit(child, f'{path}[{index}]', depth + 1)
+    visit(data, '')
     return fields
 
-
-def _normalized_error_codes(
-    fields: list[tuple[str, str]],
-) -> set[str]:
+def _normalized_error_codes(fields: list[tuple[str, str]]) -> set[str]:
     """
     Return normalized structured error ``code`` and ``type`` values.
 
@@ -722,33 +293,9 @@ def _normalized_error_codes(
     ``invalid request error``, and ``invalid_request_error`` without requiring
     separate classifier entries.
     """
-    return {
-        value
-        .casefold()
-        .replace(
-            "-",
-            "_",
-        )
-        .replace(
-            " ",
-            "_",
-        )
-        for key, value in fields
-        if (
-            key.endswith(
-                "code"
-            )
-            or key.endswith(
-                "type"
-            )
-        )
-    }
+    return {value.casefold().replace('-', '_').replace(' ', '_') for key, value in fields if key.endswith('code') or key.endswith('type')}
 
-
-def _is_gmicloud_insufficient_balance_error(
-    status: int,
-    body: str,
-) -> bool:
+def _is_gmicloud_insufficient_balance_error(status: int, body: str) -> bool:
     """Detect GMICloud's misleading balance failure on free-model routes.
 
     GMICloud can return HTTP 402 with an ``Insufficient balance`` message even
@@ -758,25 +305,11 @@ def _is_gmicloud_insufficient_balance_error(
     """
     if status != 402:
         return False
-
-    # Inspect the raw body as well as extracted classifier fields. Some router
-    # payloads put ``Insufficient balance`` under a generic ``error`` key, which
-    # is intentionally not one of _http_error_fields()'s classifier keys.
     fields = _http_error_fields(body)
-    detail = " ".join(
-        [body, *(value for _, value in fields)]
-    ).casefold()
+    detail = ' '.join([body, *(value for _, value in fields)]).casefold()
+    return 'gmicloud' in detail and 'insufficient balance' in detail
 
-    return (
-        "gmicloud" in detail
-        and "insufficient balance" in detail
-    )
-
-
-def _should_retry_http_error(
-    status: int,
-    body: str,
-) -> bool:
+def _should_retry_http_error(status: int, body: str) -> bool:
     """
     Decide whether a specific HTTP failure should be retried.
 
@@ -803,171 +336,44 @@ def _should_retry_http_error(
     The order of checks matters: the provider-specific ``upstream_404`` case is
     checked before generic 4xx handling.
     """
-    fields = _http_error_fields(
-        body
-    )
-    codes = _normalized_error_codes(
-        fields
-    )
-
-    # GMICloud may emit a billing-looking HTTP 402 for a route that is
-    # configured as free. Do not let that provider-specific response stop the
-    # client; treat it like a transient upstream failure and continue through
-    # the bounded retry policy.
+    fields = _http_error_fields(body)
+    codes = _normalized_error_codes(fields)
     if _is_gmicloud_insufficient_balance_error(status, body):
         return True
-
-    # Some providers report an internal/routing 404 using HTTP 404 plus an
-    # explicit provider code. Retrying this narrow case is useful; retrying
-    # arbitrary 404s is not.
-    if (
-        status == 404
-        and "upstream_404" in codes
-    ):
+    if status == 404 and 'upstream_404' in codes:
         return True
-
     if status != 400:
-        return _should_retry_http_status(
-            status
-        )
-
-    permanent_codes = {
-        "authentication_error",
-        "context_length_exceeded",
-        "invalid_api_key",
-        "invalid_request_error",
-        "permission_denied",
-        "unprocessable_entity",
-    }
-
+        return _should_retry_http_status(status)
+    permanent_codes = {'authentication_error', 'context_length_exceeded', 'invalid_api_key', 'invalid_request_error', 'permission_denied', 'unprocessable_entity'}
     if codes & permanent_codes:
         return False
-
-    transient_codes = {
-        "all_fallbacks_failed",
-        "empty_response",
-        "engine_overloaded",
-        "model_not_available",
-        "no_available_provider",
-        "overloaded_error",
-        "provider_error",
-        "rate_limit_error",
-        "server_error",
-        "service_unavailable",
-        "temporarily_unavailable",
-        "upstream_error",
-    }
-
-    detail = " ".join(
-        value
-        for _, value in fields
-    ).casefold()
-
-    permanent_markers = (
-        "authentication failed",
-        "context length",
-        "context_length_exceeded",
-        "invalid api key",
-        "invalid request",
-        "invalid_request_error",
-        "invalid tool",
-        "maximum context",
-        "permission denied",
-        "unprocessable",
-    )
-
-    if any(
-        marker in detail
-        for marker in permanent_markers
-    ):
+    transient_codes = {'all_fallbacks_failed', 'empty_response', 'engine_overloaded', 'model_not_available', 'no_available_provider', 'overloaded_error', 'provider_error', 'rate_limit_error', 'server_error', 'service_unavailable', 'temporarily_unavailable', 'upstream_error'}
+    detail = ' '.join((value for _, value in fields)).casefold()
+    permanent_markers = ('authentication failed', 'context length', 'context_length_exceeded', 'invalid api key', 'invalid request', 'invalid_request_error', 'invalid tool', 'maximum context', 'permission denied', 'unprocessable')
+    if any((marker in detail for marker in permanent_markers)):
         return False
-
     if codes & transient_codes:
         return True
+    transient_provider_markers = ('provider returned error', 'upstream error', 'upstream provider', 'provider unavailable', 'provider error', 'all fallbacks failed', 'no available provider', 'no endpoints found', 'model not available', 'rate limit', 'server error', 'service unavailable', 'temporarily unavailable', 'overloaded')
+    return any((marker in detail for marker in transient_provider_markers))
 
-    # Some routers map a temporary provider failure onto HTTP 400 while
-    # retaining only a textual upstream hint rather than a structured code.
-    transient_provider_markers = (
-        "provider returned error",
-        "upstream error",
-        "upstream provider",
-        "provider unavailable",
-        "provider error",
-        "all fallbacks failed",
-        "no available provider",
-        "no endpoints found",
-        "model not available",
-        "rate limit",
-        "server error",
-        "service unavailable",
-        "temporarily unavailable",
-        "overloaded",
-    )
-
-    return any(
-        marker in detail
-        for marker in transient_provider_markers
-    )
-
-
-def _http_retry_reason(
-    status: int,
-    body: str = "",
-) -> str:
+def _http_retry_reason(status: int, body: str='') -> str:
     """
     Return a concise human-readable reason for a retryable HTTP failure.
 
     The response body is inspected so provider-specific failures can receive a
     more accurate explanation than their outer HTTP status alone.
     """
-    fields = _http_error_fields(
-        body
-    )
-    codes = _normalized_error_codes(
-        fields
-    )
-
-    if (
-        status == 404
-        and "upstream_404" in codes
-    ):
-        return (
-            "hit a temporary upstream "
-            "provider routing failure"
-        )
-
+    fields = _http_error_fields(body)
+    codes = _normalized_error_codes(fields)
+    if status == 404 and 'upstream_404' in codes:
+        return 'hit a temporary upstream provider routing failure'
     if _is_gmicloud_insufficient_balance_error(status, body):
-        return (
-            "ignored GMICloud's misleading insufficient-balance "
-            "response on a free-model route"
-        )
+        return "ignored GMICloud's misleading insufficient-balance response on a free-model route"
+    reasons = {400: 'hit a transient upstream provider error', 408: 'timed out at the server', 409: 'hit a temporary conflict', 421: 'was misdirected by the server', 423: 'hit a temporarily locked resource', 424: 'hit a failed upstream dependency', 425: 'was asked to retry later', 429: 'was rate limited', 500: 'hit an internal server error', 502: 'hit a bad gateway', 503: 'hit an unavailable server', 504: 'hit a gateway timeout'}
+    return reasons.get(status, f'received retryable HTTP {status}')
 
-    reasons = {
-        400: "hit a transient upstream provider error",
-        408: "timed out at the server",
-        409: "hit a temporary conflict",
-        421: "was misdirected by the server",
-        423: "hit a temporarily locked resource",
-        424: "hit a failed upstream dependency",
-        425: "was asked to retry later",
-        429: "was rate limited",
-        500: "hit an internal server error",
-        502: "hit a bad gateway",
-        503: "hit an unavailable server",
-        504: "hit a gateway timeout",
-    }
-
-    return reasons.get(
-        status,
-        (
-            "received retryable HTTP "
-            f"{status}"
-        ),
-    )
-
-def _is_retryable_url_error(
-    error: urllib.error.URLError,
-) -> bool:
+def _is_retryable_url_error(error: urllib.error.URLError) -> bool:
     """
     Determine whether a urllib transport error is likely temporary.
 
@@ -980,138 +386,46 @@ def _is_retryable_url_error(
     will not improve through repeated requests.
     """
     reason = error.reason
-
-    if isinstance(
-        reason,
-        ssl.SSLCertVerificationError,
-    ):
+    if isinstance(reason, ssl.SSLCertVerificationError):
         return False
-
-    if isinstance(
-        reason,
-        (
-            TimeoutError,
-            socket.timeout,
-            socket.gaierror,
-            ConnectionError,
-        ),
-    ):
+    if isinstance(reason, (TimeoutError, socket.timeout, socket.gaierror, ConnectionError)):
         return True
-
-    # urllib commonly wraps lower-level networking errors in OSError.
-    # This includes many temporary resolver/socket failures.
-    if isinstance(
-        reason,
-        OSError,
-    ):
+    if isinstance(reason, OSError):
         return True
-
     return False
 
-def validate_tool_history(
-    messages: list[ChatMessage],
-) -> None:
+def validate_tool_history(messages: list[ChatMessage]) -> None:
+    """Handle validate tool history."""
     pending: set[str] = set()
-
-    for index, message in enumerate(
-        messages
-    ):
-        role = message.get("role")
-
-        if role == "assistant":
+    for index, message in enumerate(messages):
+        role = message.get('role')
+        if role == 'assistant':
             if pending:
-                raise ValueError(
-                    f"Assistant message {index} "
-                    "appeared before all previous "
-                    f"tool calls were resolved: "
-                    f"{sorted(pending)}"
-                )
-
-            tool_calls = message.get(
-                "tool_calls"
-            )
-
-            if isinstance(
-                tool_calls,
-                list,
-            ):
+                raise ValueError(f'Assistant message {index} appeared before all previous tool calls were resolved: {sorted(pending)}')
+            tool_calls = message.get('tool_calls')
+            if isinstance(tool_calls, list):
                 for call in tool_calls:
-                    if not isinstance(
-                        call,
-                        dict,
-                    ):
-                        raise ValueError(
-                            f"Assistant message "
-                            f"{index} contains an "
-                            "invalid tool call."
-                        )
-
-                    call_id = call.get("id")
-
-                    if not isinstance(
-                        call_id,
-                        str,
-                    ):
-                        raise ValueError(
-                            f"Assistant message "
-                            f"{index} contains a "
-                            "tool call without an id."
-                        )
-
+                    if not isinstance(call, dict):
+                        raise ValueError(f'Assistant message {index} contains an invalid tool call.')
+                    call_id = call.get('id')
+                    if not isinstance(call_id, str):
+                        raise ValueError(f'Assistant message {index} contains a tool call without an id.')
                     if call_id in pending:
-                        raise ValueError(
-                            f"Duplicate tool call "
-                            f"id {call_id!r}."
-                        )
-
-                    pending.add(
-                        call_id
-                    )
-
-        elif role == "tool":
-            call_id = message.get(
-                "tool_call_id"
-            )
-
-            if not isinstance(
-                call_id,
-                str,
-            ):
-                raise ValueError(
-                    f"Tool message {index} "
-                    "has no tool_call_id."
-                )
-
+                        raise ValueError(f'Duplicate tool call id {call_id!r}.')
+                    pending.add(call_id)
+        elif role == 'tool':
+            call_id = message.get('tool_call_id')
+            if not isinstance(call_id, str):
+                raise ValueError(f'Tool message {index} has no tool_call_id.')
             if call_id not in pending:
-                raise ValueError(
-                    f"Tool message {index} "
-                    "references unknown or "
-                    "already-resolved tool call "
-                    f"{call_id!r}."
-                )
-
-            pending.remove(
-                call_id
-            )
-
+                raise ValueError(f'Tool message {index} references unknown or already-resolved tool call {call_id!r}.')
+            pending.remove(call_id)
         elif pending:
-            raise ValueError(
-                f"Message {index} with role "
-                f"{role!r} appeared while "
-                "tool calls were unresolved: "
-                f"{sorted(pending)}"
-            )
-
+            raise ValueError(f'Message {index} with role {role!r} appeared while tool calls were unresolved: {sorted(pending)}')
     if pending:
-        raise ValueError(
-            "Conversation ends with unresolved "
-            f"tool calls: {sorted(pending)}"
-        )
+        raise ValueError(f'Conversation ends with unresolved tool calls: {sorted(pending)}')
 
-
-def _http_error_detail(
-    body: str,
-) -> str:
+def _http_error_detail(body: str) -> str:
     """
     Extract the most useful human-readable error text from an
     OpenAI-compatible HTTP error response.
@@ -1131,266 +445,111 @@ def _http_error_detail(
     included in the returned text.
     """
     if not body:
-        return ""
-
+        return ''
     try:
-        data = json.loads(
-            body
-        )
-    except (
-        json.JSONDecodeError,
-        TypeError,
-        ValueError,
-    ):
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return body.strip()
-
-    if not isinstance(
-        data,
-        dict,
-    ):
+    if not isinstance(data, dict):
         return body.strip()
-
-    error_data = data.get(
-        "error"
-    )
-
-    if not isinstance(
-        error_data,
-        dict,
-    ):
+    error_data = data.get('error')
+    if not isinstance(error_data, dict):
         return body.strip()
-
-    metadata = error_data.get(
-        "metadata"
-    )
-
-    if isinstance(
-        metadata,
-        dict,
-    ):
-        raw = metadata.get(
-            "raw"
-        )
-        provider = (
-            metadata.get(
-                "provider_name"
-            )
-            or metadata.get(
-                "provider"
-            )
-        )
-
+    metadata = error_data.get('metadata')
+    if isinstance(metadata, dict):
+        raw = metadata.get('raw')
+        provider = metadata.get('provider_name') or metadata.get('provider')
         if raw:
-            raw_text = str(
-                raw
-            ).strip()
-
+            raw_text = str(raw).strip()
             raw_data: Any = None
-
-            if isinstance(
-                raw,
-                (dict, list),
-            ):
+            if isinstance(raw, (dict, list)):
                 raw_data = raw
             else:
                 try:
-                    raw_data = json.loads(
-                        raw_text
-                    )
-                except (
-                    json.JSONDecodeError,
-                    TypeError,
-                    ValueError,
-                ):
+                    raw_data = json.loads(raw_text)
+                except (json.JSONDecodeError, TypeError, ValueError):
                     raw_data = None
-
-            if isinstance(
-                raw_data,
-                dict,
-            ):
-                nested_error = raw_data.get(
-                    "error"
-                )
-
-                if isinstance(
-                    nested_error,
-                    dict,
-                ):
-                    nested_message = nested_error.get(
-                        "message"
-                    )
-                    nested_type = nested_error.get(
-                        "type"
-                    )
-                    nested_code = nested_error.get(
-                        "code"
-                    )
-
+            if isinstance(raw_data, dict):
+                nested_error = raw_data.get('error')
+                if isinstance(nested_error, dict):
+                    nested_message = nested_error.get('message')
+                    nested_type = nested_error.get('type')
+                    nested_code = nested_error.get('code')
                     if nested_message:
-                        raw_text = str(
-                            nested_message
-                        )
-                    elif (
-                        nested_type
-                        and nested_code
-                    ):
-                        raw_text = (
-                            f"{nested_type}: "
-                            f"{nested_code}"
-                        )
+                        raw_text = str(nested_message)
+                    elif nested_type and nested_code:
+                        raw_text = f'{nested_type}: {nested_code}'
                     elif nested_code:
-                        raw_text = str(
-                            nested_code
-                        )
+                        raw_text = str(nested_code)
                     elif nested_type:
-                        raw_text = str(
-                            nested_type
-                        )
-
-                elif raw_data.get(
-                    "message"
-                ):
-                    raw_text = str(
-                        raw_data[
-                            "message"
-                        ]
-                    )
-
+                        raw_text = str(nested_type)
+                elif raw_data.get('message'):
+                    raw_text = str(raw_data['message'])
             if provider:
-                return (
-                    f"[{provider}] "
-                    f"{raw_text}"
-                )
-
+                return f'[{provider}] {raw_text}'
             return raw_text
-
-    message = error_data.get(
-        "message"
-    )
-
+    message = error_data.get('message')
     if message:
-        return str(
-            message
-        )
-
-    error_type = error_data.get(
-        "type"
-    )
-    error_code = error_data.get(
-        "code"
-    )
-
-    if (
-        error_type
-        and error_code
-    ):
-        return (
-            f"{error_type}: "
-            f"{error_code}"
-        )
-
+        return str(message)
+    error_type = error_data.get('type')
+    error_code = error_data.get('code')
+    if error_type and error_code:
+        return f'{error_type}: {error_code}'
     if error_code:
-        return str(
-            error_code
-        )
-
+        return str(error_code)
     if error_type:
-        return str(
-            error_type
-        )
-
+        return str(error_type)
     return body.strip()
 
-def _finish_reason_entries(
-    value: Any,
-) -> list[str]:
+def _finish_reason_entries(value: Any) -> list[str]:
     """Return printable finish-reason entries for every response choice."""
     if not isinstance(value, dict):
-        return ["<response is not an object>"]
-
-    choices = value.get("choices")
-
+        return ['<response is not an object>']
+    choices = value.get('choices')
     if not isinstance(choices, list) or not choices:
-        return ["<no choices>"]
-
+        return ['<no choices>']
     entries: list[str] = []
-
     for index, choice in enumerate(choices):
         if not isinstance(choice, dict):
-            entries.append(
-                f"{index}=<invalid choice>"
-            )
+            entries.append(f'{index}=<invalid choice>')
             continue
-
-        entries.append(
-            f"{index}={choice.get('finish_reason')!r}"
-        )
-
+        entries.append(f"{index}={choice.get('finish_reason')!r}")
     return entries
 
-
-def _log_finish_reasons(
-    value: Any,
-) -> None:
+def _log_finish_reasons(value: Any) -> None:
     """Log finish_reason for every decoded HTTP-200 completion response."""
-    _debug_print(
-        f"⏺ Model finish_reason(s): "
-        f"{', '.join(_finish_reason_entries(value))}"
-    )
+    _debug_print(f"⏺ Model finish_reason(s): {', '.join(_finish_reason_entries(value))}")
 
-
-def _choice_output_diagnostic(
-    value: Any,
-) -> str:
+def _choice_output_diagnostic(value: Any) -> str:
     """Describe response output shape without dumping model content."""
     if not isinstance(value, dict):
-        return "response is not a JSON object"
-
-    choices = value.get("choices")
-
+        return 'response is not a JSON object'
+    choices = value.get('choices')
     if not isinstance(choices, list):
-        return "choices is not a list"
-
+        return 'choices is not a list'
     if not choices:
-        return "choices is empty"
-
+        return 'choices is empty'
     first = choices[0]
-
     if not isinstance(first, dict):
-        return "choices[0] is not an object"
-
-    message = first.get("message")
-
+        return 'choices[0] is not an object'
+    message = first.get('message')
     if not isinstance(message, dict):
-        return "choices[0].message is missing or invalid"
-
-    content = message.get("content")
-    tool_calls = message.get("tool_calls")
-
+        return 'choices[0].message is missing or invalid'
+    content = message.get('content')
+    tool_calls = message.get('tool_calls')
     if content is None:
-        content_detail = "content=null"
+        content_detail = 'content=null'
     elif isinstance(content, str):
-        content_detail = (
-            "content=empty-string"
-            if not content.strip()
-            else f"content={len(content)} chars"
-        )
+        content_detail = 'content=empty-string' if not content.strip() else f'content={len(content)} chars'
     else:
-        content_detail = (
-            f"content_type={type(content).__name__}"
-        )
-
+        content_detail = f'content_type={type(content).__name__}'
     if tool_calls is None:
-        tool_detail = "tool_calls=null"
+        tool_detail = 'tool_calls=null'
     elif isinstance(tool_calls, list):
-        tool_detail = f"tool_calls={len(tool_calls)}"
+        tool_detail = f'tool_calls={len(tool_calls)}'
     else:
-        tool_detail = (
-            f"tool_calls_type={type(tool_calls).__name__}"
-        )
-
-    return f"{content_detail}, {tool_detail}"
-
+        tool_detail = f'tool_calls_type={type(tool_calls).__name__}'
+    return f'{content_detail}, {tool_detail}'
 
 def _has_usable_choice(value: Any) -> bool:
     """
@@ -1403,41 +562,22 @@ def _has_usable_choice(value: Any) -> bool:
     """
     if not isinstance(value, dict):
         return False
-
-    choices = value.get("choices")
-
+    choices = value.get('choices')
     if not isinstance(choices, list) or not choices:
         return False
-
     first = choices[0]
-
     if not isinstance(first, dict):
         return False
-
-    message = first.get("message")
-
+    message = first.get('message')
     if not isinstance(message, dict):
         return False
-
-    content = message.get("content")
-    tool_calls = message.get("tool_calls")
-
-    has_content = (
-        isinstance(content, str)
-        and bool(content.strip())
-    )
-    has_tool_calls = (
-        isinstance(tool_calls, list)
-        and bool(tool_calls)
-    )
-
+    content = message.get('content')
+    tool_calls = message.get('tool_calls')
+    has_content = isinstance(content, str) and bool(content.strip())
+    has_tool_calls = isinstance(tool_calls, list) and bool(tool_calls)
     return has_content or has_tool_calls
 
-
-def _is_stealth_continue_work_error(
-    status: int,
-    body: str,
-) -> bool:
+def _is_stealth_continue_work_error(status: int, body: str) -> bool:
     """
     Detect the provider-specific ``[Stealth] ERROR`` failure mode.
 
@@ -1449,39 +589,17 @@ def _is_stealth_continue_work_error(
     """
     if status not in {400, 422}:
         return False
+    fields = _http_error_fields(body)
+    detail = ' '.join((value for _, value in fields)).casefold()
+    return '[stealth] error' in detail
 
-    fields = _http_error_fields(
-        body
-    )
-    detail = " ".join(
-        value
-        for _, value in fields
-    ).casefold()
-
-    return "[stealth] error" in detail
-
-
-def _append_continue_work_message(
-    messages: list[ChatMessage],
-) -> list[ChatMessage]:
+def _append_continue_work_message(messages: list[ChatMessage]) -> list[ChatMessage]:
     """Return a copied request history with an explicit continuation turn."""
     continued = list(messages)
-    continued.append(
-        cast(
-            ChatMessage,
-            {
-                "role": "user",
-                "content": "continue your work",
-            },
-        )
-    )
+    continued.append(cast(ChatMessage, {'role': 'user', 'content': 'continue your work'}))
     return continued
 
-
-def _resolve_model_snapshot(
-    context: ExecutionContext,
-    model_config: ModelConfig | None,
-) -> ModelConfig:
+def _resolve_model_snapshot(context: ExecutionContext, model_config: ModelConfig | None) -> ModelConfig:
     """Resolve the model once for the lifetime of one HTTP request.
 
     ``ExecutionContext.config.model()`` is the canonical source. A supplied
@@ -1489,24 +607,10 @@ def _resolve_model_snapshot(
     """
     model = model_config if model_config is not None else context.config.model()
     if not isinstance(model, ModelConfig):
-        raise TypeError("model_config must be a ModelConfig")
+        raise TypeError('model_config must be a ModelConfig')
     return model
 
-
-def call_api(
-    context: ExecutionContext,
-    messages: list[ChatMessage],
-    tools: dict[str, Tool],
-    reasoning_effort: str | None = None,
-    *,
-    model_config: ModelConfig | None = None,
-    request_timeout: float | None = None,
-    max_attempts: int | None = None,
-    initial_backoff: float | None = None,
-    max_backoff: float | None = None,
-    retry_interrupt: Callable[[], bool] | None = None,
-    sys_prompt: str | None = None
-) -> dict[str, Any]:
+def call_api(context: ExecutionContext, messages: list[ChatMessage], tools: dict[str, Tool], reasoning_effort: str | None=None, *, model_config: ModelConfig | None=None, request_timeout: float | None=None, max_attempts: int | None=None, initial_backoff: float | None=None, max_backoff: float | None=None, retry_interrupt: Callable[[], bool] | None=None, sys_prompt: str | None=None) -> dict[str, Any]:
     """
     Perform one OpenAI-compatible Chat Completions request.
 
@@ -1642,430 +746,123 @@ def call_api(
         max_backoff = retry_config.max_backoff
     if sys_prompt is None:
         sys_prompt = system_prompt(context)
-
     if max_attempts < 1:
-        raise ValueError(
-            "max_attempts must be at least 1."
-        )
-
+        raise ValueError('max_attempts must be at least 1.')
     if request_timeout <= 0:
-        raise ValueError(
-            "request_timeout must be greater than 0."
-        )
-
+        raise ValueError('request_timeout must be greater than 0.')
     if initial_backoff < 0:
-        raise ValueError(
-            "initial_backoff cannot be negative."
-        )
-
+        raise ValueError('initial_backoff cannot be negative.')
     if max_backoff < 0:
-        raise ValueError(
-            "max_backoff cannot be negative."
-        )
-
+        raise ValueError('max_backoff cannot be negative.')
     if initial_backoff > max_backoff:
-        raise ValueError(
-            "initial_backoff cannot exceed max_backoff."
-        )
-
-    system_messages: list[
-        ChatCompletionSystemMessageParam
-    ] = [
-        {
-            "role": "system",
-            "content": sys_prompt,
-        }
-    ]
-
-    memory_context = build_memory_context(
-        tools
-    )
-
-    messages_to_merge: list[ChatMessage] = [
-        *system_messages,
-        *messages,
-    ]
-
-    request_messages = merge_consecutive_roles(
-        messages_to_merge
-    )
-
-    request_messages = insert_memory_context(
-        request_messages,
-        memory_context,
-    )
-
-    request_messages = normalize_message_content(
-        request_messages
-    )
-
-    validate_tool_history(
-        request_messages
-    )
-
-    payload: dict[str, Any] = {
-        "model": model.id,
-        "max_tokens": model.max_output_tokens,
-        "messages": request_messages,
-    }
-
+        raise ValueError('initial_backoff cannot exceed max_backoff.')
+    system_messages: list[ChatCompletionSystemMessageParam] = [{'role': 'system', 'content': sys_prompt}]
+    memory_context = build_memory_context(tools)
+    messages_to_merge: list[ChatMessage] = [*system_messages, *messages]
+    request_messages = merge_consecutive_roles(messages_to_merge)
+    request_messages = insert_memory_context(request_messages, memory_context)
+    request_messages = normalize_message_content(request_messages)
+    validate_tool_history(request_messages)
+    payload: dict[str, Any] = {'model': model.id, 'max_tokens': model.max_output_tokens, 'messages': request_messages}
     if reasoning_effort is not None:
-        payload[
-            "reasoning_effort"
-        ] = reasoning_effort
-
-    tool_definitions = [
-        tool.get_as_tool()
-        for tool in tools.values()
-    ]
-
+        payload['reasoning_effort'] = reasoning_effort
+    tool_definitions = [tool.get_as_tool() for tool in tools.values()]
     if tool_definitions:
-        payload[
-            "tools"
-        ] = tool_definitions
-
-    url = chat_completions_url(
-        model.host
-    )
-
-    active_request_messages = list(
-        request_messages
-    )
+        payload['tools'] = tool_definitions
+    url = chat_completions_url(model.host)
+    active_request_messages = list(request_messages)
     stealth_continue_used = False
     recovery_request_pending = False
     attempt = 1
-
     while attempt <= max_attempts:
-        payload[
-            "messages"
-        ] = active_request_messages
-
-        request_data = json.dumps(
-            payload
-        ).encode(
-            "utf-8"
-        )
-
-        request = urllib.request.Request(
-            url,
-            data=request_data,
-            headers={
-                "Content-Type": (
-                    "application/json"
-                ),
-                "Authorization": (
-                    f"Bearer {model.decrypt_api_key()}"
-                ),
-            },
-            method="POST",
-        )
-
+        payload['messages'] = active_request_messages
+        request_data = json.dumps(payload).encode('utf-8')
+        request = urllib.request.Request(url, data=request_data, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {model.decrypt_api_key()}'}, method='POST')
         if recovery_request_pending:
-            request_label = "stealth continuation recovery"
+            request_label = 'stealth continuation recovery'
             recovery_request_pending = False
         else:
-            request_label = "model request"
-
-        _debug_print(
-            f"⏺ Starting {request_label} "
-            f"(attempt {attempt}/{max_attempts}, "
-            f"model={model.id}, "
-            f"timeout={request_timeout:.1f}s)"
-        )
-
+            request_label = 'model request'
+        _debug_print(f'⏺ Starting {request_label} (attempt {attempt}/{max_attempts}, model={model.id}, timeout={request_timeout:.1f}s)')
         started_at = time.monotonic()
-
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=request_timeout,
-            ) as response:
-                raw_response = response.read().decode(
-                    "utf-8",
-                    errors="replace",
-                )
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                raw_response = response.read().decode('utf-8', errors='replace')
                 response_status = response.status
-
             elapsed = time.monotonic() - started_at
-            _debug_print(
-                f"⏺ Model HTTP {response_status} received "
-                f"in {elapsed:.2f}s"
-            )
-
+            _debug_print(f'⏺ Model HTTP {response_status} received in {elapsed:.2f}s')
             try:
                 decoded = json.loads(raw_response)
-
-                decoded = normalize_model_response(
-                    decoded,
-                    tools=tools,
-                    model_id=model.id
-                )
-
+                decoded = normalize_model_response(decoded, tools=tools, model_id=model.id)
                 _log_finish_reasons(decoded)
-
                 if _has_usable_choice(decoded):
                     return decoded
             except json.JSONDecodeError as error:
-                _retry_after_error(
-                    attempt=attempt,
-                    max_attempts=max_attempts,
-                    initial_backoff=initial_backoff,
-                    max_backoff=max_backoff,
-                    error=error,
-                    reason="received an invalid JSON response",
-                    interrupt=retry_interrupt,
-                )
+                _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=error, reason='received an invalid JSON response', interrupt=retry_interrupt)
                 attempt += 1
                 continue
-
-            _log_finish_reasons(
-                decoded
-            )
-
+            _log_finish_reasons(decoded)
             if _has_usable_choice(decoded):
                 return decoded
-
-            diagnostic = _choice_output_diagnostic(
-                decoded
-            )
-            logger.warning(
-                "Model API returned HTTP 200 without usable assistant "
-                "output: %s",
-                diagnostic,
-            )
-            print(
-                f"{YELLOW}"
-                f"⚠ Model API returned HTTP 200 without usable "
-                f"assistant output ({diagnostic})."
-                f"{RESET}"
-            )
-
-            response_error = RuntimeError(
-                "Model API returned HTTP 200 without a usable choice."
-            )
-            _retry_after_error(
-                attempt=attempt,
-                max_attempts=max_attempts,
-                initial_backoff=initial_backoff,
-                max_backoff=max_backoff,
-                error=response_error,
-                reason=(
-                    "returned an empty or malformed response "
-                    f"({diagnostic})"
-                ),
-                interrupt=retry_interrupt,
-            )
+            diagnostic = _choice_output_diagnostic(decoded)
+            logger.warning('Model API returned HTTP 200 without usable assistant output: %s', diagnostic)
+            print(f'{YELLOW}⚠ Model API returned HTTP 200 without usable assistant output ({diagnostic}).{RESET}')
+            response_error = RuntimeError('Model API returned HTTP 200 without a usable choice.')
+            _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=response_error, reason=f'returned an empty or malformed response ({diagnostic})', interrupt=retry_interrupt)
             attempt += 1
             continue
-
         except urllib.error.HTTPError as error:
             try:
-                body = error.read().decode(
-                    "utf-8",
-                    errors="replace",
-                )
+                body = error.read().decode('utf-8', errors='replace')
             except Exception:
-                body = ""
-
-            detail = _http_error_detail(
-                body
-            )
-
-            gmicloud_balance_ignored = (
-                _is_gmicloud_insufficient_balance_error(
-                    error.code,
-                    body,
-                )
-            )
-
+                body = ''
+            detail = _http_error_detail(body)
+            gmicloud_balance_ignored = _is_gmicloud_insufficient_balance_error(error.code, body)
             if gmicloud_balance_ignored:
-                logger.warning(
-                    "Ignoring GMICloud HTTP %d insufficient-balance "
-                    "response under retry policy.",
-                    error.code,
-                )
-                print(
-                    f"{YELLOW}"
-                    f"⏺ Ignoring GMICloud HTTP {error.code} "
-                    f"'Insufficient balance' response; "
-                    f"continuing with retry policy."
-                    f"{RESET}"
-                )
+                logger.warning('Ignoring GMICloud HTTP %d insufficient-balance response under retry policy.', error.code)
+                print(f"{YELLOW}⏺ Ignoring GMICloud HTTP {error.code} 'Insufficient balance' response; continuing with retry policy.{RESET}")
             else:
-                logger.error(
-                    "Model API returned HTTP %d: %s",
-                    error.code,
-                    detail or error.reason,
-                )
-                print(
-                    f"{RED}"
-                    f"✖ Model API returned HTTP "
-                    f"{error.code}: "
-                    f"{detail or error.reason}"
-                    f"{RESET}"
-                )
-
-            if _is_stealth_continue_work_error(
-                error.code,
-                body,
-            ):
+                logger.error('Model API returned HTTP %d: %s', error.code, detail or error.reason)
+                print(f'{RED}✖ Model API returned HTTP {error.code}: {detail or error.reason}{RESET}')
+            if _is_stealth_continue_work_error(error.code, body):
                 if stealth_continue_used:
-                    raise RuntimeError(
-                        f"Model API returned HTTP "
-                        f"{error.code} after the one-time "
-                        f"'continue your work' recovery: "
-                        f"{detail or error.reason}"
-                    ) from error
-
-                if (
-                    retry_interrupt is not None
-                    and retry_interrupt()
-                ):
-                    raise ModelRequestInterrupted(
-                        "Model recovery interrupted by user steering."
-                    ) from error
-
-                active_request_messages = (
-                    _append_continue_work_message(
-                        active_request_messages
-                    )
-                )
-                active_request_messages = (
-                    normalize_message_content(
-                        active_request_messages
-                    )
-                )
-                validate_tool_history(
-                    active_request_messages
-                )
-
+                    raise RuntimeError(f"Model API returned HTTP {error.code} after the one-time 'continue your work' recovery: {detail or error.reason}") from error
+                if retry_interrupt is not None and retry_interrupt():
+                    raise ModelRequestInterrupted('Model recovery interrupted by user steering.') from error
+                active_request_messages = _append_continue_work_message(active_request_messages)
+                active_request_messages = normalize_message_content(active_request_messages)
+                validate_tool_history(active_request_messages)
                 stealth_continue_used = True
                 recovery_request_pending = True
-
-                logger.warning(
-                    "Stealth provider failure detected; issuing one "
-                    "continuation recovery request."
-                )
-                print(
-                    f"{YELLOW}"
-                    f"⏺ Stealth provider failure detected. "
-                    f"Appending user message "
-                    f"'continue your work' and issuing one "
-                    f"continuation recovery request."
-                    f"{RESET}"
-                )
-
-                # This is a changed request, not a retry of the failed payload,
-                # so it deliberately does not consume another ordinary retry
-                # slot or wait for exponential backoff.
+                logger.warning('Stealth provider failure detected; issuing one continuation recovery request.')
+                print(f"{YELLOW}⏺ Stealth provider failure detected. Appending user message 'continue your work' and issuing one continuation recovery request.{RESET}")
                 continue
-
-            if _should_retry_http_error(
-                error.code,
-                body,
-            ):
-                retry_after = _get_retry_after(
-                    error,
-                    body,
-                )
-
-                reason = _http_retry_reason(
-                    error.code,
-                    body,
-                )
-
+            if _should_retry_http_error(error.code, body):
+                retry_after = _get_retry_after(error, body)
+                reason = _http_retry_reason(error.code, body)
                 if detail:
-                    reason += f": {detail[:300]}"
-
-                _retry_after_error(
-                    attempt=attempt,
-                    max_attempts=max_attempts,
-                    initial_backoff=initial_backoff,
-                    max_backoff=max_backoff,
-                    error=error,
-                    reason=reason,
-                    retry_after=retry_after,
-                    interrupt=retry_interrupt,
-                )
-
+                    reason += f': {detail[:300]}'
+                _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=error, reason=reason, retry_after=retry_after, interrupt=retry_interrupt)
                 attempt += 1
                 continue
-
-            raise RuntimeError(
-                f"Model API returned HTTP "
-                f"{error.code}: "
-                f"{detail or error.reason}"
-            ) from error
-
-        except (
-            TimeoutError,
-            socket.timeout,
-        ) as error:
-            _retry_after_error(
-                attempt=attempt,
-                max_attempts=max_attempts,
-                initial_backoff=initial_backoff,
-                max_backoff=max_backoff,
-                error=error,
-                reason="timed out",
-                interrupt=retry_interrupt,
-            )
+            raise RuntimeError(f'Model API returned HTTP {error.code}: {detail or error.reason}') from error
+        except (TimeoutError, socket.timeout) as error:
+            _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=error, reason='timed out', interrupt=retry_interrupt)
             attempt += 1
             continue
-
         except urllib.error.URLError as error:
-            if _is_retryable_url_error(
-                error
-            ):
-                _retry_after_error(
-                    attempt=attempt,
-                    max_attempts=max_attempts,
-                    initial_backoff=initial_backoff,
-                    max_backoff=max_backoff,
-                    error=error,
-                    reason=(
-                        "hit a temporary "
-                        "network error"
-                    ),
-                    interrupt=retry_interrupt,
-                )
+            if _is_retryable_url_error(error):
+                _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=error, reason='hit a temporary network error', interrupt=retry_interrupt)
                 attempt += 1
                 continue
-
-            raise RuntimeError(
-                "Could not connect to model API: "
-                f"{error.reason}"
-            ) from error
-
-        # Some socket/HTTP failures can escape urllib without being
-        # wrapped in URLError. ConnectionError covers common cases such
-        # as connection reset, refused, and aborted connections.
+            raise RuntimeError(f'Could not connect to model API: {error.reason}') from error
         except ConnectionError as error:
-            _retry_after_error(
-                attempt=attempt,
-                max_attempts=max_attempts,
-                initial_backoff=initial_backoff,
-                max_backoff=max_backoff,
-                error=error,
-                reason=(
-                    "lost the network "
-                    "connection"
-                ),
-                interrupt=retry_interrupt,
-            )
+            _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=error, reason='lost the network connection', interrupt=retry_interrupt)
             attempt += 1
             continue
+    raise RuntimeError('Model API request failed unexpectedly.')
 
-    # The loop should only terminate by returning a response or by
-    # _retry_after_error() raising after the final allowed ordinary attempt.
-    raise RuntimeError(
-        "Model API request failed unexpectedly."
-    )
-
-
-def build_memory_context(
-    tools: dict[str, Tool],
-) -> str | None:
+def build_memory_context(tools: dict[str, Tool]) -> str | None:
     """
     Build durable conversation-memory context for the next model request.
 
@@ -2073,42 +870,17 @@ def build_memory_context(
     representation through ``format_for_llm``.
     """
     sections: list[str] = []
-
     for tool in tools.values():
-        if not isinstance(
-            tool,
-            MemoryTool,
-        ):
+        if not isinstance(tool, MemoryTool):
             continue
-
         section = tool.format_for_llm().strip()
-
         if section:
-            sections.append(
-                section
-            )
-
+            sections.append(section)
     if not sections:
         return None
+    return '\n\n'.join(('# Conversation Memory', 'The following state is owned by this conversation and survives agent turns and dropped older messages. Treat it as active working memory. Update it through the corresponding memory tools when it becomes completed, stale, invalid, or otherwise changes.', *sections))
 
-    return "\n\n".join(
-        (
-            "# Conversation Memory",
-            (
-                "The following state is owned by this conversation and "
-                "survives agent turns and dropped older messages. Treat it "
-                "as active working memory. Update it "
-                "through the corresponding memory tools when it becomes "
-                "completed, stale, invalid, or otherwise changes."
-            ),
-            *sections,
-        )
-    )
-
-def insert_memory_context(
-    messages: list[ChatMessage],
-    memory_context: str | None,
-) -> list[ChatMessage]:
+def insert_memory_context(messages: list[ChatMessage], memory_context: str | None) -> list[ChatMessage]:
     """
     Insert mutable conversation memory late in the prompt to maximize
     reusable prompt-cache prefix length.
@@ -2121,65 +893,21 @@ def insert_memory_context(
     """
     if not memory_context:
         return list(messages)
-
-    memory_message = cast(
-        ChatMessage,
-        {
-            "role": "system",
-            "content": memory_context,
-        },
-    )
-
+    memory_message = cast(ChatMessage, {'role': 'system', 'content': memory_context})
     result = list(messages)
-
-    # Never insert between an assistant tool call and its tool results.
-    # Instead place memory before the entire latest tool exchange.
-    for index in range(
-        len(result) - 1,
-        -1,
-        -1,
-    ):
+    for index in range(len(result) - 1, -1, -1):
         message = result[index]
-
-        if (
-            message.get("role") == "assistant"
-            and isinstance(
-                message.get("tool_calls"),
-                list,
-            )
-            and message.get("tool_calls")
-        ):
-            result.insert(
-                index,
-                memory_message,
-            )
-
+        if message.get('role') == 'assistant' and isinstance(message.get('tool_calls'), list) and message.get('tool_calls'):
+            result.insert(index, memory_message)
             return result
-
-    # No historical tool exchange. Keep mutable memory near the end,
-    # but before the current user turn.
-    for index in range(
-        len(result) - 1,
-        -1,
-        -1,
-    ):
-        if result[index].get("role") == "user":
-            result.insert(
-                index,
-                memory_message,
-            )
-
+    for index in range(len(result) - 1, -1, -1):
+        if result[index].get('role') == 'user':
+            result.insert(index, memory_message)
             return result
-
-    result.append(
-        memory_message
-    )
-
+    result.append(memory_message)
     return result
 
-def normalize_message_content(
-    messages: list[ChatMessage],
-) -> list[ChatMessage]:
+def normalize_message_content(messages: list[ChatMessage]) -> list[ChatMessage]:
     """
     Normalize OpenAI-compatible message content for stricter providers.
 
@@ -2188,48 +916,16 @@ def normalize_message_content(
     when tool_calls are present.
     """
     normalized: list[ChatMessage] = []
-
     for index, message in enumerate(messages):
-        current = cast(
-            dict[str, Any],
-            dict(message),
-        )
-
-        content = current.get(
-            "content"
-        )
-
-        role = current.get(
-            "role"
-        )
-
+        current = cast(dict[str, Any], dict(message))
+        content = current.get('content')
+        role = current.get('role')
         if content is None:
-            if (
-                role == "assistant"
-                and current.get("tool_calls")
-            ):
-                current["content"] = ""
+            if role == 'assistant' and current.get('tool_calls'):
+                current['content'] = ''
             else:
-                raise ValueError(
-                    f"Message {index} with role {role!r} "
-                    "has null or missing content."
-                )
-
-        elif not isinstance(
-            content,
-            (str, list),
-        ):
-            raise ValueError(
-                f"Message {index} with role {role!r} "
-                "has invalid content type "
-                f"{type(content).__name__!r}."
-            )
-
-        normalized.append(
-            cast(
-                ChatMessage,
-                current,
-            )
-        )
-
+                raise ValueError(f'Message {index} with role {role!r} has null or missing content.')
+        elif not isinstance(content, (str, list)):
+            raise ValueError(f'Message {index} with role {role!r} has invalid content type {type(content).__name__!r}.')
+        normalized.append(cast(ChatMessage, current))
     return normalized

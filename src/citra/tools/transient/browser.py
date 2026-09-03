@@ -18,6 +18,7 @@ from .prompt_user import PromptUser
 
 
 class Browser(Tool):
+    """Represent Browser."""
     TOOL_ID = "browser"
     SAFE_ACTIONS = frozenset(
         {
@@ -178,6 +179,7 @@ class Browser(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -187,6 +189,7 @@ class Browser(Tool):
         )
     
     def __init__(self, context: ExecutionContext) -> None:
+        """Initialize the instance."""
         super().__init__(context)
 
     @override
@@ -194,6 +197,7 @@ class Browser(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         action = str(arguments["action"]).strip()
         config = self.context.config.browser
 
@@ -383,6 +387,7 @@ class Browser(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         action = str(arguments.get("action", "?"))
         parts = [f"action={action}"]
 
@@ -413,6 +418,7 @@ class Browser(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if text == "Browser session closed.":
@@ -423,6 +429,7 @@ class Browser(Tool):
 
     @staticmethod
     def _truncate(value: str) -> str:
+        """Handle truncate."""
         if len(value) <= 120:
             return value
         return value[:120] + "..."
@@ -433,6 +440,7 @@ class Browser(Tool):
         arguments: dict[str, Any],
         reason: str,
     ) -> None:
+        """Handle authorize navigation."""
         url = str(
             arguments.get("url", "")
         ).strip()
@@ -477,6 +485,7 @@ class Browser(Tool):
         reason: str,
         request: dict[str, Any],
     ) -> None:
+        """Handle authorize unsafe action."""
         if not reason:
             raise ValueError(
                 f"'reason' is required for unsafe browser "
@@ -520,6 +529,7 @@ class Browser(Tool):
         cls,
         configured: object,
     ) -> frozenset[str]:
+        """Handle enabled unsafe actions."""
         if not isinstance(
             configured,
             (list, tuple, frozenset),
@@ -562,6 +572,7 @@ class Browser(Tool):
         action: str,
         request: dict[str, Any],
     ) -> str:
+        """Handle unsafe action details."""
         if action == "evaluate":
             expression = str(
                 request.get("expression", "")
@@ -607,6 +618,7 @@ class Browser(Tool):
 
     @staticmethod
     def _validate_url(url: str) -> None:
+        """Handle validate url."""
         parsed = urlparse(url)
 
         if (
@@ -637,6 +649,7 @@ class Browser(Tool):
 
     @staticmethod
     def _safe(value: str) -> str:
+        """Handle safe."""
         return value.encode(
             "unicode_escape"
         ).decode(

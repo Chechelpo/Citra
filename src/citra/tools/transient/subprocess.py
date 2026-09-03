@@ -19,6 +19,7 @@ from .bash import ensure_no_git_command
 
 
 class Subprocess(Tool):
+    """Represent Subprocess."""
     TOOL_ID = "subprocess"
 
     ACTIONS = frozenset(
@@ -169,6 +170,7 @@ class Subprocess(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -181,12 +183,14 @@ class Subprocess(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments.get("action")
         if action not in self.ACTIONS:
             raise ValueError(
@@ -217,6 +221,7 @@ class Subprocess(Tool):
         return self._render(self.context.subprocesses.list())
 
     def _start(self, arguments: dict[str, Any]) -> str:
+        """Handle start."""
         cmd = arguments.get("cmd")
         if not isinstance(cmd, str) or not cmd.strip():
             raise ValueError("'cmd' is required for action='start'.")
@@ -287,12 +292,14 @@ class Subprocess(Tool):
 
     @staticmethod
     def _process_id(arguments: dict[str, Any]) -> int:
+        """Handle process id."""
         value = arguments.get("process_id")
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError("'process_id' must be a positive integer.")
         return value
 
     def _render(self, value: object) -> str:
+        """Handle render."""
         rendered = json.dumps(value, ensure_ascii=False, indent=2)
         limit = self.context.config.subprocess.max_output_length
         if len(rendered) <= limit:
@@ -302,10 +309,12 @@ class Subprocess(Tool):
 
     @staticmethod
     def _safe_text(value: str) -> str:
+        """Handle safe text."""
         return value.replace("\x00", "").replace("\r", "\\r")[:4_000]
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = str(arguments.get("action", "?"))
         parts = [f"action={action}"]
         if "process_id" in arguments:
@@ -317,5 +326,6 @@ class Subprocess(Tool):
 
     @override
     def format_result_log(self, result: Any) -> str:
+        """Handle format result log."""
         text = str(result)
         return f"{len(text.splitlines())} lines | {len(text)} chars"

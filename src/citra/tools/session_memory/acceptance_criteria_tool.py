@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class AcceptanceCriterionExtract:
+    """Represent AcceptanceCriterionExtract."""
     id: int
     content: str
     satisfied: bool = False
@@ -102,6 +103,7 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (ToolDefinition(definition=cls.DEFINITION),)
 
@@ -110,6 +112,7 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(context=context, session=session)
         self._extracts: list[AcceptanceCriterionExtract] = []
         self._next_id = 1
@@ -117,14 +120,17 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Acceptance Criteria"
 
     @override
     def get_extracts(self) -> list[AcceptanceCriterionExtract]:
+        """Return get extracts."""
         return list(self._extracts)
 
     @override
     def format_extract(self, extract: AcceptanceCriterionExtract) -> str:
+        """Handle format extract."""
         status = "DONE" if extract.satisfied else "PENDING"
         evidence = (
             f" | Evidence: {extract.evidence}"
@@ -135,10 +141,12 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
 
     @override
     def should_offer_documentation(self) -> bool:
+        """Return whether should offer documentation."""
         return bool(self._extracts)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -151,6 +159,7 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
         raise ValueError(f"Unsupported acceptance criteria action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         self._reject(arguments, ("id", "ids"), action="add")
         content = arguments.get("content")
         contents = arguments.get("contents")
@@ -181,6 +190,7 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
         return f"Added {len(added)} acceptance criteria."
 
     def _update(self, arguments: dict[str, Any]) -> str:
+        """Handle update."""
         self._reject(arguments, ("contents", "ids"), action="update")
         criterion_id = arguments.get("id")
         if criterion_id is None:
@@ -201,6 +211,7 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
         return f"Updated ACCEPTANCE CRITERION [A{updated.id}]: {updated.content}"
 
     def _satisfy(self, arguments: dict[str, Any]) -> str:
+        """Handle satisfy."""
         self._reject(arguments, ("contents", "ids"), action="satisfy")
         criterion_id = arguments.get("id")
         if criterion_id is None:
@@ -217,6 +228,7 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
         return f"Satisfied ACCEPTANCE CRITERION [A{updated.id}]."
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         ids = self._get_ids(arguments, action="remove")
         self._extracts = [
             item for item in self._extracts if item.id not in ids

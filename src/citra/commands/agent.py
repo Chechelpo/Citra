@@ -26,15 +26,27 @@ orchestrator is running."""
 
 @runtime_checkable
 class SubagentController(Protocol):
-    def poll(self) -> tuple[SubagentSnapshot, ...]: ...
+    """Controller operations consumed by the interactive agent command."""
 
-    def snapshot(self, subagent_id: str) -> SubagentSnapshot | None: ...
+    def poll(self) -> tuple[SubagentSnapshot, ...]:
+        """Return current snapshots for every supervised subagent."""
+        ...
 
-    def steer(self, subagent_id: str, message: str) -> bool: ...
+    def snapshot(self, subagent_id: str) -> SubagentSnapshot | None:
+        """Return one supervised subagent snapshot when it exists."""
+        ...
 
-    def answer_guidance(self, subagent_id: str, message: str) -> bool: ...
+    def steer(self, subagent_id: str, message: str) -> bool:
+        """Deliver a steering message to a supervised subagent."""
+        ...
 
-    def cancel(self, subagent_id: str, *, reason: str) -> bool: ...
+    def answer_guidance(self, subagent_id: str, message: str) -> bool:
+        """Answer a pending guidance request from a subagent."""
+        ...
+
+    def cancel(self, subagent_id: str, *, reason: str) -> bool:
+        """Cancel a supervised subagent with a recorded reason."""
+        ...
 
 
 class AgentCommand(Command):
@@ -44,6 +56,7 @@ class AgentCommand(Command):
     description = "Inspect, steer, answer, or cancel a subagent."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         supervisor = self.context.subagents
         if not isinstance(supervisor, SubagentController):
             raise RuntimeError("Subagent supervision is unavailable.")
@@ -104,6 +117,7 @@ class AgentCommand(Command):
         *,
         operation: str,
     ) -> str:
+        """Handle send message."""
         if len(parts) != 3 or not parts[2].strip():
             return _USAGE
         subagent_id = parts[1]
@@ -123,6 +137,7 @@ def _terminal_or_unknown(
     supervisor: SubagentController,
     subagent_id: str,
 ) -> str:
+    """Handle terminal or unknown."""
     snapshot = supervisor.snapshot(subagent_id)
     if snapshot is None:
         return f"Unknown subagent: {subagent_id!r}."
@@ -133,6 +148,7 @@ def _terminal_or_unknown(
 
 
 def _format_list(snapshots: tuple[SubagentSnapshot, ...]) -> str:
+    """Handle format list."""
     if not snapshots:
         return "No subagents are currently tracked."
     lines = ["Subagents:"]
@@ -150,6 +166,7 @@ def _format_list(snapshots: tuple[SubagentSnapshot, ...]) -> str:
 
 
 def _format_one(snapshot: SubagentSnapshot | None) -> str:
+    """Handle format one."""
     if snapshot is None:
         return "Unknown subagent. Use /agent list to inspect tracked ids."
 

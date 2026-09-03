@@ -15,6 +15,7 @@ class PdfConverter(ReadableConverter):
     def extensions(
         self,
     ) -> frozenset[str]:
+        """Handle extensions."""
         return frozenset(
             {
                 ".pdf",
@@ -27,6 +28,7 @@ class PdfConverter(ReadableConverter):
         source: Path,
         destination: Path,
     ) -> None:
+        """Handle convert."""
         reader = PdfReader(
             source
         )

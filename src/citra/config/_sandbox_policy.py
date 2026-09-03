@@ -1,30 +1,41 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any, Protocol
 
 from citra.config._constants import SANDBOX_CONFIG_FILE
 from citra.config._file_config import TomlConfig
-from citra.config.runtime_discovery import (
-    RO_BINDS,
-    RuntimeDiscoveryResult,
-)
+from citra.config.runtime_discovery import RuntimeDiscoveryResult
 from citra.sandbox.sandbox_mode import SandboxMode
 
 
+logger = logging.getLogger(__name__)
+
+
 class WorkflowSandboxConfig(Protocol):
-    @property
-    def mode(self) -> SandboxMode: ...
+    """Structural workflow contribution accepted by ``SandboxPolicy``."""
 
     @property
-    def additional_ro_binds(self) -> tuple[Path, ...]: ...
+    def mode(self) -> SandboxMode:
+        """Return the workflow-selected sandbox mode."""
+        ...
 
     @property
-    def additional_w_binds(self) -> tuple[Path, ...]: ...
+    def additional_ro_binds(self) -> tuple[Path, ...]:
+        """Return additional same-path read-only mounts."""
+        ...
 
     @property
-    def global_network_disallow(self) -> bool: ...
+    def additional_w_binds(self) -> tuple[Path, ...]:
+        """Return additional writable mounts."""
+        ...
+
+    @property
+    def global_network_disallow(self) -> bool:
+        """Return whether the workflow denies all network access."""
+        ...
 
 
 @dataclass
@@ -49,13 +60,15 @@ class SandboxPolicy(TomlConfig):
     )
 
     runtime_results: list[RuntimeDiscoveryResult] = field(
-        default_factory=lambda: list(RO_BINDS),
+        default_factory=list,
+    )
+
+    runtime_readonly_mounts: list[tuple[Path, Path]] = field(
+        default_factory=list,
     )
 
     base_readonly_binds: list[Path] = field(
-        default_factory=lambda: [
-            Path("/usr/bin")
-        ]
+        default_factory=list,
     )
 
     masked_host_dirs: list[Path] = field(
@@ -134,6 +147,7 @@ class SandboxPolicy(TomlConfig):
         cls,
         raw: dict[str, Any],
     ) -> SandboxPolicy:
+        """Parse operator sandbox policy from its TOML table."""
         sandbox = raw.get(
             "sandbox",
             raw,
@@ -162,6 +176,8 @@ class SandboxPolicy(TomlConfig):
             runtime_results=list(
                 defaults.runtime_results
             ),
+
+            runtime_readonly_mounts=list(defaults.runtime_readonly_mounts),
 
             base_readonly_binds=_path_list(
                 sandbox,
@@ -293,16 +309,32 @@ class SandboxPolicy(TomlConfig):
     def add_readonly_bind(
         self,
         path: str | Path,
+        target: str | Path | None = None,
     ) -> None:
+        """Add a read-only source/target mount without widening duplicates."""
         path = _path(path)
+        if target is None:
+            if path not in self.extra_ro_binds:
+                self.extra_ro_binds.append(path)
+            return
+        target_path = _path(target)
+        mount = (path, target_path)
+        if mount not in self.runtime_readonly_mounts:
+            self.runtime_readonly_mounts.append(mount)
 
-        if path not in self.extra_ro_binds:
-            self.extra_ro_binds.append(path)
+    def add_runtime_mounts(
+        self,
+        mounts: tuple[tuple[Path, Path], ...],
+    ) -> None:
+        """Add provisioned runtime mappings in deterministic order."""
+        for source, target in mounts:
+            self.add_readonly_bind(source, target)
 
     def add_writable_bind(
         self,
         path: str | Path,
     ) -> None:
+        """Add a same-path writable bind."""
         path = _path(path)
 
         if path not in self.extra_w_binds:
@@ -312,6 +344,7 @@ class SandboxPolicy(TomlConfig):
         self,
         result: RuntimeDiscoveryResult,
     ) -> None:
+        """Add one legacy discovery result as same-path read-only binds."""
         if not isinstance(
             result,
             RuntimeDiscoveryResult,
@@ -322,6 +355,10 @@ class SandboxPolicy(TomlConfig):
 
         self.runtime_results.append(
             result
+        )
+        logger.debug(
+            "Legacy runtime discovery result added to sandbox policy",
+            extra={"origin": __name__, "mode": self.mode.name},
         )
 
     def apply_workflow_config(
@@ -368,6 +405,7 @@ class SandboxPolicy(TomlConfig):
             extra_ro_binds=list(self.extra_ro_binds),
             extra_w_binds=list(self.extra_w_binds),
             runtime_results=list(self.runtime_results),
+            runtime_readonly_mounts=list(self.runtime_readonly_mounts),
             base_readonly_binds=list(self.base_readonly_binds),
             masked_host_dirs=list(self.masked_host_dirs),
             masked_host_files=list(self.masked_host_files),
@@ -397,6 +435,17 @@ class SandboxPolicy(TomlConfig):
     def runtime_readonly_binds(
         self,
     ) -> tuple[Path, ...]:
+        """Return legacy runtime binds only for partial sandbox mode."""
+        if self.mode is SandboxMode.FULL_SANDBOX:
+            if self.runtime_results:
+                logger.warning(
+                    "Ignoring direct host runtime results in full sandbox mode",
+                    extra={
+                        "origin": __name__,
+                        "results": len(self.runtime_results),
+                    },
+                )
+            return ()
         paths: list[Path] = []
 
         for result in self.runtime_results:
@@ -407,6 +456,20 @@ class SandboxPolicy(TomlConfig):
                     paths.append(path)
 
         return tuple(paths)
+
+    @property
+    def readonly_mounts(self) -> tuple[tuple[Path, Path], ...]:
+        """Return all read-only mounts as explicit source/target pairs."""
+        mounts = [
+            (path, path)
+            for path in (
+                *self.base_readonly_binds,
+                *self.extra_ro_binds,
+                *self.runtime_readonly_binds,
+            )
+        ]
+        mounts.extend(self.runtime_readonly_mounts)
+        return tuple(dict.fromkeys(mounts))
 
     @property
     def readonly_binds(
@@ -432,6 +495,7 @@ class SandboxPolicy(TomlConfig):
     def writable_binds(
         self,
     ) -> tuple[Path, ...]:
+        """Handle writable binds."""
         return tuple(
             dict.fromkeys(
                 self.extra_w_binds
@@ -442,6 +506,7 @@ class SandboxPolicy(TomlConfig):
 def _path(
     value: str | Path,
 ) -> Path:
+    """Normalize one configured filesystem path."""
     return Path(
         value
     ).expanduser()
@@ -453,6 +518,7 @@ def _bool(
     *,
     default: bool,
 ) -> bool:
+    """Parse one strict boolean policy field."""
     value = table.get(
         name,
         default,
@@ -475,6 +541,7 @@ def _string_list(
     *,
     default: list[str],
 ) -> list[str]:
+    """Parse one strict string-array policy field."""
     value = table.get(
         name,
         default,
@@ -505,6 +572,7 @@ def _path_list(
     *,
     default: list[Path],
 ) -> list[Path]:
+    """Parse one strict path-array policy field."""
     values = _string_list(
         table,
         name,

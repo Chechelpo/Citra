@@ -184,6 +184,7 @@ def _skip_ws(
     text: str,
     position: int,
 ) -> int:
+    """Handle skip ws."""
     while (
         position < len(text)
         and text[position].isspace()
@@ -864,6 +865,7 @@ def normalize_kimi_tool_calls(
     *,
     tools: dict[str, Tool],
 ) -> dict[str, Any]:
+    """Handle normalize kimi tool calls."""
     aliases, schemas = _tool_registry(
         tools
     )

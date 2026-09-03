@@ -56,6 +56,7 @@ class ChatWorkflow(StaticWorkflow):
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
+        """Return get system prompt."""
         environment = collect_environment(context)
         return f"""
 # Role

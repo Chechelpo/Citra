@@ -48,6 +48,21 @@ denial is monotonic, and bind lists are additive.
 Lint placeholders are `{path}`, `{relative_path}`, and `{project}`. Project
 auto-detection reads the nearest `pyproject.toml` inside the copied project.
 
+## Runtime provisioning
+
+- Runtime discovery is an ordered tuple of `RuntimeDiscovery` objects. Extend
+  coverage by adding an object to `runtime_discovery.DISCOVERIES`.
+- `FULL_SANDBOX` must copy every required discovered runtime asset beneath the
+  lifecycle-owned runtime directory and mount those copies at compatibility
+  paths. It must fail provisioning instead of falling back to a host bind.
+- `PARTIAL_SANDBOX` must expose those same assets through read-only host binds
+  and perform no runtime copies.
+- Both modes publish discovered commands through `/runtime/bin`. Every
+  model-facing process launcher, including Bash, filesystem workers, LSP,
+  background processes, browser workers, Git, and Mermaid, must use
+  `WorkspaceSandbox.run()` or `WorkspaceSandbox.popen()` so this resolver and
+  its isolated `PATH` remain authoritative.
+
 ## Execution context
 
 `ExecutionContext` owns references to the selected config, active executable

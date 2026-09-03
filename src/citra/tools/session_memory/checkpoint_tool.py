@@ -16,6 +16,7 @@ from .memory_tool import MemoryTool
 
 @dataclass(frozen=True)
 class CheckpointExtract:
+    """Represent CheckpointExtract."""
     content: str
     next_step: str | None
     turn: int
@@ -82,6 +83,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -95,6 +97,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -110,17 +113,20 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
 
     @property
     def current_checkpoint(self) -> CheckpointExtract | None:
+        """Handle current checkpoint."""
         return self._checkpoint
 
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Handoff checkpoint"
 
     @override
     def get_extracts(
         self,
     ) -> list[CheckpointExtract]:
+        """Return get extracts."""
         return (
             []
             if self._checkpoint is None
@@ -132,6 +138,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         self,
         extract: CheckpointExtract,
     ) -> str:
+        """Handle format extract."""
         text = (
             f"- State (turn {extract.turn}): "
             f"{extract.content}"
@@ -148,6 +155,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
     def should_offer_documentation(
         self,
     ) -> bool:
+        """Return whether should offer documentation."""
         return False
 
     @override
@@ -155,6 +163,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
 
         if action == "clear":
@@ -210,6 +219,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         action = arguments.get(
             "action",
             "?",
@@ -245,6 +255,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
     def _truncate(
         value: str,
     ) -> str:
+        """Handle truncate."""
         return (
             value
             if len(value) <= 80

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ScopeExtract:
+    """Represent ScopeExtract."""
     id: int
     content: str
     included: bool = True
@@ -104,6 +105,7 @@ class ScopeTool(MemoryTool[ScopeExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (ToolDefinition(definition=cls.DEFINITION),)
 
@@ -112,6 +114,7 @@ class ScopeTool(MemoryTool[ScopeExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(context=context, session=session)
         self._extracts: list[ScopeExtract] = []
         self._next_id = 1
@@ -119,23 +122,28 @@ class ScopeTool(MemoryTool[ScopeExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Scope"
 
     @override
     def get_extracts(self) -> list[ScopeExtract]:
+        """Return get extracts."""
         return list(self._extracts)
 
     @override
     def format_extract(self, extract: ScopeExtract) -> str:
+        """Handle format extract."""
         marker = "IN" if extract.included else "OUT"
         return f"- [{marker}] [S{extract.id}] {extract.content}"
 
     @override
     def should_offer_documentation(self) -> bool:
+        """Return whether should offer documentation."""
         return bool(self._extracts)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -146,6 +154,7 @@ class ScopeTool(MemoryTool[ScopeExtract]):
         raise ValueError(f"Unsupported scope action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         self._reject(arguments, ("id", "ids"), action="add")
         content = arguments.get("content")
         contents = arguments.get("contents")
@@ -175,6 +184,7 @@ class ScopeTool(MemoryTool[ScopeExtract]):
         return f"Added {len(added)} scope items."
 
     def _update(self, arguments: dict[str, Any]) -> str:
+        """Handle update."""
         self._reject(arguments, ("contents", "ids"), action="update")
         scope_id = arguments.get("id")
         if scope_id is None:
@@ -193,6 +203,7 @@ class ScopeTool(MemoryTool[ScopeExtract]):
         return f"Updated SCOPE [S{updated.id}]: {updated.content}"
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         ids = self._get_ids(arguments, action="remove")
         self._extracts = [
             item for item in self._extracts if item.id not in ids

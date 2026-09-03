@@ -61,6 +61,7 @@ def make_request(
     method: str,
     params: dict[str, Any] | list[Any] | None = None,
 ) -> dict[str, Any]:
+    """Handle make request."""
     message: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": id,
@@ -75,6 +76,7 @@ def make_notification(
     method: str,
     params: dict[str, Any] | list[Any] | None = None,
 ) -> dict[str, Any]:
+    """Handle make notification."""
     message: dict[str, Any] = {
         "jsonrpc": "2.0",
         "method": method,
@@ -88,6 +90,7 @@ def make_response(
     id: int | str | None,
     result: Any,
 ) -> dict[str, Any]:
+    """Handle make response."""
     return {
         "jsonrpc": "2.0",
         "id": id,
@@ -101,6 +104,7 @@ def make_error_response(
     message: str,
     data: Any = None,
 ) -> dict[str, Any]:
+    """Handle make error response."""
     error: dict[str, Any] = {
         "code": code,
         "message": message,
@@ -115,12 +119,15 @@ def make_error_response(
 
 
 def is_response(message: dict[str, Any]) -> bool:
+    """Return whether is response."""
     return "id" in message and ("result" in message or "error" in message)
 
 
 def is_request(message: dict[str, Any]) -> bool:
+    """Return whether is request."""
     return "id" in message and "method" in message
 
 
 def is_notification(message: dict[str, Any]) -> bool:
+    """Return whether is notification."""
     return "id" not in message and "method" in message

@@ -10,6 +10,7 @@ from citra.config._file_config import TomlConfig
 
 @dataclass(frozen=True)
 class WebSearchConfig:
+    """Represent WebSearchConfig."""
     host_url: str = field()
 
     @classmethod
@@ -17,6 +18,7 @@ class WebSearchConfig:
         cls,
         raw: dict[str, Any],
     ) -> WebSearchConfig:
+        """Handle create."""
         return cls(
             host_url=_required_str(
                 raw,
@@ -28,6 +30,7 @@ class WebSearchConfig:
 
 @dataclass(frozen=True)
 class BashConfig:
+    """Represent BashConfig."""
     always_allow_network: bool = False
     permission_timeout: int = 30
 
@@ -36,6 +39,7 @@ class BashConfig:
         cls,
         raw: dict[str, Any],
     ) -> BashConfig:
+        """Handle create."""
         return cls(
             always_allow_network=_bool(
                 raw,
@@ -54,6 +58,7 @@ class BashConfig:
 
 @dataclass(frozen=True)
 class SubprocessConfig:
+    """Represent SubprocessConfig."""
     always_allow_network: bool = False
     permission_timeout: int = 30
     max_output_length: int = 100_000
@@ -63,6 +68,7 @@ class SubprocessConfig:
         cls,
         raw: dict[str, Any],
     ) -> SubprocessConfig:
+        """Handle create."""
         return cls(
             always_allow_network=_bool(
                 raw,
@@ -87,6 +93,7 @@ class SubprocessConfig:
 
 @dataclass(frozen=True)
 class BrowserConfig:
+    """Represent BrowserConfig."""
     always_allow_network: bool = False
     permission_timeout: int = 30
     request_timeout: float = 30.0
@@ -99,6 +106,7 @@ class BrowserConfig:
         cls,
         raw: dict[str, Any],
     ) -> BrowserConfig:
+        """Handle create."""
         defaults = cls()
 
         return cls(
@@ -143,6 +151,7 @@ class BrowserConfig:
 
 @dataclass(frozen=True)
 class ToolConfigs(TomlConfig):
+    """Represent ToolConfigs."""
     web_search: WebSearchConfig
     bash: BashConfig
     subprocess: SubprocessConfig
@@ -153,6 +162,7 @@ class ToolConfigs(TomlConfig):
         cls,
         config_dir: Path,
     ) -> ToolConfigs:
+        """Handle load."""
         path = config_dir / TOOLS_CONFIG_FILE
 
         if not path.is_file():
@@ -175,6 +185,7 @@ class ToolConfigs(TomlConfig):
         cls,
         raw: dict[str, Any],
     ) -> ToolConfigs:
+        """Handle create."""
         allowed = {
             "web-search",
             "bash",
@@ -213,6 +224,7 @@ def _table(
     raw: dict[str, Any],
     name: str,
 ) -> dict[str, Any]:
+    """Handle table."""
     value = raw.get(
         name,
         {},
@@ -233,6 +245,7 @@ def _bool(
     section: str,
     default: bool,
 ) -> bool:
+    """Handle bool."""
     value = table.get(
         name,
         default,
@@ -253,6 +266,7 @@ def _positive_int(
     section: str,
     default: int,
 ) -> int:
+    """Handle positive int."""
     value = table.get(
         name,
         default,
@@ -277,6 +291,7 @@ def _positive_float(
     section: str,
     default: float,
 ) -> float:
+    """Handle positive float."""
     value = table.get(
         name,
         default,
@@ -300,6 +315,7 @@ def _required_str(
     *,
     section: str,
 ) -> str:
+    """Handle required str."""
     if name not in table:
         raise ValueError(
             f"Missing required config value: {section}.{name}"
@@ -322,6 +338,7 @@ def _str(
     section: str,
     default: str,
 ) -> str:
+    """Handle str."""
     value = table.get(
         name,
         default,
@@ -342,6 +359,7 @@ def _string_tuple(
     section: str,
     default: tuple[str, ...],
 ) -> tuple[str, ...]:
+    """Handle string tuple."""
     value = table.get(
         name,
         default,

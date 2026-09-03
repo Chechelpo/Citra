@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from citra.config import (
     BashConfig,
     BrowserConfig,
@@ -30,17 +28,7 @@ from .source_baseline import SourceEntry
 from citra.config import ModelConfigStore
 
 AgentRuntime = WorkspaceContext
-
-if TYPE_CHECKING:
-    from .agent_context import ExecutionContext
-
-
-def __getattr__(name: str):
-    if name == "ExecutionContext":
-        from .agent_context import ExecutionContext
-
-        return ExecutionContext
-    raise AttributeError(name)
+from .agent_context import ExecutionContext
 
 __all__ = [
     "ModelConfigStore",

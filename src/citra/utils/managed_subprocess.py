@@ -14,6 +14,7 @@ from citra.sandbox.sandbox import WorkspaceSandbox
 
 @dataclass
 class _ProcessRecord:
+    """Represent ProcessRecord."""
     id: int
     command: str
     cwd: Path
@@ -30,6 +31,7 @@ class ManagedSubprocesses:
     MAX_BUFFER_BYTES = 1_000_000
 
     def __init__(self, sandbox: WorkspaceSandbox) -> None:
+        """Initialize the instance."""
         self._sandbox = sandbox
         self._records: dict[int, _ProcessRecord] = {}
         self._lock = Lock()
@@ -37,6 +39,7 @@ class ManagedSubprocesses:
         self._closed = False
 
     def start(self, command: str, *, cwd: Path, network: bool) -> int:
+        """Handle start."""
         with self._lock:
             if self._closed:
                 raise RuntimeError("Managed subprocess service is closing.")
@@ -58,6 +61,7 @@ class ManagedSubprocesses:
         return process_id
 
     def poll(self, process_id: int, *, clear: bool = True) -> dict[str, object]:
+        """Handle poll."""
         record = self._get(process_id)
         with record.lock:
             output = bytes(record.output).decode("utf-8", errors="replace")
@@ -71,6 +75,7 @@ class ManagedSubprocesses:
         }
 
     def write(self, process_id: int, text: str) -> None:
+        """Handle write."""
         record = self._get(process_id)
         if record.process.poll() is not None or record.process.stdin is None:
             raise RuntimeError(f"Subprocess {process_id} is not running.")
@@ -78,11 +83,13 @@ class ManagedSubprocesses:
         record.process.stdin.flush()
 
     def stop(self, process_id: int) -> dict[str, object]:
+        """Handle stop."""
         record = self._get(process_id)
         self._sandbox.terminate_process(record.process)
         return self.poll(process_id, clear=True)
 
     def list(self) -> tuple[dict[str, object], ...]:
+        """Handle list."""
         with self._lock:
             records = tuple(self._records.values())
         return tuple(
@@ -98,6 +105,7 @@ class ManagedSubprocesses:
         )
 
     def close(self, *, force: bool = False) -> None:
+        """Handle close."""
         with self._lock:
             if self._closed:
                 return
@@ -107,6 +115,7 @@ class ManagedSubprocesses:
             self._sandbox.terminate_process(record.process, force=force)
 
     def _get(self, process_id: int) -> _ProcessRecord:
+        """Handle get."""
         with self._lock:
             record = self._records.get(process_id)
         if record is None:
@@ -119,10 +128,12 @@ class ManagedSubprocesses:
         stream: IO[Any] | None,
         prefix: str,
     ) -> None:
+        """Handle read stream."""
         if stream is None:
             return
 
         def reader() -> None:
+            """Handle reader."""
             while True:
                 chunk = stream.readline()
                 if not chunk:

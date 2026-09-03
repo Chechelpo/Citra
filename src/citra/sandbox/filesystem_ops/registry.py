@@ -19,6 +19,7 @@ Executor = Callable[[Any, ScopedFilesystem], FilesystemOutput]
 
 @dataclass(frozen=True, slots=True)
 class OperationSpec:
+    """Represent OperationSpec."""
     input_type: type[FilesystemInput[Any]]
     execute: Executor
 

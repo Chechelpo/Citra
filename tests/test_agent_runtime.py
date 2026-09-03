@@ -27,7 +27,7 @@ from citra.config.config_loader import (
     WorkspaceContextConfig,
     _parse_runtime_config,
 )
-from citra.context.workspace_context.runtime import (
+from citra.context.runtime import (
     CopyPolicy,
     RuntimeAsset,
     RuntimeProcessSupervisor,

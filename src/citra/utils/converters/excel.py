@@ -135,9 +135,11 @@ class ExcelConverter(ReadableConverter):
 
     @property
     def extensions(self) -> frozenset[str]:
+        """Handle extensions."""
         return frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
 
     def _convert(self, *, source: Path, destination: Path) -> None:
+        """Handle convert."""
         package = self._inspect_package(source)
 
         # Normal mode is intentional: read-only mode omits or restricts some
@@ -220,6 +222,7 @@ class ExcelConverter(ReadableConverter):
                 cached_book.close()
 
     def _inspect_package(self, source: Path) -> dict[str, Any]:
+        """Handle inspect package."""
         source_size = source.stat().st_size
         if source_size > self.MAX_SOURCE_BYTES:
             raise ValueError(
@@ -282,6 +285,7 @@ class ExcelConverter(ReadableConverter):
         workbook: Any,
         package: dict[str, Any],
     ) -> None:
+        """Handle write header."""
         output.write(
             f"Excel Workbook: {source.name}\n"
             f"Format: {source.suffix.lower()} (Office Open XML / SpreadsheetML)\n"
@@ -315,6 +319,7 @@ class ExcelConverter(ReadableConverter):
         )
 
     def _write_document_properties(self, output: TextIO, workbook: Any) -> None:
+        """Handle write document properties."""
         props = workbook.properties
         fields = (
             ("Title", props.title),
@@ -348,6 +353,7 @@ class ExcelConverter(ReadableConverter):
                 output.write(f"- {name}: {self._render_scalar(value)}\n")
 
     def _write_calculation_properties(self, output: TextIO, workbook: Any) -> None:
+        """Handle write calculation properties."""
         calc = getattr(workbook, "calculation", None)
         if calc is None:
             return
@@ -371,6 +377,7 @@ class ExcelConverter(ReadableConverter):
             output.write(f"{name}: {self._render_scalar(value)}\n")
 
     def _write_defined_names(self, output: TextIO, workbook: Any) -> None:
+        """Handle write defined names."""
         names: list[tuple[str, Any]] = [
             ("workbook", item) for item in workbook.defined_names.values()
         ]
@@ -411,6 +418,7 @@ class ExcelConverter(ReadableConverter):
             )
 
     def _write_chartsheets(self, output: TextIO, workbook: Any) -> None:
+        """Handle write chartsheets."""
         chartsheets = list(workbook.chartsheets)
         if not chartsheets:
             return
@@ -436,6 +444,7 @@ class ExcelConverter(ReadableConverter):
         cached_sheet: Any | None,
         remaining_cells: int,
     ) -> int:
+        """Handle write sheet."""
         output.write(f"\n===== Worksheet {index}: {worksheet.title} =====\n")
         self._write_sheet_metadata(output, worksheet)
         self._write_sheet_structures(output, worksheet)
@@ -486,6 +495,7 @@ class ExcelConverter(ReadableConverter):
         return allowed
 
     def _write_sheet_metadata(self, output: TextIO, worksheet: Any) -> None:
+        """Handle write sheet metadata."""
         output.write(
             f"State: {worksheet.sheet_state}\n"
             f"Stored dimension: {worksheet.calculate_dimension()}\n"
@@ -524,6 +534,7 @@ class ExcelConverter(ReadableConverter):
         )
 
     def _write_sheet_structures(self, output: TextIO, worksheet: Any) -> None:
+        """Handle write sheet structures."""
         merged = sorted(
             (str(cell_range) for cell_range in worksheet.merged_cells.ranges),
             key=str.lower,
@@ -560,6 +571,7 @@ class ExcelConverter(ReadableConverter):
                 )
 
     def _write_tables(self, output: TextIO, worksheet: Any) -> None:
+        """Handle write tables."""
         tables = list(worksheet.tables.values())
         if not tables:
             return
@@ -600,6 +612,7 @@ class ExcelConverter(ReadableConverter):
             )
 
     def _write_data_validations(self, output: TextIO, worksheet: Any) -> None:
+        """Handle write data validations."""
         collection = getattr(worksheet, "data_validations", None)
         validations = list(getattr(collection, "dataValidation", ()))
         if not validations:
@@ -638,6 +651,7 @@ class ExcelConverter(ReadableConverter):
             )
 
     def _write_conditional_formats(self, output: TextIO, worksheet: Any) -> None:
+        """Handle write conditional formats."""
         conditional = worksheet.conditional_formatting
         items = list(conditional)
         if not items:
@@ -661,6 +675,7 @@ class ExcelConverter(ReadableConverter):
             )
 
     def _material_cells(self, worksheet: Any) -> list[Any]:
+        """Handle material cells."""
         sparse_store = getattr(worksheet, "_cells", None)
         if isinstance(sparse_store, dict):
             cells = [
@@ -692,6 +707,7 @@ class ExcelConverter(ReadableConverter):
 
     @staticmethod
     def _is_material_cell(cell: Any) -> bool:
+        """Handle is material cell."""
         return (
             cell.value is not None
             or cell.comment is not None
@@ -699,6 +715,7 @@ class ExcelConverter(ReadableConverter):
         )
 
     def _render_cell(self, cell: Any, cached_cell: Any | None) -> str:
+        """Handle render cell."""
         value = cell.value
 
         if isinstance(value, ArrayFormula):
@@ -751,6 +768,7 @@ class ExcelConverter(ReadableConverter):
         return rendered
 
     def _append_cached(self, rendered: str, cached_cell: Any | None) -> str:
+        """Handle append cached."""
         if cached_cell is None:
             return rendered + " [cached value unavailable]"
         if cached_cell.value is None:
@@ -763,6 +781,7 @@ class ExcelConverter(ReadableConverter):
         )
 
     def _render_scalar(self, value: Any, *, max_chars: int | None = None) -> str:
+        """Handle render scalar."""
         if value is None:
             text = "null"
         elif isinstance(value, bool):
@@ -788,10 +807,12 @@ class ExcelConverter(ReadableConverter):
 
     @staticmethod
     def _quote(value: Any) -> str:
+        """Handle quote."""
         return json.dumps(str(value), ensure_ascii=False)
 
     @staticmethod
     def _bounded_inline(value: Any, limit: int) -> str:
+        """Handle bounded inline."""
         text = (
             str(value)
             .replace("\r\n", "\n")
@@ -811,6 +832,7 @@ class ExcelConverter(ReadableConverter):
         values: list[str],
         limit: int,
     ) -> None:
+        """Handle write bounded list."""
         if not values:
             return
         visible = values[:limit]

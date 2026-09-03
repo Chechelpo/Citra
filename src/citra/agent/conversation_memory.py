@@ -19,6 +19,7 @@ class ConversationMemory:
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._services: dict[str, object] = {}
         self._lock = RLock()
 
@@ -27,6 +28,7 @@ class ConversationMemory:
         name: str,
         factory: Callable[[], T],
     ) -> T:
+        """Return get or create."""
         with self._lock:
             existing = self._services.get(name)
             if existing is None:
@@ -35,6 +37,7 @@ class ConversationMemory:
             return cast(T, existing)
 
     def values(self) -> tuple[object, ...]:
+        """Handle values."""
         with self._lock:
             return tuple(self._services.values())
 
@@ -44,5 +47,6 @@ class ConversationMemory:
             return self._services.get(name)
 
     def clear(self) -> None:
+        """Handle clear."""
         with self._lock:
             self._services.clear()

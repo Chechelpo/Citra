@@ -30,6 +30,7 @@ _NOUNS = (
 
 
 def temporary_name() -> str:
+    """Handle temporary name."""
     return (
         f"{secrets.choice(_MODIFIERS)}-"
         f"{secrets.choice(_NOUNS)}"

@@ -85,6 +85,7 @@ def _detect_image_format(data: bytes) -> str | None:
 
 
 def _data_url(mime_type: str, raw_bytes: bytes) -> str:
+    """Handle data url."""
     encoded = base64.b64encode(raw_bytes).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
 
@@ -156,6 +157,7 @@ class ReadImage(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (ToolDefinition(definition=cls.DEFINITION),)
 
@@ -164,6 +166,7 @@ class ReadImage(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         path_value = arguments.get("path")
         if not isinstance(path_value, str) or not path_value:
             raise ValueError("'path' must be a non-empty string.")
@@ -229,6 +232,7 @@ class ReadImage(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         path = arguments.get("path", "")
         max_bytes = arguments.get("max_bytes")
         if max_bytes is None:
@@ -240,6 +244,7 @@ class ReadImage(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         try:
             payload = json.loads(result)
         except (TypeError, ValueError):

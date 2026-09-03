@@ -13,6 +13,7 @@ class ClearCommand(Command):
     description = "Clear the conversation history."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         return CommandResult(
             output=f"{GREEN}⏺ Cleared conversation{RESET}",
             clear_messages=True,

@@ -16,6 +16,7 @@ class TaskRecognition(Skill):
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         super().__init__(
             "task-recognition", 
             "Skill describing how to use citra's memory system", 
@@ -27,6 +28,7 @@ class TaskRecognition(Skill):
         self,
         context: ExecutionContext
     ) -> str:
+        """Return get md."""
         return _PROMPT
 
 

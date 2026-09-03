@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 class CodingConventions(Skill):
 
+    """Represent CodingConventions."""
     def __init__(self) -> None:
+        """Initialize the instance."""
         super().__init__(
             "coding",
             "Describes correct patterns and formatting for any code project",
@@ -23,6 +25,7 @@ class CodingConventions(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
+        """Return get md."""
         return _PROMPT
 
 

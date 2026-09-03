@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from collections.abc import Iterable
 from dataclasses import dataclass
 from difflib import unified_diff
@@ -7,22 +6,17 @@ from pathlib import Path
 import os
 import tempfile
 import xml.etree.ElementTree as ET
-
-
 DEFAULT_LINES = 200
-
-ROOT_TAG = "citra-doc"
-TITLE_TAG = "title"
-VERSIONING_TAG = "versioning"
-INDEX_TAG = "index"
-ENTRY_TAG = "entry"
-SECTIONS_TAG = "sections"
-SECTION_TAG = "section"
-
+ROOT_TAG = 'citra-doc'
+TITLE_TAG = 'title'
+VERSIONING_TAG = 'versioning'
+INDEX_TAG = 'index'
+ENTRY_TAG = 'entry'
+SECTIONS_TAG = 'sections'
+SECTION_TAG = 'section'
 
 class CitraDocFormatError(ValueError):
     """Raised when a Citra document does not match the expected XML format."""
-
 
 class Index:
     """
@@ -43,24 +37,16 @@ class Index:
     Hierarchy exists only in the index. Section bodies are stored separately
     under the document's flat ``<sections>`` element.
     """
+    __slots__ = ('_element',)
 
-    __slots__ = ("_element",)
-
-    def __init__(
-        self,
-        element: ET.Element,
-    ) -> None:
+    def __init__(self, element: ET.Element) -> None:
+        """Initialize the instance."""
         if element.tag != INDEX_TAG:
-            raise CitraDocFormatError(
-                f"Expected <{INDEX_TAG}>, got <{element.tag}>."
-            )
-
+            raise CitraDocFormatError(f'Expected <{INDEX_TAG}>, got <{element.tag}>.')
         self._element = element
         self._validate()
 
-    def convert_to_md(
-        self,
-    ) -> str:
+    def convert_to_md(self) -> str:
         """
         Convert the XML index into a Markdown tree.
 
@@ -75,39 +61,16 @@ class Index:
 
         Returns ``_No sections._`` beneath the heading when the index is empty.
         """
-        lines: list[str] = [
-            "# Index",
-            "",
-        ]
-
-        entries = self._direct_entries(
-            self._element
-        )
-
+        lines: list[str] = ['# Index', '']
+        entries = self._direct_entries(self._element)
         if not entries:
-            lines.append(
-                "_No sections._"
-            )
-            return "\n".join(
-                lines
-            )
-
+            lines.append('_No sections._')
+            return '\n'.join(lines)
         for entry in entries:
-            self._append_markdown_entry(
-                entry,
-                lines,
-                depth=0,
-            )
+            self._append_markdown_entry(entry, lines, depth=0)
+        return '\n'.join(lines)
 
-        return "\n".join(
-            lines
-        )
-
-    def add_entry(
-        self,
-        name: str,
-        parent: str | None = None,
-    ) -> str:
+    def add_entry(self, name: str, parent: str | None=None) -> str:
         """
         Create a globally unique index entry.
 
@@ -129,65 +92,26 @@ class Index:
             KeyError:
                 If ``parent`` was supplied but does not exist.
         """
-        normalized_name = self.normalize_name(
-            name
-        )
-
-        if self.find(
-            normalized_name
-        ) is not None:
-            raise ValueError(
-                f"Index entry already exists: "
-                f"{normalized_name!r}."
-            )
-
+        normalized_name = self.normalize_name(name)
+        if self.find(normalized_name) is not None:
+            raise ValueError(f'Index entry already exists: {normalized_name!r}.')
         destination: ET.Element
         normalized_parent: str | None
-
         if parent is None:
             destination = self._element
             normalized_parent = None
         else:
-            normalized_parent = self.normalize_name(
-                parent
-            )
-
-            parent_entry = self.find(
-                normalized_parent
-            )
-
+            normalized_parent = self.normalize_name(parent)
+            parent_entry = self.find(normalized_parent)
             if parent_entry is None:
-                raise KeyError(
-                    f"Parent index entry does not exist: "
-                    f"{normalized_parent!r}."
-                )
-
+                raise KeyError(f'Parent index entry does not exist: {normalized_parent!r}.')
             destination = parent_entry
-
-        ET.SubElement(
-            destination,
-            ENTRY_TAG,
-            {
-                "name": normalized_name,
-            },
-        )
-
+        ET.SubElement(destination, ENTRY_TAG, {'name': normalized_name})
         if normalized_parent is None:
-            return (
-                f"Added index entry "
-                f"{normalized_name!r} at root."
-            )
+            return f'Added index entry {normalized_name!r} at root.'
+        return f'Added index entry {normalized_name!r} under {normalized_parent!r}.'
 
-        return (
-            f"Added index entry "
-            f"{normalized_name!r} "
-            f"under {normalized_parent!r}."
-        )
-
-    def remove_entry(
-        self,
-        name: str,
-    ) -> str:
+    def remove_entry(self, name: str) -> str:
         """
         Remove an index entry and its complete descendant subtree.
 
@@ -206,64 +130,28 @@ class Index:
             KeyError:
                 If the entry does not exist.
         """
-        normalized_name = self.normalize_name(
-            name
-        )
-
-        located = self._find_with_parent(
-            normalized_name
-        )
-
+        normalized_name = self.normalize_name(name)
+        located = self._find_with_parent(normalized_name)
         if located is None:
-            raise KeyError(
-                f"Index entry does not exist: "
-                f"{normalized_name!r}."
-            )
-
+            raise KeyError(f'Index entry does not exist: {normalized_name!r}.')
         parent, entry = located
+        removed_names = self._entry_subtree_names(entry)
+        parent.remove(entry)
+        rendered = ', '.join((repr(item) for item in removed_names))
+        return f'Removed index entries: {rendered}.'
 
-        removed_names = (
-            self._entry_subtree_names(
-                entry
-            )
-        )
-
-        parent.remove(
-            entry
-        )
-
-        rendered = ", ".join(
-            repr(item)
-            for item in removed_names
-        )
-
-        return (
-            f"Removed index entries: "
-            f"{rendered}."
-        )
-
-    def find(
-        self,
-        name: str,
-    ) -> ET.Element | None:
+    def find(self, name: str) -> ET.Element | None:
         """
         Return the entry named ``name``.
 
         Returns ``None`` when the entry does not exist.
         """
-        for entry in self._iter_entries(
-            self._element
-        ):
-            if entry.get(
-                "name"
-            ) == name:
+        for entry in self._iter_entries(self._element):
+            if entry.get('name') == name:
                 return entry
-
         return None
 
-    def ordered_names(
-        self,
-    ) -> tuple[str, ...]:
+    def ordered_names(self) -> tuple[str, ...]:
         """
         Return all entry names in depth-first document order.
 
@@ -278,21 +166,9 @@ class Index:
 
             ("A", "A1", "A2", "B")
         """
-        return tuple(
-            self._required_entry_name(
-                entry
-            )
-            for entry in self._iter_entries(
-                self._element
-            )
-        )
+        return tuple((self._required_entry_name(entry) for entry in self._iter_entries(self._element)))
 
-    def subtree_names(
-        self,
-        name: str,
-        *,
-        include_self: bool = True,
-    ) -> tuple[str, ...]:
+    def subtree_names(self, name: str, *, include_self: bool=True) -> tuple[str, ...]:
         """
         Return an entry subtree in depth-first order.
 
@@ -304,238 +180,95 @@ class Index:
                 When true, the returned tuple starts with ``name``.
                 Otherwise only descendants are returned.
         """
-        normalized_name = self.normalize_name(
-            name
-        )
-
-        entry = self.find(
-            normalized_name
-        )
-
+        normalized_name = self.normalize_name(name)
+        entry = self.find(normalized_name)
         if entry is None:
-            raise KeyError(
-                f"Index entry does not exist: "
-                f"{normalized_name!r}."
-            )
-
-        names = self._entry_subtree_names(
-            entry
-        )
-
+            raise KeyError(f'Index entry does not exist: {normalized_name!r}.')
+        names = self._entry_subtree_names(entry)
         if include_self:
             return names
-
         return names[1:]
 
-    def _validate(
-        self,
-    ) -> None:
+    def _validate(self) -> None:
+        """Handle validate."""
         if self._element.attrib:
-            raise CitraDocFormatError(
-                "<index> does not accept attributes."
-            )
-
+            raise CitraDocFormatError('<index> does not accept attributes.')
         for child in self._element:
             if child.tag != ENTRY_TAG:
-                raise CitraDocFormatError(
-                    "<index> may contain only "
-                    "<entry> children; "
-                    f"found <{child.tag}>."
-                )
-
+                raise CitraDocFormatError(f'<index> may contain only <entry> children; found <{child.tag}>.')
         seen: set[str] = set()
-
-        for entry in self._iter_entries(
-            self._element
-        ):
-            if set(
-                entry.attrib
-            ) != {"name"}:
-                raise CitraDocFormatError(
-                    "Every <entry> must contain "
-                    "exactly one attribute: 'name'."
-                )
-
-            name = self._required_entry_name(
-                entry
-            )
-
-            normalized = self.normalize_name(
-                name
-            )
-
+        for entry in self._iter_entries(self._element):
+            if set(entry.attrib) != {'name'}:
+                raise CitraDocFormatError("Every <entry> must contain exactly one attribute: 'name'.")
+            name = self._required_entry_name(entry)
+            normalized = self.normalize_name(name)
             if normalized != name:
-                raise CitraDocFormatError(
-                    "Index entry name must not have "
-                    "surrounding whitespace: "
-                    f"{name!r}."
-                )
-
+                raise CitraDocFormatError(f'Index entry name must not have surrounding whitespace: {name!r}.')
             if name in seen:
-                raise CitraDocFormatError(
-                    f"Duplicate index entry name: "
-                    f"{name!r}."
-                )
-
-            seen.add(
-                name
-            )
-
-            if (
-                entry.text is not None
-                and entry.text.strip()
-            ):
-                raise CitraDocFormatError(
-                    f"<entry name={name!r}> "
-                    "may not contain text."
-                )
-
+                raise CitraDocFormatError(f'Duplicate index entry name: {name!r}.')
+            seen.add(name)
+            if entry.text is not None and entry.text.strip():
+                raise CitraDocFormatError(f'<entry name={name!r}> may not contain text.')
             for child in entry:
                 if child.tag != ENTRY_TAG:
-                    raise CitraDocFormatError(
-                        f"<entry name={name!r}> "
-                        "may contain only <entry> "
-                        "children; "
-                        f"found <{child.tag}>."
-                    )
+                    raise CitraDocFormatError(f'<entry name={name!r}> may contain only <entry> children; found <{child.tag}>.')
 
-    def _find_with_parent(
-        self,
-        name: str,
-    ) -> tuple[
-        ET.Element,
-        ET.Element,
-    ] | None:
-        return self._find_entry_with_parent(
-            self._element,
-            name,
-        )
+    def _find_with_parent(self, name: str) -> tuple[ET.Element, ET.Element] | None:
+        """Handle find with parent."""
+        return self._find_entry_with_parent(self._element, name)
 
     @classmethod
-    def _find_entry_with_parent(
-        cls,
-        parent: ET.Element,
-        name: str,
-    ) -> tuple[
-        ET.Element,
-        ET.Element,
-    ] | None:
+    def _find_entry_with_parent(cls, parent: ET.Element, name: str) -> tuple[ET.Element, ET.Element] | None:
+        """Handle find entry with parent."""
         for child in parent:
             if child.tag != ENTRY_TAG:
                 continue
-
-            if child.get(
-                "name"
-            ) == name:
-                return (
-                    parent,
-                    child,
-                )
-
-            nested = cls._find_entry_with_parent(
-                child,
-                name,
-            )
-
+            if child.get('name') == name:
+                return (parent, child)
+            nested = cls._find_entry_with_parent(child, name)
             if nested is not None:
                 return nested
-
         return None
 
     @classmethod
-    def _iter_entries(
-        cls,
-        parent: ET.Element,
-    ) -> Iterable[ET.Element]:
+    def _iter_entries(cls, parent: ET.Element) -> Iterable[ET.Element]:
+        """Handle iter entries."""
         for child in parent:
             if child.tag != ENTRY_TAG:
                 continue
-
             yield child
-
-            yield from cls._iter_entries(
-                child
-            )
+            yield from cls._iter_entries(child)
 
     @staticmethod
-    def _direct_entries(
-        parent: ET.Element,
-    ) -> list[ET.Element]:
-        return [
-            child
-            for child in parent
-            if child.tag == ENTRY_TAG
-        ]
+    def _direct_entries(parent: ET.Element) -> list[ET.Element]:
+        """Handle direct entries."""
+        return [child for child in parent if child.tag == ENTRY_TAG]
 
     @classmethod
-    def _entry_subtree_names(
-        cls,
-        entry: ET.Element,
-    ) -> tuple[str, ...]:
-        names: list[str] = [
-            cls._required_entry_name(
-                entry
-            )
-        ]
-
-        names.extend(
-            cls._required_entry_name(
-                child
-            )
-            for child in cls._iter_entries(
-                entry
-            )
-        )
-
-        return tuple(
-            names
-        )
+    def _entry_subtree_names(cls, entry: ET.Element) -> tuple[str, ...]:
+        """Handle entry subtree names."""
+        names: list[str] = [cls._required_entry_name(entry)]
+        names.extend((cls._required_entry_name(child) for child in cls._iter_entries(entry)))
+        return tuple(names)
 
     @classmethod
-    def _append_markdown_entry(
-        cls,
-        entry: ET.Element,
-        lines: list[str],
-        *,
-        depth: int,
-    ) -> None:
-        name = cls._required_entry_name(
-            entry
-        )
-
-        lines.append(
-            f"{'  ' * depth}- {name}"
-        )
-
-        for child in cls._direct_entries(
-            entry
-        ):
-            cls._append_markdown_entry(
-                child,
-                lines,
-                depth=depth + 1,
-            )
+    def _append_markdown_entry(cls, entry: ET.Element, lines: list[str], *, depth: int) -> None:
+        """Handle append markdown entry."""
+        name = cls._required_entry_name(entry)
+        lines.append(f"{'  ' * depth}- {name}")
+        for child in cls._direct_entries(entry):
+            cls._append_markdown_entry(child, lines, depth=depth + 1)
 
     @staticmethod
-    def _required_entry_name(
-        entry: ET.Element,
-    ) -> str:
-        name = entry.get(
-            "name"
-        )
-
+    def _required_entry_name(entry: ET.Element) -> str:
+        """Handle required entry name."""
+        name = entry.get('name')
         if name is None:
-            raise CitraDocFormatError(
-                "<entry> is missing required "
-                "'name' attribute."
-            )
-
+            raise CitraDocFormatError("<entry> is missing required 'name' attribute.")
         return name
 
     @staticmethod
-    def normalize_name(
-        name: str,
-    ) -> str:
+    def normalize_name(name: str) -> str:
         """
         Validate and normalize a section/index name.
 
@@ -545,23 +278,11 @@ class Index:
         - are stripped of surrounding whitespace.
         """
         normalized = name.strip()
-
         if not normalized:
-            raise ValueError(
-                "Entry/section name cannot be empty."
-            )
-
-        if (
-            "\n" in normalized
-            or "\r" in normalized
-        ):
-            raise ValueError(
-                "Entry/section names cannot "
-                "contain newlines."
-            )
-
+            raise ValueError('Entry/section name cannot be empty.')
+        if '\n' in normalized or '\r' in normalized:
+            raise ValueError('Entry/section names cannot contain newlines.')
         return normalized
-
 
 @dataclass(slots=True)
 class CitraDoc:
@@ -642,24 +363,14 @@ class CitraDoc:
         from_line=5, to_line=5
             insertion before logical line 5
     """
-
     path: Path
 
-    def __post_init__(
-        self,
-    ) -> None:
-        self.path = Path(
-            self.path
-        )
+    def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
+        self.path = Path(self.path)
 
     @classmethod
-    def create(
-        cls,
-        path: str | Path,
-        *,
-        title: str,
-        versioning: str | None = None,
-    ) -> CitraDoc:
+    def create(cls, path: str | Path, *, title: str, versioning: str | None=None) -> CitraDoc:
         """
         Create a new empty Citra document.
 
@@ -680,78 +391,23 @@ class CitraDoc:
         Returns:
             A ``CitraDoc`` bound to the newly-created file.
         """
-        destination = Path(
-            path
-        )
-
+        destination = Path(path)
         if destination.exists():
-            raise FileExistsError(
-                "Citra document already exists: "
-                f"{destination}"
-            )
-
-        normalized_title = (
-            cls._normalize_metadata(
-                title,
-                field="title",
-                allow_empty=False,
-            )
-        )
-
-        root = ET.Element(
-            ROOT_TAG
-        )
-
-        title_element = ET.SubElement(
-            root,
-            TITLE_TAG,
-        )
-
-        title_element.text = (
-            normalized_title
-        )
-
+            raise FileExistsError(f'Citra document already exists: {destination}')
+        normalized_title = cls._normalize_metadata(title, field='title', allow_empty=False)
+        root = ET.Element(ROOT_TAG)
+        title_element = ET.SubElement(root, TITLE_TAG)
+        title_element.text = normalized_title
         if versioning is not None:
-            versioning_element = (
-                ET.SubElement(
-                    root,
-                    VERSIONING_TAG,
-                )
-            )
-
-            versioning_element.text = (
-                cls._normalize_metadata(
-                    versioning,
-                    field="versioning",
-                    allow_empty=True,
-                )
-            )
-
-        ET.SubElement(
-            root,
-            INDEX_TAG,
-        )
-
-        ET.SubElement(
-            root,
-            SECTIONS_TAG,
-        )
-
-        document = cls(
-            destination
-        )
-
-        document._write_tree(
-            ET.ElementTree(
-                root
-            )
-        )
-
+            versioning_element = ET.SubElement(root, VERSIONING_TAG)
+            versioning_element.text = cls._normalize_metadata(versioning, field='versioning', allow_empty=True)
+        ET.SubElement(root, INDEX_TAG)
+        ET.SubElement(root, SECTIONS_TAG)
+        document = cls(destination)
+        document._write_tree(ET.ElementTree(root))
         return document
 
-    def validate(
-        self,
-    ) -> str:
+    def validate(self) -> str:
         """
         Parse and validate the complete document.
 
@@ -766,27 +422,17 @@ class CitraDoc:
                 If its XML or Citra document structure is invalid.
         """
         self._load_tree()
-        return "ok"
+        return 'ok'
 
-    def read_title(
-        self,
-    ) -> str:
+    def read_title(self) -> str:
         """
         Return the required document title.
         """
         root = self._load_root()
+        title = self._require_single_child(root, TITLE_TAG)
+        return title.text or ''
 
-        title = self._require_single_child(
-            root,
-            TITLE_TAG,
-        )
-
-        return title.text or ""
-
-    def update_title(
-        self,
-        new_content: str,
-    ) -> str:
+    def update_title(self, new_content: str) -> str:
         """
         Replace the required title.
 
@@ -795,38 +441,17 @@ class CitraDoc:
         Returns:
             A unified diff between the old and new title.
         """
-        normalized = self._normalize_metadata(
-            new_content,
-            field="title",
-            allow_empty=False,
-        )
-
+        normalized = self._normalize_metadata(new_content, field='title', allow_empty=False)
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("A")
-
-        title = self._require_single_child(
-            root,
-            TITLE_TAG,
-        )
-
-        old_content = title.text or ""
-
+            raise Exception('A')
+        title = self._require_single_child(root, TITLE_TAG)
+        old_content = title.text or ''
         title.text = normalized
+        self._write_tree(tree)
+        return self._text_diff(old_content, normalized, label='title')
 
-        self._write_tree(
-            tree
-        )
-
-        return self._text_diff(
-            old_content,
-            normalized,
-            label="title",
-        )
-
-    def read_versioning(
-        self,
-    ) -> str:
+    def read_versioning(self) -> str:
         """
         Return the optional version marker.
 
@@ -838,23 +463,12 @@ class CitraDoc:
         could use some other freshness marker.
         """
         root = self._load_root()
-
-        versioning = (
-            self._optional_single_child(
-                root,
-                VERSIONING_TAG,
-            )
-        )
-
+        versioning = self._optional_single_child(root, VERSIONING_TAG)
         if versioning is None:
-            return ""
+            return ''
+        return versioning.text or ''
 
-        return versioning.text or ""
-
-    def update_versioning(
-        self,
-        new_content: str,
-    ) -> str:
+    def update_versioning(self, new_content: str) -> str:
         """
         Create or replace the optional ``<versioning>`` value.
 
@@ -863,68 +477,24 @@ class CitraDoc:
         Returns:
             A unified diff between the old and new versioning values.
         """
-        normalized = self._normalize_metadata(
-            new_content,
-            field="versioning",
-            allow_empty=True,
-        )
-
+        normalized = self._normalize_metadata(new_content, field='versioning', allow_empty=True)
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
-        
-        versioning = (
-            self._optional_single_child(
-                root,
-                VERSIONING_TAG,
-            )
-        )
-
-        old_content = ""
-
+            raise Exception('Root is none')
+        versioning = self._optional_single_child(root, VERSIONING_TAG)
+        old_content = ''
         if versioning is None:
-            versioning = ET.Element(
-                VERSIONING_TAG
-            )
-
-            title = (
-                self._require_single_child(
-                    root,
-                    TITLE_TAG,
-                )
-            )
-
-            title_position = (
-                list(root).index(
-                    title
-                )
-            )
-
-            root.insert(
-                title_position + 1,
-                versioning,
-            )
-
+            versioning = ET.Element(VERSIONING_TAG)
+            title = self._require_single_child(root, TITLE_TAG)
+            title_position = list(root).index(title)
+            root.insert(title_position + 1, versioning)
         else:
-            old_content = (
-                versioning.text or ""
-            )
-
+            old_content = versioning.text or ''
         versioning.text = normalized
+        self._write_tree(tree)
+        return self._text_diff(old_content, normalized, label='versioning')
 
-        self._write_tree(
-            tree
-        )
-
-        return self._text_diff(
-            old_content,
-            normalized,
-            label="versioning",
-        )
-
-    def read_index(
-        self,
-    ) -> str:
+    def read_index(self) -> str:
         """
         Return the hierarchical XML index as Markdown.
 
@@ -938,27 +508,11 @@ class CitraDoc:
               - networking
         """
         root = self._load_root()
-
-        index_element = (
-            self._require_single_child(
-                root,
-                INDEX_TAG,
-            )
-        )
-
-        index = Index(
-            index_element
-        )
-
+        index_element = self._require_single_child(root, INDEX_TAG)
+        index = Index(index_element)
         return index.convert_to_md()
 
-    def read_sections(
-        self,
-        names: Iterable[str],
-        from_line: int = 0,
-        to_line: int | None = DEFAULT_LINES,
-        expand_children: bool = True,
-    ) -> str:
+    def read_sections(self, names: Iterable[str], from_line: int=0, to_line: int | None=DEFAULT_LINES, expand_children: bool=True) -> str:
         """
         Read several sections as Markdown.
 
@@ -990,88 +544,30 @@ class CitraDoc:
         Returns:
             Concatenated Markdown for all selected sections.
         """
-        self._validate_slice(
-            from_line,
-            to_line,
-        )
-
+        self._validate_slice(from_line, to_line)
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
-
-        index_element = (
-            self._require_single_child(
-                root,
-                INDEX_TAG,
-            )
-        )
-
-        sections = (
-            self._require_single_child(
-                root,
-                SECTIONS_TAG,
-            )
-        )
-
-        index = Index(
-            index_element
-        )
-
+            raise Exception('Root is none')
+        index_element = self._require_single_child(root, INDEX_TAG)
+        sections = self._require_single_child(root, SECTIONS_TAG)
+        index = Index(index_element)
         ordered_names: list[str] = []
         seen: set[str] = set()
-
         for raw_name in names:
-            name = Index.normalize_name(
-                raw_name
-            )
-
-            selected_names = (
-                index.subtree_names(
-                    name
-                )
-                if expand_children
-                else (name,)
-            )
-
+            name = Index.normalize_name(raw_name)
+            selected_names = index.subtree_names(name) if expand_children else (name,)
             for selected_name in selected_names:
                 if selected_name in seen:
                     continue
-
-                seen.add(
-                    selected_name
-                )
-
-                ordered_names.append(
-                    selected_name
-                )
-
+                seen.add(selected_name)
+                ordered_names.append(selected_name)
         rendered: list[str] = []
-
         for name in ordered_names:
-            section = self._require_section(
-                sections,
-                name,
-            )
+            section = self._require_section(sections, name)
+            rendered.append(self._render_section(section, from_line=from_line, to_line=to_line))
+        return '\n\n'.join(rendered)
 
-            rendered.append(
-                self._render_section(
-                    section,
-                    from_line=from_line,
-                    to_line=to_line,
-                )
-            )
-
-        return "\n\n".join(
-            rendered
-        )
-
-    def read_section(
-        self,
-        name: str,
-        from_line: int = 0,
-        to_line: int | None = DEFAULT_LINES,
-        expand_children: bool = True,
-    ) -> str:
+    def read_section(self, name: str, from_line: int=0, to_line: int | None=DEFAULT_LINES, expand_children: bool=True) -> str:
         """
         Read one section.
 
@@ -1080,21 +576,9 @@ class CitraDoc:
 
         This is a convenience wrapper around ``read_sections``.
         """
-        return self.read_sections(
-            (
-                name,
-            ),
-            from_line=from_line,
-            to_line=to_line,
-            expand_children=expand_children,
-        )
+        return self.read_sections((name,), from_line=from_line, to_line=to_line, expand_children=expand_children)
 
-    def create_section(
-        self,
-        name: str,
-        content: str,
-        parent: str | None = None,
-    ) -> str:
+    def create_section(self, name: str, content: str, parent: str | None=None) -> str:
         """
         Create an index entry and corresponding section body atomically.
 
@@ -1126,83 +610,24 @@ class CitraDoc:
         Returns:
             Diagnostics describing both changes.
         """
-        normalized_name = (
-            Index.normalize_name(
-                name
-            )
-        )
-
+        normalized_name = Index.normalize_name(name)
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
-
-        index_element = (
-            self._require_single_child(
-                root,
-                INDEX_TAG,
-            )
-        )
-
-        sections = (
-            self._require_single_child(
-                root,
-                SECTIONS_TAG,
-            )
-        )
-
-        index = Index(
-            index_element
-        )
-
-        existing = self._find_section(
-            sections,
-            normalized_name,
-        )
-
+            raise Exception('Root is none')
+        index_element = self._require_single_child(root, INDEX_TAG)
+        sections = self._require_single_child(root, SECTIONS_TAG)
+        index = Index(index_element)
+        existing = self._find_section(sections, normalized_name)
         if existing is not None:
-            raise ValueError(
-                f"Section already exists: "
-                f"{normalized_name!r}."
-            )
-
-        index_diagnostic = (
-            index.add_entry(
-                normalized_name,
-                parent,
-            )
-        )
-
-        section = ET.SubElement(
-            sections,
-            SECTION_TAG,
-            {
-                "name": normalized_name,
-            },
-        )
-
+            raise ValueError(f'Section already exists: {normalized_name!r}.')
+        index_diagnostic = index.add_entry(normalized_name, parent)
+        section = ET.SubElement(sections, SECTION_TAG, {'name': normalized_name})
         section.text = content
+        self._validate_root(root)
+        self._write_tree(tree)
+        return f'{index_diagnostic}\nCreated section {normalized_name!r}.'
 
-        self._validate_root(
-            root
-        )
-
-        self._write_tree(
-            tree
-        )
-
-        return (
-            f"{index_diagnostic}\n"
-            f"Created section "
-            f"{normalized_name!r}."
-        )
-
-    def update_section(
-        self,
-        name: str,
-        new_content: str,
-        from_line: int = 0,
-        to_line: int | None = None,
-    ) -> str:
+    def update_section(self, name: str, new_content: str, from_line: int=0, to_line: int | None=None) -> str:
         """
         Replace a logical line range inside one section.
 
@@ -1235,95 +660,28 @@ class CitraDoc:
         Returns:
             A unified diff of the complete old and new section bodies.
         """
-        self._validate_slice(
-            from_line,
-            to_line,
-        )
-
-        normalized_name = (
-            Index.normalize_name(
-                name
-            )
-        )
-
+        self._validate_slice(from_line, to_line)
+        normalized_name = Index.normalize_name(name)
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
-
-        sections = (
-            self._require_single_child(
-                root,
-                SECTIONS_TAG,
-            )
-        )
-
-        section = self._require_section(
-            sections,
-            normalized_name,
-        )
-
-        old_content = (
-            section.text or ""
-        )
-
-        old_lines = (
-            old_content.splitlines()
-        )
-
-        if from_line > len(
-            old_lines
-        ):
-            raise ValueError(
-                f"from_line {from_line} is "
-                "beyond the section's "
-                f"{len(old_lines)} logical lines."
-            )
-
-        effective_to = (
-            len(old_lines)
-            if to_line is None
-            else to_line
-        )
-
-        if effective_to > len(
-            old_lines
-        ):
-            raise ValueError(
-                f"to_line {effective_to} is "
-                "beyond the section's "
-                f"{len(old_lines)} logical lines."
-            )
-
-        replacement_lines = (
-            new_content.splitlines()
-        )
-
-        updated_lines = (
-            old_lines[:from_line]
-            + replacement_lines
-            + old_lines[effective_to:]
-        )
-
-        updated_content = "\n".join(
-            updated_lines
-        )
-
+            raise Exception('Root is none')
+        sections = self._require_single_child(root, SECTIONS_TAG)
+        section = self._require_section(sections, normalized_name)
+        old_content = section.text or ''
+        old_lines = old_content.splitlines()
+        if from_line > len(old_lines):
+            raise ValueError(f"from_line {from_line} is beyond the section's {len(old_lines)} logical lines.")
+        effective_to = len(old_lines) if to_line is None else to_line
+        if effective_to > len(old_lines):
+            raise ValueError(f"to_line {effective_to} is beyond the section's {len(old_lines)} logical lines.")
+        replacement_lines = new_content.splitlines()
+        updated_lines = old_lines[:from_line] + replacement_lines + old_lines[effective_to:]
+        updated_content = '\n'.join(updated_lines)
         section.text = updated_content
+        self._write_tree(tree)
+        return self._text_diff(old_content, updated_content, label=normalized_name)
 
-        self._write_tree(
-            tree
-        )
-
-        return self._text_diff(
-            old_content,
-            updated_content,
-            label=normalized_name,
-        )
-
-    def remove_section(
-        self,
-        name: str,
-    ) -> str:
+    def remove_section(self, name: str) -> str:
         """
         Remove a section and its complete indexed descendant subtree.
 
@@ -1342,582 +700,206 @@ class CitraDoc:
         Returns:
             Diagnostics listing removed index entries and sections.
         """
-        normalized_name = (
-            Index.normalize_name(
-                name
-            )
-        )
-
+        normalized_name = Index.normalize_name(name)
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
-
-        index_element = (
-            self._require_single_child(
-                root,
-                INDEX_TAG,
-            )
-        )
-
-        sections = (
-            self._require_single_child(
-                root,
-                SECTIONS_TAG,
-            )
-        )
-
-        index = Index(
-            index_element
-        )
-
-        removed_names = (
-            index.subtree_names(
-                normalized_name
-            )
-        )
-
-        index_diagnostic = (
-            index.remove_entry(
-                normalized_name
-            )
-        )
-
+            raise Exception('Root is none')
+        index_element = self._require_single_child(root, INDEX_TAG)
+        sections = self._require_single_child(root, SECTIONS_TAG)
+        index = Index(index_element)
+        removed_names = index.subtree_names(normalized_name)
+        index_diagnostic = index.remove_entry(normalized_name)
         removed_sections: list[str] = []
-
         for section_name in removed_names:
-            section = self._find_section(
-                sections,
-                section_name,
-            )
-
+            section = self._find_section(sections, section_name)
             if section is None:
-                raise CitraDocFormatError(
-                    f"Index entry "
-                    f"{section_name!r} "
-                    "has no matching section."
-                )
+                raise CitraDocFormatError(f'Index entry {section_name!r} has no matching section.')
+            sections.remove(section)
+            removed_sections.append(section_name)
+        self._validate_root(root)
+        self._write_tree(tree)
+        rendered = ', '.join((repr(item) for item in removed_sections))
+        return f'{index_diagnostic}\nRemoved sections: {rendered}.'
 
-            sections.remove(
-                section
-            )
-
-            removed_sections.append(
-                section_name
-            )
-
-        self._validate_root(
-            root
-        )
-
-        self._write_tree(
-            tree
-        )
-
-        rendered = ", ".join(
-            repr(item)
-            for item in removed_sections
-        )
-
-        return (
-            f"{index_diagnostic}\n"
-            f"Removed sections: "
-            f"{rendered}."
-        )
-
-    def _load_tree(
-        self,
-    ) -> ET.ElementTree:
+    def _load_tree(self) -> ET.ElementTree:
+        """Handle load tree."""
         if not self.path.is_file():
-            raise FileNotFoundError(
-                "Citra document does not exist: "
-                f"{self.path}"
-            )
-
+            raise FileNotFoundError(f'Citra document does not exist: {self.path}')
         try:
-            tree = ET.parse(
-                self.path
-            )
-
+            tree = ET.parse(self.path)
         except ET.ParseError as error:
-            raise CitraDocFormatError(
-                "Invalid XML in Citra document "
-                f"{self.path}: {error}"
-            ) from error
-
+            raise CitraDocFormatError(f'Invalid XML in Citra document {self.path}: {error}') from error
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
-
-        self._validate_root(
-            root
-        )
-
+            raise Exception('Root is none')
+        self._validate_root(root)
         return tree
 
-    def _load_root(
-        self,
-    ) -> ET.Element:
+    def _load_root(self) -> ET.Element:
+        """Handle load root."""
         tree = self._load_tree()
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
+            raise Exception('Root is none')
         return root
 
     @classmethod
-    def _validate_root(
-        cls,
-        root: ET.Element,
-    ) -> None:
+    def _validate_root(cls, root: ET.Element) -> None:
+        """Handle validate root."""
         if root.tag != ROOT_TAG:
-            raise CitraDocFormatError(
-                f"Expected <{ROOT_TAG}> root, "
-                f"got <{root.tag}>."
-            )
-
+            raise CitraDocFormatError(f'Expected <{ROOT_TAG}> root, got <{root.tag}>.')
         if root.attrib:
-            raise CitraDocFormatError(
-                f"<{ROOT_TAG}> "
-                "does not accept attributes."
-            )
-
-        allowed_tags = {
-            TITLE_TAG,
-            VERSIONING_TAG,
-            INDEX_TAG,
-            SECTIONS_TAG,
-        }
-
+            raise CitraDocFormatError(f'<{ROOT_TAG}> does not accept attributes.')
+        allowed_tags = {TITLE_TAG, VERSIONING_TAG, INDEX_TAG, SECTIONS_TAG}
         for child in root:
             if child.tag not in allowed_tags:
-                raise CitraDocFormatError(
-                    "Unexpected top-level "
-                    f"element <{child.tag}>."
-                )
-
-        title = cls._require_single_child(
-            root,
-            TITLE_TAG,
-        )
-
-        cls._validate_text_only_element(
-            title,
-            field="title",
-            allow_empty=False,
-        )
-
-        versioning = (
-            cls._optional_single_child(
-                root,
-                VERSIONING_TAG,
-            )
-        )
-
+                raise CitraDocFormatError(f'Unexpected top-level element <{child.tag}>.')
+        title = cls._require_single_child(root, TITLE_TAG)
+        cls._validate_text_only_element(title, field='title', allow_empty=False)
+        versioning = cls._optional_single_child(root, VERSIONING_TAG)
         if versioning is not None:
-            cls._validate_text_only_element(
-                versioning,
-                field="versioning",
-                allow_empty=True,
-            )
-
-        index_element = (
-            cls._require_single_child(
-                root,
-                INDEX_TAG,
-            )
-        )
-
-        sections = (
-            cls._require_single_child(
-                root,
-                SECTIONS_TAG,
-            )
-        )
-
-        index = Index(
-            index_element
-        )
-
-        cls._validate_sections(
-            sections,
-            index,
-        )
+            cls._validate_text_only_element(versioning, field='versioning', allow_empty=True)
+        index_element = cls._require_single_child(root, INDEX_TAG)
+        sections = cls._require_single_child(root, SECTIONS_TAG)
+        index = Index(index_element)
+        cls._validate_sections(sections, index)
 
     @classmethod
-    def _validate_sections(
-        cls,
-        sections: ET.Element,
-        index: Index,
-    ) -> None:
+    def _validate_sections(cls, sections: ET.Element, index: Index) -> None:
+        """Handle validate sections."""
         if sections.attrib:
-            raise CitraDocFormatError(
-                "<sections> does not "
-                "accept attributes."
-            )
-
-        if (
-            sections.text is not None
-            and sections.text.strip()
-        ):
-            raise CitraDocFormatError(
-                "<sections> may contain only "
-                "<section> children."
-            )
-
+            raise CitraDocFormatError('<sections> does not accept attributes.')
+        if sections.text is not None and sections.text.strip():
+            raise CitraDocFormatError('<sections> may contain only <section> children.')
         section_names: set[str] = set()
-
         for section in sections:
             if section.tag != SECTION_TAG:
-                raise CitraDocFormatError(
-                    "<sections> may contain only "
-                    "<section> children; "
-                    f"found <{section.tag}>."
-                )
-
-            if set(
-                section.attrib
-            ) != {"name"}:
-                raise CitraDocFormatError(
-                    "Every <section> must contain "
-                    "exactly one attribute: 'name'."
-                )
-
-            name_value = section.get(
-                "name"
-            )
-
+                raise CitraDocFormatError(f'<sections> may contain only <section> children; found <{section.tag}>.')
+            if set(section.attrib) != {'name'}:
+                raise CitraDocFormatError("Every <section> must contain exactly one attribute: 'name'.")
+            name_value = section.get('name')
             if name_value is None:
-                raise CitraDocFormatError(
-                    "<section> is missing required "
-                    "'name' attribute."
-                )
-
-            normalized_name = (
-                Index.normalize_name(
-                    name_value
-                )
-            )
-
+                raise CitraDocFormatError("<section> is missing required 'name' attribute.")
+            normalized_name = Index.normalize_name(name_value)
             if normalized_name != name_value:
-                raise CitraDocFormatError(
-                    "Section name must not have "
-                    "surrounding whitespace: "
-                    f"{name_value!r}."
-                )
-
+                raise CitraDocFormatError(f'Section name must not have surrounding whitespace: {name_value!r}.')
             if normalized_name in section_names:
-                raise CitraDocFormatError(
-                    f"Duplicate section name: "
-                    f"{normalized_name!r}."
-                )
-
-            section_names.add(
-                normalized_name
-            )
-
-            if list(
-                section
-            ):
-                raise CitraDocFormatError(
-                    f"Section "
-                    f"{normalized_name!r} "
-                    "must contain text/Markdown "
-                    "only, not nested XML elements."
-                )
-
-        index_names = set(
-            index.ordered_names()
-        )
-
-        missing_sections = (
-            index_names
-            - section_names
-        )
-
+                raise CitraDocFormatError(f'Duplicate section name: {normalized_name!r}.')
+            section_names.add(normalized_name)
+            if list(section):
+                raise CitraDocFormatError(f'Section {normalized_name!r} must contain text/Markdown only, not nested XML elements.')
+        index_names = set(index.ordered_names())
+        missing_sections = index_names - section_names
         if missing_sections:
-            rendered = ", ".join(
-                repr(name)
-                for name in sorted(
-                    missing_sections
-                )
-            )
-
-            raise CitraDocFormatError(
-                "Index entries without matching "
-                f"sections: {rendered}."
-            )
-
-        orphan_sections = (
-            section_names
-            - index_names
-        )
-
+            rendered = ', '.join((repr(name) for name in sorted(missing_sections)))
+            raise CitraDocFormatError(f'Index entries without matching sections: {rendered}.')
+        orphan_sections = section_names - index_names
         if orphan_sections:
-            rendered = ", ".join(
-                repr(name)
-                for name in sorted(
-                    orphan_sections
-                )
-            )
-
-            raise CitraDocFormatError(
-                "Sections without matching "
-                f"index entries: {rendered}."
-            )
+            rendered = ', '.join((repr(name) for name in sorted(orphan_sections)))
+            raise CitraDocFormatError(f'Sections without matching index entries: {rendered}.')
 
     @staticmethod
-    def _require_single_child(
-        parent: ET.Element,
-        tag: str,
-    ) -> ET.Element:
+    def _require_single_child(parent: ET.Element, tag: str) -> ET.Element:
         """
         Return exactly one direct child named ``tag``.
 
         This helper is deliberately used instead of ``Element.find()`` so
         callers receive ``ET.Element`` rather than ``ET.Element | None``.
         """
-        matches = [
-            child
-            for child in parent
-            if child.tag == tag
-        ]
-
+        matches = [child for child in parent if child.tag == tag]
         if not matches:
-            raise CitraDocFormatError(
-                f"<{parent.tag}> is missing "
-                f"required <{tag}> element."
-            )
-
+            raise CitraDocFormatError(f'<{parent.tag}> is missing required <{tag}> element.')
         if len(matches) > 1:
-            raise CitraDocFormatError(
-                f"<{parent.tag}> contains "
-                f"multiple <{tag}> elements."
-            )
-
+            raise CitraDocFormatError(f'<{parent.tag}> contains multiple <{tag}> elements.')
         return matches[0]
 
     @staticmethod
-    def _optional_single_child(
-        parent: ET.Element,
-        tag: str,
-    ) -> ET.Element | None:
+    def _optional_single_child(parent: ET.Element, tag: str) -> ET.Element | None:
         """
         Return zero or one direct child named ``tag``.
 
         Raises when more than one matching child exists.
         """
-        matches = [
-            child
-            for child in parent
-            if child.tag == tag
-        ]
-
+        matches = [child for child in parent if child.tag == tag]
         if len(matches) > 1:
-            raise CitraDocFormatError(
-                f"<{parent.tag}> contains "
-                f"multiple <{tag}> elements."
-            )
-
+            raise CitraDocFormatError(f'<{parent.tag}> contains multiple <{tag}> elements.')
         if not matches:
             return None
-
         return matches[0]
 
     @classmethod
-    def _validate_text_only_element(
-        cls,
-        element: ET.Element,
-        *,
-        field: str,
-        allow_empty: bool,
-    ) -> None:
+    def _validate_text_only_element(cls, element: ET.Element, *, field: str, allow_empty: bool) -> None:
+        """Handle validate text only element."""
         if element.attrib:
-            raise CitraDocFormatError(
-                f"<{element.tag}> "
-                "does not accept attributes."
-            )
-
-        if list(
-            element
-        ):
-            raise CitraDocFormatError(
-                f"<{element.tag}> "
-                "must contain text only."
-            )
-
-        cls._normalize_metadata(
-            element.text or "",
-            field=field,
-            allow_empty=allow_empty,
-        )
+            raise CitraDocFormatError(f'<{element.tag}> does not accept attributes.')
+        if list(element):
+            raise CitraDocFormatError(f'<{element.tag}> must contain text only.')
+        cls._normalize_metadata(element.text or '', field=field, allow_empty=allow_empty)
 
     @staticmethod
-    def _find_section(
-        sections: ET.Element,
-        name: str,
-    ) -> ET.Element | None:
+    def _find_section(sections: ET.Element, name: str) -> ET.Element | None:
+        """Handle find section."""
         for section in sections:
-            if (
-                section.tag == SECTION_TAG
-                and section.get(
-                    "name"
-                ) == name
-            ):
+            if section.tag == SECTION_TAG and section.get('name') == name:
                 return section
-
         return None
 
     @classmethod
-    def _require_section(
-        cls,
-        sections: ET.Element,
-        name: str,
-    ) -> ET.Element:
+    def _require_section(cls, sections: ET.Element, name: str) -> ET.Element:
         """
         Return the required section named ``name``.
 
         Unlike ``_find_section``, the return type is non-optional.
         """
-        section = cls._find_section(
-            sections,
-            name,
-        )
-
+        section = cls._find_section(sections, name)
         if section is None:
-            raise KeyError(
-                f"Unknown section: {name!r}."
-            )
-
+            raise KeyError(f'Unknown section: {name!r}.')
         return section
 
     @staticmethod
-    def _render_section(
-        section: ET.Element,
-        *,
-        from_line: int,
-        to_line: int | None,
-    ) -> str:
-        name = section.get(
-            "name"
-        )
-
+    def _render_section(section: ET.Element, *, from_line: int, to_line: int | None) -> str:
+        """Handle render section."""
+        name = section.get('name')
         if name is None:
-            raise CitraDocFormatError(
-                "<section> is missing required "
-                "'name' attribute."
-            )
-
-        content = (
-            section.text or ""
-        )
-
-        lines = (
-            content.splitlines()
-        )
-
-        selected = lines[
-            from_line:to_line
-        ]
-
-        requested_end = (
-            len(lines)
-            if to_line is None
-            else to_line
-        )
-
-        effective_end = min(
-            len(lines),
-            requested_end,
-        )
-
-        body = "\n".join(
-            selected
-        )
-
+            raise CitraDocFormatError("<section> is missing required 'name' attribute.")
+        content = section.text or ''
+        lines = content.splitlines()
+        selected = lines[from_line:to_line]
+        requested_end = len(lines) if to_line is None else to_line
+        effective_end = min(len(lines), requested_end)
+        body = '\n'.join(selected)
         if not body:
-            body = (
-                "_Empty section or empty "
-                "selected range._"
-            )
-
-        return (
-            f"## Section: {name}\n"
-            f"<!-- lines "
-            f"{from_line}:{effective_end} "
-            f"of {len(lines)}; "
-            "end is exclusive -->\n\n"
-            f"{body}"
-        )
+            body = '_Empty section or empty selected range._'
+        return f'## Section: {name}\n<!-- lines {from_line}:{effective_end} of {len(lines)}; end is exclusive -->\n\n{body}'
 
     @staticmethod
-    def _validate_slice(
-        from_line: int,
-        to_line: int | None,
-    ) -> None:
+    def _validate_slice(from_line: int, to_line: int | None) -> None:
+        """Handle validate slice."""
         if from_line < 0:
-            raise ValueError(
-                "from_line must be greater "
-                "than or equal to 0."
-            )
-
+            raise ValueError('from_line must be greater than or equal to 0.')
         if to_line is None:
             return
-
         if to_line < 0:
-            raise ValueError(
-                "to_line must be greater "
-                "than or equal to 0."
-            )
-
+            raise ValueError('to_line must be greater than or equal to 0.')
         if to_line < from_line:
-            raise ValueError(
-                "to_line cannot be less "
-                "than from_line."
-            )
+            raise ValueError('to_line cannot be less than from_line.')
 
     @staticmethod
-    def _normalize_metadata(
-        value: str,
-        *,
-        field: str,
-        allow_empty: bool,
-    ) -> str:
+    def _normalize_metadata(value: str, *, field: str, allow_empty: bool) -> str:
+        """Handle normalize metadata."""
         normalized = value.strip()
-
-        if (
-            not allow_empty
-            and not normalized
-        ):
-            raise ValueError(
-                f"{field} cannot be empty."
-            )
-
+        if not allow_empty and (not normalized):
+            raise ValueError(f'{field} cannot be empty.')
         return normalized
 
     @staticmethod
-    def _text_diff(
-        old_content: str,
-        new_content: str,
-        *,
-        label: str,
-    ) -> str:
+    def _text_diff(old_content: str, new_content: str, *, label: str) -> str:
         """
         Produce a normal unified diff for a metadata value or section body.
         """
         if old_content == new_content:
-            return "No changes."
+            return 'No changes.'
+        return '\n'.join(unified_diff(old_content.splitlines(), new_content.splitlines(), fromfile=f'{label}:before', tofile=f'{label}:after', lineterm=''))
 
-        return "\n".join(
-            unified_diff(
-                old_content.splitlines(),
-                new_content.splitlines(),
-                fromfile=f"{label}:before",
-                tofile=f"{label}:after",
-                lineterm="",
-            )
-        )
-
-    def _write_tree(
-        self,
-        tree: ET.ElementTree,
-    ) -> None:
+    def _write_tree(self, tree: ET.ElementTree) -> None:
         """
         Validate and atomically persist an XML tree.
 
@@ -1925,57 +907,18 @@ class CitraDoc:
         an atomic same-filesystem replacement.
         """
         if (root := tree.getroot()) is None:
-            raise Exception("Root is none")
+            raise Exception('Root is none')
         if root is None:
-            raise Exception("Root is none")
-
-        self._validate_root(
-            root
-        )
-
-        self.path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        ET.indent(
-            tree,
-            space="    ",
-        )
-
-        descriptor, temporary_name = (
-            tempfile.mkstemp(
-                dir=self.path.parent,
-                prefix=(
-                    f".{self.path.name}."
-                ),
-                suffix=".tmp",
-            )
-        )
-
-        temporary_path = Path(
-            temporary_name
-        )
-
+            raise Exception('Root is none')
+        self._validate_root(root)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        ET.indent(tree, space='    ')
+        descriptor, temporary_name = tempfile.mkstemp(dir=self.path.parent, prefix=f'.{self.path.name}.', suffix='.tmp')
+        temporary_path = Path(temporary_name)
         try:
-            with os.fdopen(
-                descriptor,
-                "wb",
-            ) as stream:
-                tree.write(
-                    stream,
-                    encoding="utf-8",
-                    xml_declaration=True,
-                    short_empty_elements=True,
-                )
-
-            os.replace(
-                temporary_path,
-                self.path,
-            )
-
+            with os.fdopen(descriptor, 'wb') as stream:
+                tree.write(stream, encoding='utf-8', xml_declaration=True, short_empty_elements=True)
+            os.replace(temporary_path, self.path)
         except Exception:
-            temporary_path.unlink(
-                missing_ok=True
-            )
+            temporary_path.unlink(missing_ok=True)
             raise

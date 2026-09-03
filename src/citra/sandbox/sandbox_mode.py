@@ -20,6 +20,7 @@ def _sandbox_mode(
     section: str,
     default: SandboxMode,
 ) -> SandboxMode:
+    """Handle sandbox mode."""
     value = table.get(name, default.name)
 
     if isinstance(value, SandboxMode):

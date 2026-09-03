@@ -14,6 +14,7 @@ class ScopedFilesystem:
     """Path resolver whose authority is limited to sandbox data mounts."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         project_raw = os.environ.get("CITRA_PROJECT_ROOT")
         self.workspace = (
             Path(project_raw).resolve()
@@ -64,6 +65,7 @@ class ScopedFilesystem:
 
     @staticmethod
     def _required_path(name: str) -> Path:
+        """Handle required path."""
         value = os.environ.get(name)
         if not value:
             raise RuntimeError(f"Sandbox environment is missing {name}.")
@@ -71,6 +73,7 @@ class ScopedFilesystem:
 
     @staticmethod
     def _within(root: Path, path: Path) -> bool:
+        """Handle within."""
         try:
             path.relative_to(root)
             return True
@@ -78,6 +81,7 @@ class ScopedFilesystem:
             return False
 
     def resolve_path(self, value: str | Path) -> Path:
+        """Return resolve path."""
         raw = str(value)
         alias_raw = raw
         while alias_raw.startswith("./"):
@@ -104,6 +108,7 @@ class ScopedFilesystem:
         return candidate.resolve()
 
     def require_allowed_path(self, value: str | Path) -> Path:
+        """Handle require allowed path."""
         resolved = Path(value).resolve()
         if any(self._within(root, resolved) for root in self._denied_roots):
             raise ValueError(
@@ -114,12 +119,14 @@ class ScopedFilesystem:
         raise ValueError(f"Path is outside the model-facing filesystem: {resolved}")
 
     def require_writable_path(self, value: str | Path) -> Path:
+        """Handle require writable path."""
         resolved = self.resolve_path(value)
         if any(self._within(root, resolved) for root in self._write_roots):
             return resolved
         raise ValueError(f"Path is read-only: {self.display_path(resolved)}")
 
     def display_path(self, value: str | Path) -> str:
+        """Handle display path."""
         resolved = Path(value).resolve()
         ordered = (
             ("", self.workspace),
@@ -148,6 +155,7 @@ class ScopedFilesystem:
         *,
         encoding: str = "utf-8",
     ) -> Path:
+        """Handle write text atomic."""
         destination = self.require_writable_path(value)
         parent = self.require_writable_path(destination.parent)
         parent.mkdir(parents=True, exist_ok=True)
@@ -168,6 +176,7 @@ class ScopedFilesystem:
         return destination
 
     def convert_readable(self, path: Path) -> Path:
+        """Handle convert readable."""
         if path.suffix.lower() not in {".pdf", ".ipynb"}:
             return path
 

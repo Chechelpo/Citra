@@ -27,6 +27,7 @@ def _edit_definition(
     include_diagnostics: bool = False,
     description: str,
 ) -> ChatCompletionTool:
+    """Handle edit definition."""
     properties: list[JsonProperty] = [
         JsonProperty(
             name=path_name,
@@ -315,6 +316,7 @@ class Edit(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -358,6 +360,7 @@ class Edit(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -371,6 +374,7 @@ class Edit(Tool):
         arguments: dict[str, Any],
         *names: str,
     ) -> Any:
+        """Handle first argument."""
         for name in names:
             if name in arguments:
                 return arguments[name]
@@ -381,6 +385,7 @@ class Edit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        """Handle normalize arguments."""
         path = self._first_argument(
             arguments,
             "path",
@@ -437,6 +442,7 @@ class Edit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         filesystem_arguments = self._normalize_arguments(
             arguments
         )
@@ -462,6 +468,7 @@ class Edit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         normalized = self._normalize_arguments(
             arguments
         )
@@ -512,6 +519,7 @@ class Edit(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         return self._truncate(
             str(result)
         )
@@ -520,6 +528,7 @@ class Edit(Tool):
     def _truncate(
         value: str,
     ) -> str:
+        """Handle truncate."""
         if len(value) <= _TRUNCATE_LENGTH:
             return value
 

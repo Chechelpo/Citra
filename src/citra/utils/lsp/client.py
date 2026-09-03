@@ -19,6 +19,7 @@ from .transport import JsonRpcTransport
 
 @dataclass
 class _Document:
+    """Represent Document."""
     version: int
     text: str
     language: Language
@@ -27,6 +28,7 @@ class _Document:
 
 @dataclass
 class _PushDiagnostics:
+    """Represent PushDiagnostics."""
     version: int | None
     generation: int
     items: list[dict[str, Any]]
@@ -34,6 +36,7 @@ class _PushDiagnostics:
 
 @dataclass
 class _PullDiagnostics:
+    """Represent PullDiagnostics."""
     result_id: str | None
     items: list[dict[str, Any]]
 
@@ -78,6 +81,7 @@ class LspClient:
         config: LspConfig,
         name: str,
     ) -> None:
+        """Initialize the instance."""
         self.transport = transport
         self.root = root.resolve()
         self.server = server
@@ -99,12 +103,15 @@ class LspClient:
         self._mirror_sync: MirrorSync | None = None
 
     def set_tsserver_bridge(self, bridge: TsserverBridge | None) -> None:
+        """Handle set tsserver bridge."""
         self._tsserver_bridge = bridge
 
     def set_mirror_sync(self, callback: MirrorSync | None) -> None:
+        """Handle set mirror sync."""
         self._mirror_sync = callback
 
     def initialize(self) -> None:
+        """Handle initialize."""
         result = self.transport.request(
             "initialize",
             {
@@ -183,6 +190,7 @@ class LspClient:
         return 1, True
 
     def handle_notification(self, method: str, params: Any) -> None:
+        """Handle handle notification."""
         if method == "textDocument/publishDiagnostics":
             self._handle_publish_diagnostics(params)
             return
@@ -194,6 +202,7 @@ class LspClient:
             return
 
     def _handle_publish_diagnostics(self, params: Any) -> None:
+        """Handle handle publish diagnostics."""
         if not isinstance(params, dict):
             return
         uri = params.get("uri")
@@ -217,6 +226,7 @@ class LspClient:
             self._diagnostic_condition.notify_all()
 
     def _handle_tsserver_request(self, params: Any) -> None:
+        """Handle handle tsserver request."""
         bridge = self._tsserver_bridge
         if bridge is None or not isinstance(params, list):
             return
@@ -243,6 +253,7 @@ class LspClient:
         self.transport.notify("tsserver/response", response_params)
 
     def handle_request(self, method: str, params: Any) -> Any:
+        """Handle handle request."""
         if method == "workspace/configuration":
             items = params.get("items", []) if isinstance(params, dict) else []
             settings = dict(self.server.settings)
@@ -336,6 +347,7 @@ class LspClient:
         self._diagnostic_registration_options = diagnostic_options
 
     def sync_document(self, path: Path, text: str, language: Language) -> str:
+        """Handle sync document."""
         uri = path_to_uri(path)
         current = self._documents.get(uri)
         if current is None:
@@ -390,20 +402,24 @@ class LspClient:
         return uri
 
     def _mirror(self, path: Path, text: str, language: Language) -> None:
+        """Handle mirror."""
         callback = self._mirror_sync
         if callback is not None:
             callback(path, text, language)
 
     def _mark_diagnostics_stale(self, uri: str) -> None:
+        """Handle mark diagnostics stale."""
         with self._diagnostic_condition:
             self._push_diagnostics.pop(uri, None)
             self._pull_diagnostics.pop(uri, None)
 
     def hover(self, uri: str, position: SourcePosition) -> Any:
+        """Handle hover."""
         self.capabilities.require("hover")
         return self._position_request("textDocument/hover", uri, position)
 
     def definitions(self, kind: str, uri: str, position: SourcePosition) -> Any:
+        """Handle definitions."""
         methods = {
             "definition": ("definition", "textDocument/definition"),
             "declaration": ("declaration", "textDocument/declaration"),
@@ -415,6 +431,7 @@ class LspClient:
         return self._position_request(method, uri, position)
 
     def references(self, uri: str, position: SourcePosition, *, include_declaration: bool) -> Any:
+        """Handle references."""
         self.capabilities.require("references")
         return self.transport.request(
             "textDocument/references",
@@ -427,6 +444,7 @@ class LspClient:
         )
 
     def document_symbols(self, uri: str) -> Any:
+        """Handle document symbols."""
         self.capabilities.require("document_symbols")
         return self.transport.request(
             "textDocument/documentSymbol",
@@ -435,6 +453,7 @@ class LspClient:
         )
 
     def execute_command(self, command: str, arguments: list[Any]) -> Any:
+        """Execute the execute command operation."""
         return self.transport.request(
             "workspace/executeCommand",
             {"command": command, "arguments": arguments},
@@ -442,6 +461,7 @@ class LspClient:
         )
 
     def diagnostics(self, uri: str, *, timeout: float | None = None) -> list[dict[str, Any]]:
+        """Handle diagnostics."""
         effective_timeout = self._diagnostics_timeout() if timeout is None else timeout
         if effective_timeout <= 0:
             raise ValueError("LSP diagnostics timeout must be positive.")
@@ -490,6 +510,7 @@ class LspClient:
                 return self._pull_document_diagnostics(uri, timeout=remaining)
 
     def _pull_document_diagnostics(self, uri: str, *, timeout: float) -> list[dict[str, Any]]:
+        """Handle pull document diagnostics."""
         previous = self._pull_diagnostics.get(uri)
         params: dict[str, Any] = {"textDocument": {"uri": uri}}
         provider = (self.capabilities.raw or {}).get("diagnosticProvider")
@@ -533,6 +554,7 @@ class LspClient:
         return list(cleaned)
 
     def _diagnostics_timeout(self) -> float:
+        """Handle diagnostics timeout."""
         if not self._cold_diagnostics_pending:
             return self.config.diagnostics_timeout
         cold = self.server.cold_diagnostics_timeout
@@ -541,6 +563,7 @@ class LspClient:
         return max(self.config.diagnostics_timeout, cold)
 
     def _position_request(self, method: str, uri: str, position: SourcePosition) -> Any:
+        """Handle position request."""
         return self.transport.request(
             method,
             {"textDocument": {"uri": uri}, "position": position_to_lsp(position)},
@@ -548,6 +571,7 @@ class LspClient:
         )
 
     def close(self) -> None:
+        """Handle close."""
         if self._closed:
             return
         self._closed = True

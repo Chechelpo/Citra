@@ -4,7 +4,9 @@ from typing import override
 from citra.tools.skills.skill import Skill
 class ArchitectureDesign(Skill):
     
+    """Represent ArchitectureDesign."""
     def __init__(self):
+        """Initialize the instance."""
         super().__init__(
             name = "architecture-design",
             description = "Provides a necessary overview on software systems architecture. Mandatory read for any greenfield or significant task",
@@ -16,6 +18,7 @@ class ArchitectureDesign(Skill):
         self,
         context : ExecutionContext
     ) -> str:
+        """Return get md."""
         return _SKILL
 
 

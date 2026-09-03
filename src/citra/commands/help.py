@@ -13,6 +13,7 @@ class HelpCommand(Command):
 
     def _run(self, args: str) -> CommandResult:
         # Access the registry through the module-level singleton.
+        """Execute the run operation."""
         from .default_registry import COMMAND_REGISTRY
 
         lines = ["Available commands:"]

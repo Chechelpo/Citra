@@ -84,10 +84,12 @@ class FilesystemInput(ABC, Generic[OutputT]):
         """Serialize this input for the fixed worker wire protocol."""
 
     def parse_output(self, payload: Any) -> OutputT:
+        """Handle parse output."""
         return cast(OutputT, self.output_type.from_payload(payload))
 
 
 def require_string(arguments: dict[str, Any], key: str) -> str:
+    """Handle require string."""
     if not isinstance(arguments, dict):
         raise ValueError("Filesystem arguments must be a JSON object.")
     value = arguments.get(key)
@@ -101,6 +103,7 @@ def optional_string(
     key: str,
     default: str,
 ) -> str:
+    """Handle optional string."""
     if not isinstance(arguments, dict):
         raise ValueError("Filesystem arguments must be a JSON object.")
     value = arguments.get(key, default)
@@ -110,6 +113,7 @@ def optional_string(
 
 
 def require_payload_dict(payload: Any) -> dict[str, Any]:
+    """Handle require payload dict."""
     if not isinstance(payload, dict):
         raise ValueError("Filesystem output payload must be a JSON object.")
     return payload

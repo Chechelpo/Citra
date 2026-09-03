@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CitraDocsPromptEnvironment:
+    """Represent CitraDocsPromptEnvironment."""
     project_documents: tuple[str, ...]
 
 
@@ -21,6 +22,7 @@ class CitraDocsSkill(Skill):
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         super().__init__(
             "citra-docs",
             "Explains Citra structured documents, discovers existing "
@@ -33,6 +35,7 @@ class CitraDocsSkill(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
+        """Return get md."""
         environment = _collect_environment(
             context
         )
@@ -46,6 +49,7 @@ class CitraDocsSkill(Skill):
 def _collect_environment(
     context: ExecutionContext,
 ) -> CitraDocsPromptEnvironment:
+    """Handle collect environment."""
     workspace = context.workspace
 
     return CitraDocsPromptEnvironment(
@@ -63,6 +67,7 @@ def _discover_documents(
     display_prefix: str,
     is_private: Callable[[Path], bool] | None = None,
 ) -> tuple[str, ...]:
+    """Handle discover documents."""
     if not root.is_dir():
         return ()
 
@@ -94,6 +99,7 @@ def _discover_documents(
 def _format_documents(
     documents: tuple[str, ...],
 ) -> str:
+    """Handle format documents."""
     if not documents:
         return "- None detected."
 
@@ -104,6 +110,7 @@ def _format_documents(
 
 
 def _project_documents(environment: CitraDocsPromptEnvironment) -> str:
+    """Handle project documents."""
     return f"""\
 ### Project documents
 
@@ -113,6 +120,7 @@ These Citra documents currently exist in the project:
 
 
 def _addressing_policy() -> str:
+    """Handle addressing policy."""
     return (
         "The document tool addresses project documents by logical name. "
         "Ordinary project paths are relative to `.`."

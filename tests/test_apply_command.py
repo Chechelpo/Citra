@@ -8,7 +8,7 @@ from unittest import mock
 
 from citra.commands.apply import ApplyCommand
 from citra.commands.default_registry import COMMAND_REGISTRY
-from citra.context.workspace_context.source_baseline import SourceEntry, capture_source_baseline
+from citra.context.source_baseline import SourceEntry, capture_source_baseline
 
 
 def _git(project: Path, *arguments: str) -> str:

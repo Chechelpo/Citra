@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import selectors
 import subprocess
-import sys
 import os
 from threading import Lock, Thread
 from typing import Any
@@ -14,7 +14,11 @@ from typing import Any
 from citra.sandbox.sandbox import WorkspaceSandbox
 
 
+logger = logging.getLogger(__name__)
+
+
 class BrowserManager:
+    """Represent BrowserManager."""
     def __init__(
         self,
         sandbox: WorkspaceSandbox,
@@ -23,6 +27,7 @@ class BrowserManager:
         request_timeout: float,
         browsers_path: str | Path | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._sandbox = sandbox
         self._workspace = workspace
         self._request_timeout = request_timeout
@@ -35,6 +40,7 @@ class BrowserManager:
         self._closed = False
 
     def request(self, action: str, **arguments: Any) -> dict[str, Any]:
+        """Handle request."""
         with self._lock:
             process = self._ensure_process()
             assert process.stdin is not None
@@ -65,22 +71,44 @@ class BrowserManager:
             return response
 
     def close(self, *, force: bool = False) -> None:
+        """Handle close."""
         with self._lock:
             self._closed = True
             process = self._process
             self._process = None
         if process is None:
             return
+        logger.info(
+            "Closing sandboxed browser worker",
+            extra={"origin": __name__, "force": force},
+        )
         self._sandbox.terminate_process(process, force=force)
 
     def _ensure_process(self) -> subprocess.Popen[bytes]:
+        """Handle ensure process."""
         if self._closed:
             raise RuntimeError("The browser manager is closing.")
         if self._process is not None and self._process.poll() is None:
             return self._process
 
+        python = (
+            self._sandbox.resolve_command("python")
+            or self._sandbox.resolve_command("python3")
+        )
+        if python is None:
+            logger.error(
+                "Browser worker has no isolated Python runtime",
+                extra={"origin": __name__},
+            )
+            raise RuntimeError(
+                "The isolated runtime does not provide Python for browser tools."
+            )
+        logger.debug(
+            "Starting sandboxed browser worker",
+            extra={"origin": __name__, "python": str(python)},
+        )
         self._process = self._sandbox.popen(
-            [sys.executable, "-m", "citra.utils.browser_worker"],
+            [str(python), "-m", "citra.utils.browser_worker"],
             cwd=self._workspace,
             network=True,
             environment={
@@ -97,6 +125,7 @@ class BrowserManager:
             stderr = self._process.stderr
 
             def drain() -> None:
+                """Handle drain."""
                 while True:
                     chunk = stderr.read(4096)
 
@@ -120,6 +149,7 @@ class BrowserManager:
     def _resolve_browsers_path(
         configured: str | Path | None,
     ) -> Path:
+        """Handle resolve browsers path."""
         if configured is None:
             configured = os.environ.get(
                 "PLAYWRIGHT_BROWSERS_PATH"

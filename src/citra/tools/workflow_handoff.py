@@ -63,11 +63,13 @@ class WorkflowHandoffTool(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (ToolDefinition(definition=cls.DEFINITION),)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         run = self.context.workflow_runtime.require_active_run()
         handoff = run.submit_handoff(
             summary=str(arguments["summary"]),
@@ -80,6 +82,7 @@ class WorkflowHandoffTool(Tool):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         return f"next_step={arguments.get('next_step', '?')}"
 
 

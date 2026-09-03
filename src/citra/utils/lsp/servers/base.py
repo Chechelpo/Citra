@@ -13,6 +13,7 @@ from ..language import Language
 
 @dataclass(frozen=True)
 class InstallCandidate:
+    """Represent InstallCandidate."""
     manager: str
     packages: tuple[str, ...]
     command: tuple[str, ...]
@@ -23,6 +24,7 @@ CommandFactory = Callable[[str, Path, Path], tuple[str, ...]]
 
 @dataclass(frozen=True)
 class ServerDefinition:
+    """Represent ServerDefinition."""
     id: str
     executable: str
     languages: tuple[Language, ...]

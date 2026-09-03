@@ -44,6 +44,7 @@ class LspRequestError(LspError):
         message: str,
         data: Any | None = None,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(f"[{code}] {message}")
         self.code = code
         self.message = message
@@ -71,6 +72,7 @@ class LspServerExited(LspError):
         exit_code: int | None = None,
         stderr_tail: str = "",
     ) -> None:
+        """Initialize the instance."""
         self.exit_code = exit_code
         self.stderr_tail = stderr_tail
         detail = f"Language server exited unexpectedly (code {exit_code})."

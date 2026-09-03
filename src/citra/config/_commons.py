@@ -5,6 +5,7 @@ from typing import Any
 
 
 def table(raw: dict[str, Any], name: str) -> dict[str, Any]:
+    """Handle table."""
     value = raw.get(name, {})
     if not isinstance(value, dict):
         raise ValueError(f"'{name}' must be a TOML table.")
@@ -12,6 +13,7 @@ def table(raw: dict[str, Any], name: str) -> dict[str, Any]:
 
 
 def bool_value(raw: dict[str, Any], name: str, *, section: str, default: bool) -> bool:
+    """Handle bool value."""
     value = raw.get(name, default)
     if not isinstance(value, bool):
         raise ValueError(f"'{section}.{name}' must be a boolean.")
@@ -19,6 +21,7 @@ def bool_value(raw: dict[str, Any], name: str, *, section: str, default: bool) -
 
 
 def int_value(raw: dict[str, Any], name: str, *, section: str, default: int) -> int:
+    """Handle int value."""
     value = raw.get(name, default)
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError(f"'{section}.{name}' must be a positive integer.")
@@ -26,6 +29,7 @@ def int_value(raw: dict[str, Any], name: str, *, section: str, default: int) -> 
 
 
 def string_value(raw: dict[str, Any], name: str, *, section: str, default: str | None = None) -> str:
+    """Handle string value."""
     value = raw.get(name, default)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"'{section}.{name}' must be a non-empty string.")
@@ -33,6 +37,7 @@ def string_value(raw: dict[str, Any], name: str, *, section: str, default: str |
 
 
 def string_tuple(raw: dict[str, Any], name: str, *, section: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Handle string tuple."""
     value = raw.get(name, default)
     if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) and item for item in value):
         raise ValueError(f"'{section}.{name}' must contain non-empty strings.")
@@ -40,4 +45,5 @@ def string_tuple(raw: dict[str, Any], name: str, *, section: str, default: tuple
 
 
 def path_tuple(raw: dict[str, Any], name: str, *, section: str, default: tuple[Path, ...] = ()) -> tuple[Path, ...]:
+    """Handle path tuple."""
     return tuple(Path(value).expanduser() for value in string_tuple(raw, name, section=section, default=tuple(map(str, default))))

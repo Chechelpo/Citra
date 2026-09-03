@@ -24,6 +24,7 @@ _TRUNCATE_LENGTH = 120
 
 
 class Read(Tool):
+    """Represent Read."""
     TOOL_ID = "read"
 
     CACHEABLE = True
@@ -130,6 +131,7 @@ class Read(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -142,6 +144,7 @@ class Read(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -151,6 +154,7 @@ class Read(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         result: str = self.context.filesystem.execute(
             ReadInput.parse(arguments)
         ).to_budgeted(model_id=self.context.model_config().id, token_count=4_000)
@@ -172,6 +176,7 @@ class Read(Tool):
         self,
         arguments: dict[str, Any],
     ) -> list[str]:
+        """Handle run diagnostics."""
         results: list[str] = []
 
         path = arguments.get("path")
@@ -209,6 +214,7 @@ class Read(Tool):
         self,
         path: str,
     ) -> str:
+        """Handle diagnose path."""
         display_path = path
 
         if self._looks_like_glob(path):
@@ -233,6 +239,7 @@ class Read(Tool):
         self,
         path: Path,
     ) -> str | None:
+        """Handle diagnose file."""
         manager = self.context.lsp_manager
 
         if manager is None:
@@ -278,6 +285,7 @@ class Read(Tool):
     def _looks_like_glob(
         path: str,
     ) -> bool:
+        """Handle looks like glob."""
         return any(
             character in path
             for character in (
@@ -292,6 +300,7 @@ class Read(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         path = arguments.get("path")
         requests = arguments.get("requests")
 
@@ -318,6 +327,7 @@ class Read(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
 
         if not text:
@@ -343,6 +353,7 @@ class Read(Tool):
     def _truncate(
         value: str,
     ) -> str:
+        """Handle truncate."""
         if len(value) <= _TRUNCATE_LENGTH:
             return value
 

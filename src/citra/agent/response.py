@@ -24,6 +24,7 @@ _CACHE_HIT_TEMPLATE = (
 
 
 def get_assistant_message(response: dict[str, Any]) -> ChatCompletionAssistantMessageParam:
+    """Return get assistant message."""
     _logger.debug("Parsing assistant response")
 
     try:
@@ -77,6 +78,7 @@ def get_assistant_message(response: dict[str, Any]) -> ChatCompletionAssistantMe
 
 
 def serialize_tool_result(result: Any) -> str:
+    """Handle serialize tool result."""
     if isinstance(result, str):
         return result
     try:
@@ -91,6 +93,7 @@ def execute_tool_call(
     *,
     session: AgentSession | None = None,
 ) -> str:
+    """Execute the execute tool call operation."""
     function = tool_call["function"]
 
     tool_name = function.get("name")

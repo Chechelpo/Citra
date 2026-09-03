@@ -45,6 +45,7 @@ _MAX_SLEEP_SECONDS = 60
 
 
 def _subagent_definition() -> ChatCompletionTool:
+    """Handle subagent definition."""
     return ChatCompletionTool(
         function=FunctionDefinition(
             name="subagent",
@@ -230,6 +231,7 @@ class SubagentTool(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -247,6 +249,7 @@ class SubagentTool(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (
             ToolDefinition(
@@ -260,6 +263,7 @@ class SubagentTool(Tool):
 
     @staticmethod
     def _action(arguments: dict[str, Any]) -> str:
+        """Handle action."""
         action = arguments.get("action")
         if not isinstance(action, str) or not action.strip():
             raise ValueError("action is required.")
@@ -270,6 +274,7 @@ class SubagentTool(Tool):
         arguments: dict[str, Any],
         name: str,
     ) -> tuple[str, ...]:
+        """Handle str list."""
         value = arguments.get(name)
         if value is None:
             return ()
@@ -297,6 +302,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         action = self._action(arguments)
 
         if action == "create":
@@ -317,6 +323,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle action create."""
         spec = self._build_spec(arguments)
         subagent_id = self.__supervisor.create(
             spec,
@@ -331,6 +338,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle action poll."""
         include_completed = bool(
             arguments.get("include_completed", True)
         )
@@ -380,6 +388,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle action steer."""
         subagent_id = self._required_string(
             arguments,
             "subagent_id",
@@ -406,6 +415,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle action sleep."""
         subagent_id = self._optional_string(
             arguments,
             "subagent_id",
@@ -464,6 +474,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle action cancel."""
         subagent_id = self._required_string(
             arguments,
             "subagent_id",
@@ -490,6 +501,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> SubagentSpec:
+        """Handle build spec."""
         task = self._required_string(
             arguments,
             "task",
@@ -527,6 +539,7 @@ class SubagentTool(Tool):
         write_path: "Path",
         readonly_binds: "tuple[Path, ...]",
     ) -> ExecutionContext:
+        """Handle build subagent context."""
         from .factory import build_subagent_context as factory
 
         parent_workspace = self.context.workspace
@@ -551,6 +564,7 @@ class SubagentTool(Tool):
         arguments: dict[str, Any],
         name: str,
     ) -> str:
+        """Handle required string."""
         value = arguments.get(name)
         if not isinstance(value, str):
             raise ValueError(f"{name} is required.")
@@ -564,6 +578,7 @@ class SubagentTool(Tool):
         arguments: dict[str, Any],
         name: str,
     ) -> str | None:
+        """Handle optional string."""
         value = arguments.get(name)
         if value is None:
             return None
@@ -580,6 +595,7 @@ class SubagentTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         action = arguments.get("action")
         if not isinstance(action, str):
             return "invalid"
@@ -614,6 +630,7 @@ class SubagentTool(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(result)
         lines = text.count("\n") + 1
         return f"{lines} lines | {len(text)} chars"
@@ -628,6 +645,7 @@ def _format_poll(
     *,
     transcript_budget: int,
 ) -> str:
+    """Handle format poll."""
     if not snapshots:
         return "no subagents are currently tracked."
 
@@ -647,6 +665,7 @@ def _format_snapshot(
     *,
     transcript_budget: int,
 ) -> str:
+    """Handle format snapshot."""
     header = (
         f"subagent {snapshot.subagent_id!r} | "
         f"status={snapshot.status.value} | "

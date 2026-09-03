@@ -40,6 +40,7 @@ DEFAULT_SKIPS = frozenset(
 
 @dataclass(frozen=True)
 class _TreeEntry:
+    """Represent TreeEntry."""
     path: Path
     relative: Path
     is_directory: bool
@@ -48,6 +49,7 @@ class _TreeEntry:
 
 @dataclass
 class _TreeState:
+    """Represent TreeState."""
     limit: int
 
     emitted: int = 0
@@ -184,6 +186,7 @@ def _walk(
     lines: list[str],
     state: _TreeState,
 ) -> None:
+    """Handle walk."""
     if state.truncated:
         return
 
@@ -324,6 +327,7 @@ def _walk(
 def _entry_suffix(
     entry: _TreeEntry,
 ) -> str:
+    """Handle entry suffix."""
     suffix = (
         "/"
         if entry.is_directory
@@ -348,6 +352,7 @@ def _root_label(
     workspace: WorkspaceContext,
     root: Path,
 ) -> str:
+    """Handle root label."""
     shown = workspace.display_path(
         root
     )
@@ -368,6 +373,7 @@ def _root_label(
 def _normalize_skip_patterns(
     values: Iterable[str],
 ) -> set[str]:
+    """Handle normalize skip patterns."""
     patterns: set[str] = set()
 
     for value in values:
@@ -410,6 +416,7 @@ def _should_skip(
     relative: Path,
     patterns: set[str],
 ) -> bool:
+    """Handle should skip."""
     relative_text = relative.as_posix()
 
     for pattern in patterns:
@@ -449,6 +456,7 @@ def _validate_options(
     max_depth: int,
     limit: int,
 ) -> None:
+    """Handle validate options."""
     if max_depth < 0:
         raise ValueError(
             "'max_depth' cannot be negative."

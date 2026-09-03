@@ -29,6 +29,7 @@ class SourcePosition:
     character: int
 
     def __str__(self) -> str:
+        """Handle str."""
         return f"{self.line + 1}:{self.character + 1}"
 
     # ------------------------------------------------------------------
@@ -59,17 +60,21 @@ class SourceRange:
     end: SourcePosition
 
     def __str__(self) -> str:
+        """Handle str."""
         return f"{self.start}-{self.end}"
 
     @property
     def is_single_line(self) -> bool:
+        """Return whether is single line."""
         return self.start.line == self.end.line
 
     @property
     def is_empty(self) -> bool:
+        """Return whether is empty."""
         return self.start == self.end
 
     def contains(self, position: SourcePosition) -> bool:
+        """Handle contains."""
         if position < self.start:
             return False
         if position >= self.end:

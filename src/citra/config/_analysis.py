@@ -6,6 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class LspContextConfig:
+    """Represent LspContextConfig."""
     enabled: bool = True
     startup_timeout: float = 30.0
     request_timeout: float = 15.0
@@ -16,6 +17,7 @@ class LspContextConfig:
 
 @dataclass(frozen=True)
 class LintRuleConfig:
+    """Represent LintRuleConfig."""
     name: str
     command: tuple[str, ...]
     include: tuple[str, ...] = ("**/*",)
@@ -25,6 +27,7 @@ class LintRuleConfig:
 
 @dataclass(frozen=True)
 class LintContextConfig:
+    """Represent LintContextConfig."""
     enabled: bool = True
     timeout: int = 30
     max_output_length: int = 20_000
@@ -34,6 +37,7 @@ class LintContextConfig:
 def load_lsp_config(
     raw: dict[str, Any],
 ) -> LspContextConfig:
+    """Return load lsp config."""
     value = raw.get("lsp", {})
 
     if not isinstance(value, dict):
@@ -84,6 +88,7 @@ def load_lsp_config(
 def load_lint_config(
     raw: dict[str, Any],
 ) -> LintContextConfig:
+    """Return load lint config."""
     value = raw.get("lint", {})
 
     if not isinstance(value, dict):
@@ -205,6 +210,7 @@ def _bool(
     default: bool,
     section: str,
 ) -> bool:
+    """Handle bool."""
     value = table.get(
         name,
         default,
@@ -225,6 +231,7 @@ def _positive_int(
     default: int,
     section: str,
 ) -> int:
+    """Handle positive int."""
     value = table.get(
         name,
         default,
@@ -249,6 +256,7 @@ def _positive_float(
     default: float,
     section: str,
 ) -> float:
+    """Handle positive float."""
     value = table.get(
         name,
         default,
@@ -273,6 +281,7 @@ def _string_tuple(
     section: str,
     default: tuple[str, ...],
 ) -> tuple[str, ...]:
+    """Handle string tuple."""
     value = table.get(
         name,
         default,

@@ -10,10 +10,12 @@ from .command import Command, CommandResult
 
 
 class LspCommand(Command):
+    """Represent LspCommand."""
     id = "lsp"
     description = "Inspect, install, restart, or stop optional language servers."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         manager = self.context.lsp_manager
         if not isinstance(manager, LspManager):
             return CommandResult(output="LSP services are unavailable in this execution context.")
@@ -39,6 +41,7 @@ class LspCommand(Command):
         )
 
     def _install(self, manager: LspManager, tokens: list[str]) -> str:
+        """Handle install."""
         if not tokens:
             raise ValueError("Usage: /lsp install <server|language|missing|all> [--dry-run]")
         dry_run = False
@@ -83,6 +86,7 @@ class LspCommand(Command):
 
     @staticmethod
     def _format_status(status: dict[str, Any]) -> str:
+        """Handle format status."""
         if not status.get("enabled", True):
             prefix = "LSP: disabled\n"
         else:

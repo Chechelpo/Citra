@@ -66,6 +66,7 @@ class AgentRunner:
         event_sink: AgentEventSink | None = None,
         render_output: bool = True,
     ) -> None:
+        """Initialize the instance."""
         self.context = context
         self.session = session
         self.api_call = api_call
@@ -78,6 +79,7 @@ class AgentRunner:
         )
 
     def run_turn(self) -> None:
+        """Execute the run turn operation."""
         self.context.ensure_active()
 
         turn_number = self.session.begin_turn()
@@ -393,12 +395,14 @@ class AgentRunner:
                     )
 
     def _emit(self, event: AgentRunEvent) -> None:
+        """Handle emit."""
         sink = self.event_sink
 
         if sink is not None:
             sink(event)
 
     def _runtime_is_closing(self) -> bool:
+        """Handle runtime is closing."""
         return self.context.workspace.is_closing
 
     def _is_serial_role_turn(self) -> bool:

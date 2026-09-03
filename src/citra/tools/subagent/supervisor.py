@@ -73,6 +73,7 @@ class _GuidanceWaiter:
         self,
         response: str,
     ) -> bool:
+        """Handle answer."""
         with self.lock:
             if self.response_event.is_set():
                 return False
@@ -133,6 +134,7 @@ class SubagentSupervisor:
         parent_root: Path,
         api_call: ApiCall,
     ) -> None:
+        """Initialize the instance."""
         self.__parent_workspace = parent_workspace
         self.__parent_root = Path(parent_root)
         self.__api_call = api_call
@@ -151,6 +153,7 @@ class SubagentSupervisor:
 
     @property
     def is_closed(self) -> bool:
+        """Return whether is closed."""
         return self.__closed
 
     def create(
@@ -276,6 +279,7 @@ class SubagentSupervisor:
         self,
         subagent_id: str,
     ) -> SubagentSnapshot | None:
+        """Handle snapshot."""
         with self.__records_lock:
             record = self.__records.get(subagent_id)
         if record is None:
@@ -536,6 +540,7 @@ class SubagentSupervisor:
         record: _SubagentRecord,
         build_context: ContextBuilder,
     ) -> None:
+        """Handle run subagent."""
         context: ExecutionContext | None = None
         try:
             if record.cancel_requested.is_set():
@@ -642,6 +647,7 @@ class SubagentSupervisor:
         *,
         reason: str,
     ) -> bool:
+        """Handle cancel."""
         with record.state_lock:
             if record.status.is_terminal:
                 return False
@@ -670,6 +676,7 @@ class SubagentSupervisor:
         record: _SubagentRecord,
         event: AgentRunEvent,
     ) -> None:
+        """Handle record agent event."""
         self._append_entry(
             record,
             {
@@ -686,6 +693,7 @@ class SubagentSupervisor:
         *,
         force: bool,
     ) -> None:
+        """Handle dispose record."""
         runtime_root = record.runtime_root
         if force and runtime_root.exists():
             try:
@@ -707,6 +715,7 @@ class SubagentSupervisor:
         self,
         record: _SubagentRecord,
     ) -> SubagentSnapshot:
+        """Handle snapshot."""
         with record.state_lock:
             status = record.status
             transcript = tuple(record.transcript)
@@ -745,6 +754,7 @@ class SubagentSupervisor:
         record: _SubagentRecord,
         payload: dict[str, Any],
     ) -> None:
+        """Handle append entry."""
         entry = TranscriptEntry.from_json(payload)
         if payload.get("kind") == "guidance-request":
             with record.pending_lock:

@@ -52,6 +52,7 @@ class GitCommandError(GitUtilityError):
         returncode: int,
         stderr: str,
     ) -> None:
+        """Initialize the instance."""
         self.command = tuple(command)
         self.returncode = returncode
         self.stderr = stderr.strip()
@@ -426,6 +427,7 @@ class GitRepositoryUtility:
     # ---------------------------------------------------------------------
 
     def _ensure_cache(self, canonical_repo_url: str) -> CachedGitRepository:
+        """Handle ensure cache."""
         cache = self.cache_path(canonical_repo_url)
 
         if cache.exists():
@@ -466,6 +468,7 @@ class GitRepositoryUtility:
         cache: Path,
         canonical_repo_url: str,
     ) -> None:
+        """Handle validate existing cache."""
         if not cache.is_dir():
             raise GitUtilityError(
                 f"Git cache path exists but is not a directory: {cache}"
@@ -522,6 +525,7 @@ class GitRepositoryUtility:
     # ---------------------------------------------------------------------
 
     def _default_branch(self, canonical_repo_url: str) -> str:
+        """Handle default branch."""
         result = self._run(
             ["ls-remote", "--symref", canonical_repo_url, "HEAD"],
             timeout=self.network_timeout_seconds,
@@ -549,6 +553,7 @@ class GitRepositoryUtility:
         )
 
     def _resolve_branch_commit(self, repository: Path, branch: str) -> str:
+        """Handle resolve branch commit."""
         ref = f"refs/remotes/origin/{self._validate_branch(branch)}"
         try:
             return self._rev_parse_commit(repository, ref)
@@ -558,6 +563,7 @@ class GitRepositoryUtility:
             ) from exc
 
     def _ensure_commit(self, repository: Path, commit: str) -> str:
+        """Handle ensure commit."""
         commit = self._normalize_commit(commit)
 
         try:
@@ -591,6 +597,7 @@ class GitRepositoryUtility:
             ) from exc
 
     def _rev_parse_commit(self, repository: Path, revision: str) -> str:
+        """Handle rev parse commit."""
         result = self._run(
             [
                 "-C",
@@ -613,6 +620,7 @@ class GitRepositoryUtility:
         ancestor: str,
         descendant: str,
     ) -> bool:
+        """Handle is ancestor."""
         result = self._run(
             [
                 "-C",
@@ -631,6 +639,7 @@ class GitRepositoryUtility:
         repository: Path,
         commit: str,
     ) -> list[str]:
+        """Handle branches containing commit."""
         result = self._run(
             [
                 "-C",
@@ -704,6 +713,7 @@ class GitRepositoryUtility:
 
     @staticmethod
     def _validate_git_path(path: str) -> Path:
+        """Handle validate git path."""
         if not path or "\x00" in path:
             raise GitUtilityError("Git returned an invalid empty/NUL source path")
 
@@ -773,6 +783,7 @@ class GitRepositoryUtility:
         return f"https://github.com/{owner.casefold()}/{name.casefold()}"
 
     def _repo_name(self, canonical_repo_url: str) -> str:
+        """Handle repo name."""
         parsed = urlparse(canonical_repo_url)
         if parsed.scheme.casefold() == "file":
             name = Path(unquote(parsed.path)).name
@@ -784,6 +795,7 @@ class GitRepositoryUtility:
         return name[:-4] if name.casefold().endswith(".git") else name
 
     def _validate_branch(self, branch: str) -> str:
+        """Handle validate branch."""
         normalized = branch.strip()
         if not normalized:
             raise ValueError("branch cannot be empty")
@@ -800,6 +812,7 @@ class GitRepositoryUtility:
 
     @staticmethod
     def _normalize_commit(commit: str) -> str:
+        """Handle normalize commit."""
         normalized = commit.strip().lower()
         if not _COMMIT_RE.fullmatch(normalized):
             raise ValueError(

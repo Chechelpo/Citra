@@ -46,6 +46,7 @@ TOKENIZER_FILES = {
 
 
 def _tokenizer_root() -> Path:
+    """Handle tokenizer root."""
     root = os.environ.get("CITRA_INSTALL_ROOT")
     install_root = (
         Path(root).expanduser()
@@ -157,6 +158,7 @@ def _model_family(model_id: str) -> str:
 
 
 def _load_json_tokenizer(path: Path) -> Callable[[str], int]:
+    """Handle load json tokenizer."""
     try:
         from tokenizers import Tokenizer
     except ImportError as exc:
@@ -169,12 +171,14 @@ def _load_json_tokenizer(path: Path) -> Callable[[str], int]:
     def count(text: str) -> int:
         # We are measuring the supplied text, not constructing a model prompt,
         # so don't inject BOS/EOS or other post-processor tokens.
+        """Handle count."""
         return len(tokenizer.encode(text, add_special_tokens=False).ids)
 
     return count
 
 
 def _load_sentencepiece_tokenizer(path: Path) -> Callable[[str], int]:
+    """Handle load sentencepiece tokenizer."""
     try:
         import sentencepiece as spm
     except ImportError as exc:
@@ -188,6 +192,7 @@ def _load_sentencepiece_tokenizer(path: Path) -> Callable[[str], int]:
         raise RuntimeError(f"Could not load SentencePiece tokenizer: {path}")
 
     def count(text: str) -> int:
+        """Handle count."""
         return len(tokenizer.EncodeAsIds(text))
 
     return count
@@ -222,6 +227,7 @@ def _load_tiktoken_tokenizer(path: Path) -> Callable[[str], int]:
     )
 
     def count(text: str) -> int:
+        """Handle count."""
         return len(tokenizer.encode_ordinary(text))
 
     return count

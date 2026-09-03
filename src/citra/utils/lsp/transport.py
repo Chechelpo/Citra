@@ -33,6 +33,7 @@ class JsonRpcTransport:
         notification_handler: NotificationHandler | None = None,
         request_handler: RequestHandler | None = None,
     ) -> None:
+        """Initialize the instance."""
         if process.stdin is None or process.stdout is None or process.stderr is None:
             raise ValueError("Language-server process must have all stdio pipes.")
         self._process = process
@@ -59,10 +60,12 @@ class JsonRpcTransport:
 
     @property
     def process(self) -> subprocess.Popen[bytes]:
+        """Handle process."""
         return self._process
 
     @property
     def stderr_tail(self) -> str:
+        """Handle stderr tail."""
         return "".join(self._stderr_tail).strip()
 
     def request(
@@ -72,6 +75,7 @@ class JsonRpcTransport:
         *,
         timeout: float,
     ) -> Any:
+        """Handle request."""
         if timeout <= 0:
             raise ValueError("LSP request timeout must be positive.")
         with self._id_lock:
@@ -109,6 +113,7 @@ class JsonRpcTransport:
         method: str,
         params: dict[str, Any] | list[Any] | None = None,
     ) -> None:
+        """Handle notify."""
         self._send(make_notification(method, params))
 
     def respond(self, request_id: int | str | None, result: Any) -> None:
@@ -126,6 +131,7 @@ class JsonRpcTransport:
         self._send(make_error_response(request_id, code, message, data))
 
     def close(self) -> None:
+        """Handle close."""
         already_closed = self._closed.is_set()
         self._closed.set()
         try:
@@ -143,6 +149,7 @@ class JsonRpcTransport:
                 pass
 
     def _send(self, message: dict[str, Any]) -> None:
+        """Handle send."""
         if self._closed.is_set() or self._process.poll() is not None:
             raise self._server_exited()
         body = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -155,6 +162,7 @@ class JsonRpcTransport:
             raise LspTransportError(f"Could not write to language server: {error}") from error
 
     def _read_loop(self) -> None:
+        """Handle read loop."""
         try:
             while not self._closed.is_set():
                 message = self._read_message()
@@ -169,6 +177,7 @@ class JsonRpcTransport:
             self._fail_pending(self._server_exited())
 
     def _read_message(self) -> dict[str, Any] | None:
+        """Handle read message."""
         headers: dict[str, str] = {}
         while True:
             line = self._stdout.readline()
@@ -202,6 +211,7 @@ class JsonRpcTransport:
         return message
 
     def _dispatch(self, message: dict[str, Any]) -> None:
+        """Handle dispatch."""
         request_id = message.get("id")
         method = message.get("method")
         if request_id is not None and method is None:
@@ -230,6 +240,7 @@ class JsonRpcTransport:
             self._notification_handler(method, message.get("params"))
 
     def _stderr_loop(self) -> None:
+        """Handle stderr loop."""
         try:
             while True:
                 line = self._stderr.readline()
@@ -240,6 +251,7 @@ class JsonRpcTransport:
             return
 
     def _fail_pending(self, error: BaseException) -> None:
+        """Handle fail pending."""
         with self._pending_lock:
             pending = tuple(self._pending.values())
         for target in pending:
@@ -249,6 +261,7 @@ class JsonRpcTransport:
                 pass
 
     def _server_exited(self) -> LspServerExited:
+        """Handle server exited."""
         return LspServerExited(
             exit_code=self._process.poll(),
             stderr_tail=self.stderr_tail,

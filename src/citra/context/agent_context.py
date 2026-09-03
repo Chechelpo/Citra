@@ -58,6 +58,7 @@ class ExecutionContext:
     def __post_init__(
         self,
     ) -> None:
+        """Validate and initialize the instance after construction."""
         from citra.workflows import WorkflowRuntime
 
         if not isinstance(self.workspace, WorkspaceContext):
@@ -139,15 +140,25 @@ class ExecutionContext:
             "_ExecutionContext__lint_runner",
             lint_runner,
         )
+        self.logger.info(
+            "Execution context initialized",
+            extra={
+                "origin": __name__,
+                "sandbox_mode": sandbox.mode.name,
+                "runtime_id": self.workspace.runtime_id,
+            },
+        )
 
     @property
     def os(
         self,
     ) -> str:
+        """Handle os."""
         return self.__os
 
     @property
     def workflow(self) -> SingleModeWorkflow:
+        """Handle workflow."""
         return self.__workflow
 
     def activate_workflow(
@@ -166,32 +177,46 @@ class ExecutionContext:
             raise ValueError("Activated workflow is not the runtime's active phase")
         object.__setattr__(self, "_ExecutionContext__workflow", workflow)
         object.__setattr__(self, "skills", skills)
+        self.logger.debug(
+            "Execution workflow activated",
+            extra={"origin": __name__, "workflow": type(workflow).__name__},
+        )
 
     @property
     def sandbox(
         self,
     ) -> WorkspaceSandbox:
+        """Handle sandbox."""
         return self.__sandbox
 
     @property
     def filesystem(
         self,
     ) -> SandboxedFilesystem:
+        """Handle filesystem."""
         return self.__filesystem
 
     @property
     def subprocesses(self) -> ManagedSubprocesses:
+        """Handle subprocesses."""
         return self.__subprocesses
 
     @property
     def browser(self) -> BrowserManager:
+        """Handle browser."""
         return self.__browser
 
     @property
     def repo_map(self) -> RepoMap:
+        """Handle repo map."""
         return self.__repo_map
 
     def close(self, *, force: bool = False) -> None:
+        """Handle close."""
+        self.logger.info(
+            "Closing execution context",
+            extra={"origin": __name__, "force": force},
+        )
         self.workspace.begin_closing()
         if force:
             # Hard shutdown has one aggregate process bound. Individual
@@ -214,25 +239,30 @@ class ExecutionContext:
         self.__subprocesses.close(force=force)
 
     def model_config(self) -> ModelConfig:
+        """Handle model config."""
         return self.config.model()
 
     @property
     def web_search_config(
         self,
     ) -> WebSearchConfig:
+        """Handle web search config."""
         return self.config.tools.web_search
 
     def has_command(
         self,
         cmd: str,
     ) -> bool:
+        """Return whether has command."""
         return self.workspace.resolve_command(cmd) is not None
 
     def resolve_command(self, cmd: str) -> str | None:
+        """Return resolve command."""
         path = self.workspace.resolve_command(cmd)
         return str(path) if path is not None else None
 
     def ensure_active(self) -> None:
+        """Handle ensure active."""
         self.workspace.ensure_active()
 
     def truncate_output(

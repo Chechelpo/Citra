@@ -46,6 +46,7 @@ class ToolSet:
     deferred_tools: tuple[type[Tool], ...]
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if not isinstance(self.core_tools, tuple):
             raise TypeError("core_tools must be a tuple")
         if not isinstance(self.deferred_tools, tuple):
@@ -75,36 +76,45 @@ class ToolSet:
 
     @property
     def core_tool_ids(self) -> frozenset[str]:
+        """Handle core tool ids."""
         return frozenset(tool_type.TOOL_ID for tool_type in self.core_tools)
 
     @property
     def deferred_tool_ids(self) -> frozenset[str]:
+        """Handle deferred tool ids."""
         return frozenset(tool_type.TOOL_ID for tool_type in self.deferred_tools)
 
     def get_tool_with_id(self, tool_id: str) -> type[Tool] | None:
+        """Return get tool with id."""
         for tool_type in self.allowed_tools():
             if tool_type.TOOL_ID == tool_id:
                 return tool_type
         return None
 
     def allowed_tools(self) -> tuple[type[Tool], ...]:
+        """Handle allowed tools."""
         return self.core_tools + self.deferred_tools
 
     def is_core_tool(self, tool_type: type[Tool]) -> bool:
+        """Return whether is core tool."""
         return tool_type in self.core_tools
 
     def is_deferred_tool(self, tool_type: type[Tool]) -> bool:
+        """Return whether is deferred tool."""
         return tool_type in self.deferred_tools
 
     # Compatibility for callers using the historical misspelling.
     def is_deffered_tool(self, tool_type: type[Tool]) -> bool:
+        """Return whether is deffered tool."""
         return self.is_deferred_tool(tool_type)
 
     def is_allowed_tool(self, tool_type: type[Tool]) -> bool:
+        """Return whether is allowed tool."""
         return self.is_core_tool(tool_type) or self.is_deferred_tool(tool_type)
 
 
 def _duplicates(values: tuple[T, ...]) -> tuple[T, ...]:
+    """Handle duplicates."""
     seen: set[T] = set()
     duplicates: list[T] = []
     for value in values:

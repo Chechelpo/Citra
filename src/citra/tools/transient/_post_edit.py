@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from citra.context import ExecutionContext
 
 def post_edit_result(context: ExecutionContext, path: str) -> str:
+    """Handle post edit result."""
     sections: list[str] = []
 
     if callable(context.diagnostics_for_path):

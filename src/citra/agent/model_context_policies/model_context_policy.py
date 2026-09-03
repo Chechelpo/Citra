@@ -141,6 +141,7 @@ def _default_policy(
     messages: list[ChatMessage],
     current_turn: bool,
 ) -> list[ChatMessage]:
+    """Handle default policy."""
     del current_turn
     return list(messages)
 

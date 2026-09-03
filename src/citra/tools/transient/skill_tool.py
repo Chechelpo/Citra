@@ -17,6 +17,7 @@ def _skill_definition(
     include_args: bool = False,
     description: str,
 ) -> ChatCompletionTool:
+    """Handle skill definition."""
     properties: list[JsonProperty] = [
         JsonProperty(
             name=skill_parameter,
@@ -229,6 +230,7 @@ class SkillTool(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -279,6 +281,7 @@ class SkillTool(Tool):
         self,
         context: ExecutionContext,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
         )
@@ -291,6 +294,7 @@ class SkillTool(Tool):
     def _skill_name(
         arguments: dict[str, Any],
     ) -> str:
+        """Handle skill name."""
         value = arguments.get(
             "name",
             arguments.get("skill"),
@@ -319,6 +323,7 @@ class SkillTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Execute the execute operation."""
         name = self._skill_name(
             arguments
         )
@@ -355,6 +360,7 @@ class SkillTool(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
+        """Handle format call log."""
         name = self._skill_name(
             arguments
         )
@@ -376,6 +382,7 @@ class SkillTool(Tool):
         self,
         result: Any,
     ) -> str:
+        """Handle format result log."""
         text = str(
             result
         )
@@ -392,6 +399,7 @@ class SkillTool(Tool):
         value: str,
         limit: int = 120,
     ) -> str:
+        """Handle truncate."""
         if len(value) <= limit:
             return value
 

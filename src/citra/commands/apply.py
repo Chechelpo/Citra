@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 
-from citra.context.workspace_context.source_baseline import (
+from citra.context.source_baseline import (
     MISSING_SOURCE_ENTRY,
     SourceEntry,
     git_project_inventory,
@@ -28,6 +28,7 @@ class ApplyCommand(Command):
     description = "Preview and apply checkout changes to the original source."
 
     def _run(self, args: str) -> CommandResult:
+        """Execute the run operation."""
         include_dirty, force_conflicts, requested = self._parse_args(args)
         source, checkout = self._roots()
         self._require_repository_root(source, label="Original source")
@@ -151,6 +152,7 @@ class ApplyCommand(Command):
         return CommandResult(output="\n".join(lines))
 
     def _roots(self) -> tuple[Path, Path]:
+        """Handle roots."""
         workspace = self.context.workspace
         source = Path(workspace.source_workspace).resolve()
         checkout = Path(workspace.workspace).resolve()
@@ -164,6 +166,7 @@ class ApplyCommand(Command):
 
     @staticmethod
     def _parse_args(args: str) -> tuple[bool, bool, tuple[str, ...]]:
+        """Handle parse args."""
         try:
             tokens = shlex.split(args)
         except ValueError as error:
@@ -190,6 +193,7 @@ class ApplyCommand(Command):
         baseline: dict[str, SourceEntry],
         checkout: Path,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Handle changed paths."""
         candidates = set(baseline) | set(git_project_inventory(checkout))
         changed: list[str] = []
         unsupported: list[str] = []
@@ -209,6 +213,7 @@ class ApplyCommand(Command):
         available: tuple[str, ...],
         requested: tuple[str, ...],
     ) -> tuple[str, ...]:
+        """Handle select paths."""
         if not requested:
             return available
         available_set = set(available)
@@ -225,6 +230,7 @@ class ApplyCommand(Command):
         source: Path,
         selected: tuple[str, ...],
     ) -> frozenset[str]:
+        """Handle dirty source paths."""
         dirty: set[str] = set()
         for path in selected:
             output = self._git_text(
@@ -251,6 +257,7 @@ class ApplyCommand(Command):
         conflicts: tuple[str, ...],
         unsupported: tuple[str, ...],
     ) -> None:
+        """Handle print preview."""
         print("\nCheckout changes relative to the original source\n")
         print(f"Original: {source}")
         print(f"Checkout: {checkout}\n")
@@ -279,6 +286,7 @@ class ApplyCommand(Command):
         print()
 
     def _diff(self, source: Path, checkout: Path, relative: str) -> str:
+        """Handle diff."""
         source_path = project_entry_path(source, relative)
         checkout_path = project_entry_path(checkout, relative)
         left = source_path if _exists(source_path) else Path("/dev/null")
@@ -308,6 +316,7 @@ class ApplyCommand(Command):
         checkout: Path,
         selected: tuple[str, ...],
     ) -> None:
+        """Handle apply transaction."""
         with tempfile.TemporaryDirectory(prefix="citra-apply-") as raw_backup:
             backup = Path(raw_backup)
             existed: dict[str, bool] = {}
@@ -352,6 +361,7 @@ class ApplyCommand(Command):
 
     @staticmethod
     def _copy_entry(source: Path, destination: Path) -> None:
+        """Handle copy entry."""
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.is_dir() and not destination.is_symlink():
             raise IsADirectoryError(destination)
@@ -373,6 +383,7 @@ class ApplyCommand(Command):
 
     @staticmethod
     def _confirm(prompt: str) -> bool:
+        """Handle confirm."""
         try:
             answer = input(prompt).strip().casefold()
         except (EOFError, KeyboardInterrupt):
@@ -380,12 +391,14 @@ class ApplyCommand(Command):
         return answer in {"", "y", "yes"}
 
     def _require_repository_root(self, root: Path, *, label: str) -> None:
+        """Handle require repository root."""
         discovered = self._git_text(root, "rev-parse", "--show-toplevel").strip()
         if not discovered or Path(discovered.splitlines()[-1]).resolve() != root:
             raise RuntimeError(f"{label} must be a Git repository root: {root}")
 
     @staticmethod
     def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """Handle git."""
         environment = os.environ.copy()
         environment["GIT_PAGER"] = "cat"
         environment["GIT_TERMINAL_PROMPT"] = "0"
@@ -399,6 +412,7 @@ class ApplyCommand(Command):
         )
 
     def _git_text(self, root: Path, *arguments: str) -> str:
+        """Handle git text."""
         completed = self._git(root, *arguments)
         if completed.returncode != 0:
             detail = completed.stdout.strip() or "Git command failed."
@@ -407,6 +421,7 @@ class ApplyCommand(Command):
 
 
 def _exists(path: Path) -> bool:
+    """Handle exists."""
     return path.exists() or path.is_symlink()
 
 

@@ -29,6 +29,7 @@ class SkillRegistry:
         *,
         memory_enabled: bool = True,
     ) -> None:
+        """Initialize the instance."""
         if skills_root is None:
             citra_root = os.environ.get("CITRA_INSTALL_ROOT")
             if citra_root is None:
@@ -57,6 +58,7 @@ class SkillRegistry:
     
 
     def _register(self, skill: Skill | Iterable[Skill]) -> None:
+        """Handle register."""
         if isinstance(skill, Skill):
             if skill.name in self.skills:
                 raise ValueError(f"Duplicate skill name: {skill.name!r}")
@@ -73,6 +75,7 @@ class SkillRegistry:
         directory: Path,
         config_path: Path,
     ) -> Skill:
+        """Handle load skill."""
         import tomllib
 
         with config_path.open("rb") as file:
@@ -119,6 +122,7 @@ class SkillRegistry:
     def format_for_prompt(
         self,
     ) -> str:
+        """Handle format for prompt."""
         if not self.skills:
             return "No optional skills are available."
 

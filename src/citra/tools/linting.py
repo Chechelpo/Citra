@@ -49,6 +49,7 @@ class LintRunner:
         sandbox: WorkspaceSandbox,
         config: LintContextConfig,
     ) -> None:
+        """Initialize the instance."""
         self.workspace = workspace
         self.sandbox = sandbox
         self.config = config
@@ -131,6 +132,7 @@ class LintRunner:
         return self._truncate(text, config.max_output_length)
 
     def _effective_config(self, relative: Path) -> LintContextConfig:
+        """Handle effective config."""
         project = self._project_config(relative)
         if project is not None:
             return project
@@ -183,6 +185,7 @@ class LintRunner:
 
     @staticmethod
     def _ancestors_within(start: Path, root: Path) -> tuple[Path, ...]:
+        """Handle ancestors within."""
         ancestors: list[Path] = []
         current = start.resolve()
         root = root.resolve()
@@ -210,6 +213,7 @@ class LintRunner:
         # against cwd. Use the corresponding writable project root so project
         # globs and src paths keep the same relative shape while Ruff checks the
         # file in the current project.
+        """Handle ruff project config."""
         writable_project_root = project_root.resolve()
         config_path = str(pyproject.resolve())
         rules = [
@@ -257,6 +261,7 @@ class LintRunner:
         path: Path,
         relative_path: str,
     ) -> str:
+        """Handle expand."""
         values = {
             "path": str(path),
             "relative_path": relative_path,
@@ -269,6 +274,7 @@ class LintRunner:
 
     @staticmethod
     def _glob_match(relative_path: str, pattern: str) -> bool:
+        """Handle glob match."""
         path = PurePosixPath(relative_path)
         normalized = pattern.removeprefix("./")
         candidates = {normalized}
@@ -301,6 +307,7 @@ class LintRunner:
         rule: LintRuleConfig,
         relative_path: str,
     ) -> bool:
+        """Handle matches."""
         included = any(
             self._glob_match(relative_path, pattern) for pattern in rule.include
         )
@@ -316,10 +323,12 @@ class LintRunner:
         command: tuple[str, ...],
         details: str,
     ) -> str:
+        """Handle format failure."""
         return f"[{rule.name}] $ {shlex.join(command)}\n{details}"
 
     @staticmethod
     def _truncate(text: str, limit: int) -> str:
+        """Handle truncate."""
         if len(text) <= limit:
             return text
         omitted = len(text) - limit

@@ -1,7 +1,9 @@
-"""Workspace context package exports."""
+"""Public runtime-provisioning API."""
 
-from .runtime import (
+from .workspace_context.runtime import (
+    AssetProvision,
     CopyPolicy,
+    ProvisionedTool,
     RuntimeAsset,
     RuntimeProcessSupervisor,
     RuntimeProvisionError,
@@ -9,25 +11,15 @@ from .runtime import (
     RuntimeProvisioning,
     ToolDefinition,
 )
-from .source_baseline import SourceEntry
-from .workspace_context import (
-    AvailablePathAlias,
-    RuntimeClosingError,
-    RuntimeState,
-    WorkspaceContext,
-)
 
 __all__ = [
-    "AvailablePathAlias",
+    "AssetProvision",
     "CopyPolicy",
+    "ProvisionedTool",
     "RuntimeAsset",
-    "RuntimeClosingError",
     "RuntimeProcessSupervisor",
     "RuntimeProvisionError",
     "RuntimeProvisioner",
     "RuntimeProvisioning",
-    "RuntimeState",
-    "SourceEntry",
     "ToolDefinition",
-    "WorkspaceContext",
 ]

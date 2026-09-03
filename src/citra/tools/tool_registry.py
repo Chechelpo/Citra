@@ -13,25 +13,35 @@ from .tool import Tool
 
 
 class _ToolFactory(Protocol):
-    def __call__(self, *, context: ExecutionContext) -> Tool: ...
+    """Construct a transient tool from an execution context."""
+
+    def __call__(self, *, context: ExecutionContext) -> Tool:
+        """Create the configured transient tool."""
+        ...
 
 
 class _SessionToolFactory(Protocol):
+    """Represent SessionToolFactory."""
     def __call__(
         self,
         *,
         context: ExecutionContext,
         session: AgentSession,
-    ) -> SessionTool: ...
+    ) -> SessionTool:
+        """Create the configured session tool."""
+        ...
 
 
 class _MemoryToolFactory(Protocol):
+    """Represent MemoryToolFactory."""
     def __call__(
         self,
         *,
         context: ExecutionContext,
         session: AgentSession,
-    ) -> MemoryTool: ...
+    ) -> MemoryTool:
+        """Create the configured memory tool."""
+        ...
 
 
 class ToolRegistry:
@@ -43,18 +53,22 @@ class ToolRegistry:
     """
 
     def __init__(self, toolset: ToolSet):
+        """Initialize the instance."""
         self.__tools = toolset
 
     @property
     def tools(self) -> ToolSet:
+        """Handle tools."""
         return self.__tools
 
     @property
     def core_tool_ids(self) -> frozenset[str]:
+        """Handle core tool ids."""
         return self.__tools.core_tool_ids
 
     @property
     def deferred_tool_ids(self) -> frozenset[str]:
+        """Handle deferred tool ids."""
         return self.__tools.deferred_tool_ids
 
     def deferred_catalog(self, context: ExecutionContext) -> dict[str, str]:
@@ -133,6 +147,7 @@ class ToolRegistry:
         context: ExecutionContext,
         session: AgentSession,
     ) -> MemoryTool:
+        """Handle get memory tool."""
         tool = session.memory.get_or_create(
             tool_id,
             lambda: cast(_MemoryToolFactory, tool_type)(
@@ -150,4 +165,5 @@ class ToolRegistry:
         del session
 
     def contains(self, tool_id: str) -> bool:
+        """Handle contains."""
         return self.__tools.get_tool_with_id(tool_id) is not None

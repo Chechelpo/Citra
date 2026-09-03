@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TodoExtract:
+    """Represent TodoExtract."""
     id: int
     content: str
     working_state_id: int | None = None
@@ -149,6 +150,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -162,6 +164,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -174,14 +177,17 @@ class TodoTool(MemoryTool[TodoExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "TODOs"
 
     @override
     def get_extracts(self) -> list[TodoExtract]:
+        """Return get extracts."""
         return list(self.__extracts)
 
     @override
     def format_extract(self, extract: TodoExtract) -> str:
+        """Handle format extract."""
         mark = "x" if extract.completed else " "
         indent = "  " * self._depth(extract)
         text = f"{indent}- [{mark}] [ID {extract.id}] {extract.content}"
@@ -191,13 +197,16 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @override
     def should_offer_documentation(self) -> bool:
+        """Return whether should offer documentation."""
         return False
 
     def has_outstanding_todos(self) -> bool:
+        """Return whether has outstanding todos."""
         return any(not todo.completed for todo in self.__extracts)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -212,6 +221,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         raise ValueError(f"Unsupported TODO action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         self._reject_fields(
             arguments,
             ("working_state_id", "working_state_ids", "index", "id", "ids"),
@@ -245,6 +255,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         return self._with_reopened(result, reopened)
 
     def _insert(self, arguments: dict[str, Any]) -> str:
+        """Handle insert."""
         self._reject_fields(
             arguments,
             ("working_state_id", "working_state_ids", "contents", "id", "ids"),
@@ -288,6 +299,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         return self._with_reopened(result, reopened)
 
     def _promote(self, arguments: dict[str, Any]) -> str:
+        """Handle promote."""
         self._reject_fields(arguments, ("contents", "id", "ids"), action="promote")
         parent_id = arguments.get("parent_id")
         self._validate_parent(parent_id)
@@ -363,6 +375,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         return self._with_reopened(result, reopened)
 
     def _check(self, arguments: dict[str, Any]) -> str:
+        """Handle check."""
         self._reject_fields(
             arguments,
             (
@@ -420,6 +433,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         return "; ".join(parts)
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         self._reject_fields(
             arguments,
             (
@@ -474,6 +488,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         parent_id: int | None,
         working_state_id: int | None,
     ) -> TodoExtract:
+        """Handle new todo."""
         todo = TodoExtract(
             id=self.__next_id,
             content=content,
@@ -485,6 +500,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
         working = self._working_ids_summary(arguments)
@@ -505,6 +521,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _get_contents(arguments: dict[str, Any]) -> list[str]:
+        """Handle get contents."""
         content = arguments.get("content")
         contents = arguments.get("contents")
         if content is not None and contents is not None:
@@ -522,6 +539,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _working_ids(arguments: dict[str, Any]) -> list[int]:
+        """Handle working ids."""
         single = arguments.get("working_state_id")
         multiple = arguments.get("working_state_ids")
         if single is not None and multiple is not None:
@@ -535,6 +553,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _get_ids(arguments: dict[str, Any], *, action: str) -> list[int]:
+        """Handle get ids."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None and multiple is not None:
@@ -553,6 +572,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         *,
         action: str,
     ) -> None:
+        """Handle reject fields."""
         invalid = [name for name in names if arguments.get(name) is not None]
         if invalid:
             raise ValueError(
@@ -561,19 +581,23 @@ class TodoTool(MemoryTool[TodoExtract]):
             )
 
     def _validate_parent(self, parent_id: int | None) -> None:
+        """Handle validate parent."""
         if parent_id is not None:
             self._find_index(parent_id)
 
     def _find_index(self, todo_id: int) -> int:
+        """Handle find index."""
         for index, todo in enumerate(self.__extracts):
             if todo.id == todo_id:
                 return index
         raise ValueError(f"TODO ID {todo_id} does not exist.")
 
     def _siblings(self, parent_id: int | None) -> list[TodoExtract]:
+        """Handle siblings."""
         return [todo for todo in self.__extracts if todo.parent_id == parent_id]
 
     def _append_index(self, parent_id: int | None) -> int:
+        """Handle append index."""
         if parent_id is None:
             return len(self.__extracts)
         return self._subtree_end_index(parent_id)
@@ -585,11 +609,13 @@ class TodoTool(MemoryTool[TodoExtract]):
         sibling_index: int,
         siblings: list[TodoExtract],
     ) -> int:
+        """Handle sibling insertion index."""
         if sibling_index < len(siblings):
             return self._find_index(siblings[sibling_index].id)
         return self._append_index(parent_id)
 
     def _subtree_end_index(self, todo_id: int) -> int:
+        """Handle subtree end index."""
         start = self._find_index(todo_id)
         root_depth = self._depth(self.__extracts[start])
         index = start + 1
@@ -600,11 +626,13 @@ class TodoTool(MemoryTool[TodoExtract]):
         return index
 
     def _descendants(self, todo_id: int) -> list[TodoExtract]:
+        """Handle descendants."""
         start = self._find_index(todo_id)
         end = self._subtree_end_index(todo_id)
         return list(self.__extracts[start + 1:end])
 
     def _depth(self, todo: TodoExtract) -> int:
+        """Handle depth."""
         depth = 0
         parent_id = todo.parent_id
         while parent_id is not None:
@@ -614,6 +642,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         return depth
 
     def _reopen_ancestors(self, parent_id: int | None) -> list[int]:
+        """Handle reopen ancestors."""
         reopened: list[int] = []
         current_id = parent_id
         while current_id is not None:
@@ -627,10 +656,12 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _format_parent_location(parent_id: int | None) -> str:
+        """Handle format parent location."""
         return "" if parent_id is None else f" under parent ID {parent_id}"
 
     @staticmethod
     def _with_reopened(result: str, reopened: list[int]) -> str:
+        """Handle with reopened."""
         if not reopened:
             return result
         return (
@@ -642,6 +673,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _working_ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle working ids summary."""
         single = arguments.get("working_state_id")
         multiple = arguments.get("working_state_ids")
         if single is not None:
@@ -652,6 +684,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle ids summary."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None:
@@ -662,8 +695,10 @@ class TodoTool(MemoryTool[TodoExtract]):
 
     @staticmethod
     def _format_ids(ids: list[int]) -> str:
+        """Handle format ids."""
         return "[" + ", ".join(str(todo_id) for todo_id in ids) + "]"
 
     @staticmethod
     def _truncate(value: str) -> str:
+        """Handle truncate."""
         return value if len(value) <= 80 else value[:80] + "..."

@@ -95,6 +95,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$-]*$")
 
 @dataclass(frozen=True)
 class Definition:
+    """Represent Definition."""
     path: str
     line: int
     name: str
@@ -102,17 +103,20 @@ class Definition:
 
 @dataclass(frozen=True)
 class FileIndex:
+    """Represent FileIndex."""
     mtime_ns: int
     size: int
     definitions: tuple[Definition, ...]
     references: tuple[tuple[str, int], ...]
 
     def reference_counter(self) -> Counter[str]:
+        """Handle reference counter."""
         return Counter(dict(self.references))
 
 
 @dataclass(frozen=True)
 class _Edge:
+    """Represent Edge."""
     source: str
     destination: str
     identifier: str
@@ -128,6 +132,7 @@ class RepoMap:
     """
 
     def __init__(self, workspace: WorkspaceContext) -> None:
+        """Initialize the instance."""
         self.workspace = workspace
         self._index_cache: dict[Path, FileIndex] = {}
 
@@ -139,6 +144,7 @@ class RepoMap:
         focus: Iterable[str] = (),
         max_tokens: int = DEFAULT_MAP_TOKENS,
     ) -> str:
+        """Handle render."""
         if max_tokens <= 0:
             raise ValueError("max_tokens must be greater than zero")
         if max_tokens > MAX_MAP_TOKENS:
@@ -197,6 +203,7 @@ class RepoMap:
         self,
         raw: str,
     ) -> PurePosixPath | None:
+        """Handle normalize tmp subtree."""
         value = raw.strip() or "."
         if value == "@tmp":
             return PurePosixPath(".")
@@ -213,6 +220,7 @@ class RepoMap:
         return candidate
 
     def _normalize_subtree(self, raw: str) -> PurePosixPath:
+        """Handle normalize subtree."""
         value = raw.strip() or "."
 
         candidate = PurePosixPath(value)
@@ -226,6 +234,7 @@ class RepoMap:
         self,
         subtree: PurePosixPath,
     ) -> dict[str, Path]:
+        """Handle tmp files."""
         root = self.workspace.tmp
         target = (root / subtree.as_posix()).resolve()
 
@@ -273,6 +282,7 @@ class RepoMap:
         self,
         subtree: PurePosixPath,
     ) -> dict[str, Path]:
+        """Handle effective files."""
         files: dict[str, Path] = {}
         subtree_text = subtree.as_posix()
         if subtree_text == ".":
@@ -287,11 +297,13 @@ class RepoMap:
 
     @staticmethod
     def _within_subtree(relative: str, subtree: str) -> bool:
+        """Handle within subtree."""
         if not subtree:
             return True
         return relative == subtree or relative.startswith(subtree + "/")
 
     def _walk_workspace_files(self) -> Iterable[tuple[str, Path]]:
+        """Handle walk workspace files."""
         root = self.workspace.workspace
         for directory, dirnames, filenames in os.walk(root):
             base = Path(directory)
@@ -318,11 +330,13 @@ class RepoMap:
 
     @staticmethod
     def _skip_relative(relative: str) -> bool:
+        """Handle skip relative."""
         parts = PurePosixPath(relative).parts
         return any(part in _SKIP_DIRECTORIES for part in parts)
 
     @staticmethod
     def _safe_regular_file(path: Path, root: Path) -> bool:
+        """Handle safe regular file."""
         try:
             resolved = path.resolve()
             resolved.relative_to(root.resolve())
@@ -335,6 +349,7 @@ class RepoMap:
         relative: str,
         physical: Path,
     ) -> FileIndex | None:
+        """Handle index file."""
         filename_to_lang, _tree_context, get_parser = self._grep_ast()
         lang = filename_to_lang(relative)
 
@@ -396,6 +411,7 @@ class RepoMap:
         source: bytes,
         relative: str,
     ) -> tuple[list[Definition], Counter[str]]:
+        """Handle extract tags."""
         definitions: list[Definition] = []
         references: Counter[str] = Counter()
         definition_ranges: set[tuple[int, int]] = set()
@@ -437,6 +453,7 @@ class RepoMap:
 
     @staticmethod
     def _is_definition_node(node_type: str) -> bool:
+        """Handle is definition node."""
         if node_type in _DEFINITION_NODE_TYPES:
             return True
         if not (
@@ -461,6 +478,7 @@ class RepoMap:
         )
 
     def _definition_name_node(self, node: Any) -> Any | None:
+        """Handle definition name node."""
         for field in ("name", "declarator", "pattern", "left"):
             try:
                 candidate = node.child_by_field_name(field)
@@ -474,6 +492,7 @@ class RepoMap:
         return self._first_identifier_node(node)
 
     def _first_identifier_node(self, node: Any) -> Any | None:
+        """Handle first identifier node."""
         if getattr(node, "type", "") in _REFERENCE_NODE_TYPES:
             return node
         for child in getattr(node, "named_children", ()) or ():
@@ -484,6 +503,7 @@ class RepoMap:
 
     @staticmethod
     def _node_identifier(node: Any, source: bytes) -> str | None:
+        """Handle node identifier."""
         try:
             value = source[node.start_byte:node.end_byte].decode("utf-8")
         except (AttributeError, UnicodeDecodeError):
@@ -500,6 +520,7 @@ class RepoMap:
         indexes: dict[str, FileIndex],
         focus: set[str],
     ) -> list[Definition]:
+        """Handle rank definitions."""
         defines: dict[str, set[str]] = defaultdict(set)
         definitions: dict[tuple[str, str], list[Definition]] = defaultdict(list)
         references: dict[str, Counter[str]] = defaultdict(Counter)
@@ -619,6 +640,7 @@ class RepoMap:
 
     @staticmethod
     def _path_matches_focus(path: str, focus: set[str]) -> bool:
+        """Handle path matches focus."""
         if not focus:
             return False
         pure = PurePosixPath(path)
@@ -639,6 +661,7 @@ class RepoMap:
         max_iterations: int = 100,
         tolerance: float = 1e-8,
     ) -> dict[str, float]:
+        """Handle pagerank."""
         if not nodes:
             return {}
 
@@ -702,6 +725,7 @@ class RepoMap:
         model_id: str,
         max_tokens: int,
     ) -> str:
+        """Handle fit ranked map."""
         low = 1
         high = len(ranked)
         best = ""
@@ -734,6 +758,7 @@ class RepoMap:
         definitions: list[Definition],
         physical_paths: dict[str, Path],
     ) -> str:
+        """Handle render definitions."""
         _filename_to_lang, TreeContext, _get_parser = self._grep_ast()
         lines_by_file: dict[str, set[int]] = defaultdict(set)
         for definition in definitions:
@@ -787,6 +812,7 @@ class RepoMap:
 
     @staticmethod
     def _render_source_lines(code: str, lines: set[int]) -> str:
+        """Handle render source lines."""
         source_lines = code.splitlines()
         result: list[str] = []
         for line in sorted(lines):
@@ -801,6 +827,7 @@ class RepoMap:
         model_id: str,
         max_tokens: int,
     ) -> str:
+        """Handle fallback file map."""
         result: list[str] = []
         for path in sorted(indexes):
             candidate = "\n".join((*result, path))
@@ -811,6 +838,7 @@ class RepoMap:
 
     @staticmethod
     def _grep_ast() -> tuple[Any, Any, Any]:
+        """Handle grep ast."""
         try:
             from grep_ast import TreeContext, filename_to_lang
             from grep_ast.tsl import get_parser

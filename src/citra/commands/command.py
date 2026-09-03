@@ -62,10 +62,12 @@ class Command(ABC):
     description: str = ""
 
     def __init__(self, context: ExecutionContext) -> None:
+        """Initialize the instance."""
         self._context = context
 
     @property
     def context(self) -> ExecutionContext:
+        """Handle context."""
         return self._context
 
     @final
@@ -105,6 +107,7 @@ class CommandRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.__commands: dict[str, type[Command]] = {}
 
     def register(
@@ -112,6 +115,7 @@ class CommandRegistry:
         command_id: str,
         command_type: type[Command],
     ) -> None:
+        """Handle register."""
         if command_id in self.__commands:
             raise ValueError(
                 f"Command '{command_id}' is already registered."
@@ -138,10 +142,12 @@ class CommandRegistry:
         return command_type(context)
 
     def contains(self, command_id: str) -> bool:
+        """Handle contains."""
         return command_id in self.__commands
 
     @property
     def command_ids(self) -> tuple[str, ...]:
+        """Handle command ids."""
         return tuple(self.__commands)
 
     def help_lines(self) -> list[str]:

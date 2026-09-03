@@ -39,6 +39,7 @@ class SubagentStatus(str, Enum):
 
     @property
     def is_terminal(self) -> bool:
+        """Return whether is terminal."""
         return self in {
             SubagentStatus.COMPLETED,
             SubagentStatus.FAILED,
@@ -66,6 +67,7 @@ class SubagentSpec:
     system_prompt_addendum: str = ""
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         task = self.task.strip()
         if not task:
             raise ValueError("Subagent task cannot be empty.")
@@ -101,6 +103,7 @@ class SubagentSpec:
             raise TypeError("SubagentSpec.network must be a bool.")
 
     def to_json(self) -> dict[str, Any]:
+        """Convert the value to json."""
         return {
             "subagent_id": self.subagent_id,
             "task": self.task,
@@ -124,6 +127,7 @@ class TranscriptEntry:
     tool: str | None = None
 
     def to_json(self) -> dict[str, Any]:
+        """Convert the value to json."""
         return {
             "role": self.role,
             "content": self.content,
@@ -134,6 +138,7 @@ class TranscriptEntry:
 
     @classmethod
     def from_json(cls, payload: Mapping[str, Any]) -> "TranscriptEntry":
+        """Create an instance from json."""
         try:
             role = str(payload["role"])
             content = str(payload["content"])
@@ -157,6 +162,7 @@ class TranscriptEntry:
         )
 
     def to_jsonl_line(self) -> str:
+        """Convert the value to jsonl line."""
         return json.dumps(
             self.to_json(),
             ensure_ascii=False,
@@ -180,9 +186,11 @@ class SubagentSnapshot:
 
     @property
     def is_terminal(self) -> bool:
+        """Return whether is terminal."""
         return self.status.is_terminal
 
     def to_json(self) -> dict[str, Any]:
+        """Convert the value to json."""
         return {
             "subagent_id": self.subagent_id,
             "status": self.status.value,

@@ -71,6 +71,7 @@ def select_startup_workflow(
 
 
 def is_command(user_input: str) -> bool:
+    """Return whether is command."""
     return user_input.startswith("/")
 
 
@@ -80,6 +81,7 @@ def _answer_model_prompt(
     *,
     input_service: Any = terminal_input,
 ) -> None:
+    """Handle answer model prompt."""
     if application.config.notifications.prompt_bell:
         terminal_bell()
     print()
@@ -113,6 +115,7 @@ def run_turn_with_steering(
     errors: list[BaseException] = []
 
     def worker() -> None:
+        """Handle worker."""
         try:
             application.run_agent_turn()
         except BaseException as error:
@@ -127,6 +130,7 @@ def run_turn_with_steering(
     soft_stop_requested = False
 
     def handle_interrupt() -> None:
+        """Handle handle interrupt."""
         nonlocal soft_stop_requested
         if not soft_stop_requested:
             soft_stop_requested = True
@@ -211,6 +215,7 @@ def main(
     input_service: Any = terminal_input,
     interactive_workflow_selection: bool | None = None,
 ) -> None:
+    """Handle main."""
     workflow_registry = WorkflowRegistry(
         config_path=os.environ.get("CITRA_CONFIG_PATH"),
     )

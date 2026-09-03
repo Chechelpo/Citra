@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ConstraintExtract:
+    """Represent ConstraintExtract."""
     id: int
     content: str
     working_state_id: int | None = None
@@ -126,6 +127,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -139,6 +141,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -150,12 +153,14 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Constraints"
 
     @override
     def get_extracts(
         self,
     ) -> list[ConstraintExtract]:
+        """Return get extracts."""
         return list(
             self.__extracts
         )
@@ -165,6 +170,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         self,
         extract: ConstraintExtract,
     ) -> str:
+        """Handle format extract."""
         text = (
             f"- [{extract.id}] "
             f"{extract.content}"
@@ -182,6 +188,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
     def should_offer_documentation(
         self,
     ) -> bool:
+        """Return whether should offer documentation."""
         return bool(
             self.__extracts
         )
@@ -189,14 +196,17 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Constraints"
 
     @override
     def get_extracts(self) -> list[ConstraintExtract]:
+        """Return get extracts."""
         return list(self.__extracts)
 
     @override
     def format_extract(self, extract: ConstraintExtract) -> str:
+        """Handle format extract."""
         text = f"- [{extract.id}] {extract.content}"
         if extract.working_state_id is not None:
             text += f" (from working state W{extract.working_state_id})"
@@ -204,10 +214,12 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @override
     def should_offer_documentation(self) -> bool:
+        """Return whether should offer documentation."""
         return bool(self.__extracts)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "add":
             return self._add(arguments)
@@ -218,6 +230,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         raise ValueError(f"Unsupported constraint action: {action}")
 
     def _add(self, arguments: dict[str, Any]) -> str:
+        """Handle add."""
         self._reject_fields(
             arguments,
             ("working_state_id", "working_state_ids", "id", "ids"),
@@ -234,6 +247,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         )
 
     def _promote(self, arguments: dict[str, Any]) -> str:
+        """Handle promote."""
         self._reject_fields(arguments, ("contents", "id", "ids"), action="promote")
         working_ids = self._working_ids(arguments)
         content_override = arguments.get("content")
@@ -274,6 +288,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         )
 
     def _remove(self, arguments: dict[str, Any]) -> str:
+        """Handle remove."""
         self._reject_fields(
             arguments,
             ("content", "contents", "working_state_id", "working_state_ids"),
@@ -296,6 +311,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         return f"Removed {len(selected)} CONSTRAINT entries {self._format_ids(ids)}."
 
     def _append(self, content: str, *, working_state_id: int | None) -> ConstraintExtract:
+        """Handle append."""
         item = ConstraintExtract(
             id=self.__next_id,
             content=content,
@@ -307,6 +323,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
         working = self._working_ids_summary(arguments)
@@ -323,6 +340,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @staticmethod
     def _direct_contents(arguments: dict[str, Any]) -> list[str]:
+        """Handle direct contents."""
         content = arguments.get("content")
         contents = arguments.get("contents")
         if content is not None and contents is not None:
@@ -340,6 +358,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @staticmethod
     def _working_ids(arguments: dict[str, Any]) -> list[int]:
+        """Handle working ids."""
         single = arguments.get("working_state_id")
         multiple = arguments.get("working_state_ids")
         if single is not None and multiple is not None:
@@ -353,6 +372,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @staticmethod
     def _ids(arguments: dict[str, Any]) -> list[int]:
+        """Handle ids."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None and multiple is not None:
@@ -371,6 +391,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
         *,
         action: str,
     ) -> None:
+        """Handle reject fields."""
         invalid = [name for name in names if arguments.get(name) is not None]
         if invalid:
             raise ValueError(
@@ -379,6 +400,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
             )
 
     def _find_index(self, constraint_id: int) -> int:
+        """Handle find index."""
         for index, item in enumerate(self.__extracts):
             if item.id == constraint_id:
                 return index
@@ -386,6 +408,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @staticmethod
     def _working_ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle working ids summary."""
         single = arguments.get("working_state_id")
         multiple = arguments.get("working_state_ids")
         if single is not None:
@@ -396,6 +419,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @staticmethod
     def _ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle ids summary."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None:
@@ -406,8 +430,10 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
 
     @staticmethod
     def _format_ids(ids: list[int]) -> str:
+        """Handle format ids."""
         return "[" + ", ".join(str(item_id) for item_id in ids) + "]"
 
     @staticmethod
     def _truncate(value: str) -> str:
+        """Handle truncate."""
         return value if len(value) <= 80 else value[:80] + "..."

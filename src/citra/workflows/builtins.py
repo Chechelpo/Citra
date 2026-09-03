@@ -36,6 +36,7 @@ class ArchitectWorkflow(StaticWorkflow):
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
+        """Return get system prompt."""
         tree = render_tree(workspace=context.workspace, limit=120, max_depth=3)
         subagent_name = SubagentTool.resolve_definition_for_context(
             context

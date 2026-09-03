@@ -105,6 +105,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
 
         return (
@@ -118,6 +119,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         context: ExecutionContext,
         session: AgentSession,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             context=context,
             session=session,
@@ -126,12 +128,14 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
     @property
     @override
     def heading(self) -> str:
+        """Handle heading."""
         return "Working state"
 
     @override
     def get_extracts(
         self,
     ) -> list[WorkingStateExtract]:
+        """Return get extracts."""
         return self.memory_state.active_working_states()
 
     @override
@@ -139,6 +143,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         self,
         extract: WorkingStateExtract,
     ) -> str:
+        """Handle format extract."""
         line = (
             f"- [W{extract.id}] "
             f"{extract.content}"
@@ -160,11 +165,13 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
     def should_offer_documentation(
         self,
     ) -> bool:
+        """Return whether should offer documentation."""
         return False
 
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         action = arguments["action"]
         if action == "create":
             return self._create(arguments)
@@ -177,6 +184,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         raise ValueError(f"Unsupported working-state action: {action}")
 
     def _create(self, arguments: dict[str, Any]) -> str:
+        """Handle create."""
         if arguments.get("id") is not None or arguments.get("ids") is not None:
             raise ValueError("'id' and 'ids' are invalid for create.")
 
@@ -198,6 +206,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         )
 
     def _update(self, arguments: dict[str, Any]) -> str:
+        """Handle update."""
         if arguments.get("contents") is not None or arguments.get("ids") is not None:
             raise ValueError("Update accepts one 'id' and one 'content'.")
         working_state_id = arguments.get("id")
@@ -215,6 +224,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         return f"Updated working state [W{updated.id}]: {updated.content}"
 
     def _resolve(self, arguments: dict[str, Any]) -> str:
+        """Handle resolve."""
         self._reject_content(arguments, "resolve")
         ids = self._get_ids(arguments, "resolve")
         # Validate the full batch before mutating it.
@@ -233,6 +243,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
         return f"Resolved working states {self._format_ids(ids)}."
 
     def _discard(self, arguments: dict[str, Any]) -> str:
+        """Handle discard."""
         self._reject_content(arguments, "discard")
         ids = self._get_ids(arguments, "discard")
         # Validate the full batch before mutating it.
@@ -253,6 +264,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         action = arguments.get("action", "?")
         parts = [f"action={action}"]
         content = arguments.get("content")
@@ -268,6 +280,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
 
     @staticmethod
     def _get_contents(arguments: dict[str, Any]) -> list[str]:
+        """Handle get contents."""
         content = arguments.get("content")
         contents = arguments.get("contents")
         if content is not None and contents is not None:
@@ -287,6 +300,7 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
 
     @staticmethod
     def _get_ids(arguments: dict[str, Any], action: str) -> list[int]:
+        """Handle get ids."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None and multiple is not None:
@@ -300,11 +314,13 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
 
     @staticmethod
     def _reject_content(arguments: dict[str, Any], action: str) -> None:
+        """Handle reject content."""
         if arguments.get("content") is not None or arguments.get("contents") is not None:
             raise ValueError(f"'content' and 'contents' are invalid for {action}.")
 
     @staticmethod
     def _ids_summary(arguments: dict[str, Any]) -> str | None:
+        """Handle ids summary."""
         single = arguments.get("id")
         multiple = arguments.get("ids")
         if single is not None:
@@ -315,8 +331,10 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
 
     @staticmethod
     def _format_ids(ids: list[int]) -> str:
+        """Handle format ids."""
         return "[" + ", ".join(f"W{working_id}" for working_id in ids) + "]"
 
     @staticmethod
     def _truncate(value: str) -> str:
+        """Handle truncate."""
         return value if len(value) <= 80 else value[:80] + "..."

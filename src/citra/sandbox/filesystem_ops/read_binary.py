@@ -32,6 +32,7 @@ class ReadBinaryOutput(FilesystemOutput):
 
     @classmethod
     def from_payload(cls, payload: Any) -> ReadBinaryOutput:
+        """Create an instance from payload."""
         raw = require_payload_dict(payload)
         content_b64 = raw.get("content_b64")
         size = raw.get("size")
@@ -55,6 +56,7 @@ class ReadBinaryOutput(FilesystemOutput):
         )
 
     def to_payload(self) -> dict[str, Any]:
+        """Convert the value to payload."""
         return {
             "content_b64": self.content_b64,
             "size": self.size,
@@ -65,6 +67,7 @@ class ReadBinaryOutput(FilesystemOutput):
         # ReadBinary carries a model-facing binary payload, not text. The
         # legacy string view is intentionally short: callers should consume
         # the structured fields, not this rendering.
+        """Handle render."""
         return (
             f"binary content: {self.size} bytes, "
             f"mime_type={self.mime_type or 'application/octet-stream'}"
@@ -73,6 +76,7 @@ class ReadBinaryOutput(FilesystemOutput):
 
 @dataclass(frozen=True, slots=True)
 class ReadBinaryInput(FilesystemInput[ReadBinaryOutput]):
+    """Represent ReadBinaryInput."""
     operation = "read_binary"
     output_type = ReadBinaryOutput
 
@@ -80,11 +84,13 @@ class ReadBinaryInput(FilesystemInput[ReadBinaryOutput]):
     max_bytes: int = DEFAULT_MAX_BYTES
 
     def __post_init__(self) -> None:
+        """Validate and initialize the instance after construction."""
         if not isinstance(self.max_bytes, int) or self.max_bytes <= 0:
             raise ValueError("'max_bytes' must be a positive integer.")
 
     @classmethod
     def parse(cls, arguments: dict[str, Any]) -> ReadBinaryInput:
+        """Handle parse."""
         path = arguments.get("path")
         if not isinstance(path, str):
             raise ValueError("'path' must be a string.")
@@ -97,6 +103,7 @@ class ReadBinaryInput(FilesystemInput[ReadBinaryOutput]):
         )
 
     def to_arguments(self) -> dict[str, Any]:
+        """Convert the value to arguments."""
         return {
             "path": self.path,
             "max_bytes": self.max_bytes,
@@ -104,11 +111,13 @@ class ReadBinaryInput(FilesystemInput[ReadBinaryOutput]):
 
 
 def _guess_mime_type(path: Path) -> str | None:
+    """Handle guess mime type."""
     mime_type, _ = mimetypes.guess_type(path)
     return mime_type
 
 
 def execute(order: ReadBinaryInput, fs: ScopedFilesystem) -> ReadBinaryOutput:
+    """Execute the execute operation."""
     resolved = fs.require_allowed_path(fs.resolve_path(order.path))
     if not resolved.is_file():
         raise FileNotFoundError(f"File not found: {fs.display_path(resolved)}")

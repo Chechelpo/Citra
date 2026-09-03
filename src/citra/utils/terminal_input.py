@@ -52,6 +52,7 @@ class TerminalInput:
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._session: PromptSession[str] = PromptSession()
 
     def prompt(
@@ -170,20 +171,25 @@ class _PredicateSatisfied(Exception):
 
 
 class _PredicateWatchdog:
+    """Represent PredicateWatchdog."""
     def __init__(self, *, predicate: Callable[[], bool], interval: float) -> None:
+        """Initialize the instance."""
         self._predicate = predicate
         self._interval = interval
         self._handle: TimerHandle | None = None
 
     def start(self) -> None:
+        """Handle start."""
         self._check()
 
     def stop(self) -> None:
+        """Handle stop."""
         if self._handle is not None:
             self._handle.cancel()
             self._handle = None
 
     def _check(self) -> None:
+        """Handle check."""
         if self._predicate():
             get_app().exit(exception=_PredicateSatisfied())
             return
@@ -208,6 +214,7 @@ class _IdleWatchdog:
         self,
         timeout: float,
     ) -> None:
+        """Initialize the instance."""
         self._timeout = timeout
 
         self._handle: TimerHandle | None = None

@@ -25,11 +25,13 @@ from citra.config._tool_config import (
 
 @dataclass(frozen=True)
 class MemoryConfig:
+    """Represent MemoryConfig."""
     enabled: bool = True
 
 
 @dataclass(frozen=True)
 class NotificationConfig:
+    """Represent NotificationConfig."""
     prompt_bell: bool = False
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class CitraConfig:
         cls,
         config_folder_path: str | Path | None = None,
     ) -> CitraConfig:
+        """Handle load."""
         if config_folder_path is None:
             raw = os.environ.get("CITRA_CONFIG_PATH")
             if not raw:
@@ -90,34 +93,42 @@ class CitraConfig:
         return cls.load(config_folder_path)
 
     def model(self, name: str | None = None) -> ModelConfig:
+        """Handle model."""
         return self.model_config_store.get(name or self.default_model_profile)
 
     def models(self) -> tuple[str, ...]:
+        """Handle models."""
         return self.model_config_store.names()
 
     def with_default_model_profile(self, name: str | None) -> CitraConfig:
+        """Handle with default model profile."""
         if name is not None:
             self.model_config_store.get(name)
         return replace(self, default_model_profile=name)
 
     @property
     def web_search(self) -> WebSearchConfig:
+        """Handle web search."""
         return self.tools.web_search
 
     @property
     def bash(self) -> BashConfig:
+        """Handle bash."""
         return self.tools.bash
 
     @property
     def subprocess(self) -> SubprocessConfig:
+        """Handle subprocess."""
         return self.tools.subprocess
 
     @property
     def browser(self) -> BrowserConfig:
+        """Handle browser."""
         return self.tools.browser
 
 
 def _load_toml(path: Path) -> dict[str, object]:
+    """Handle load toml."""
     if not path.is_file():
         raise FileNotFoundError(path)
     with path.open("rb") as file:

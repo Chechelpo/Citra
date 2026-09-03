@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 @dataclass(frozen=True)
 class LspConfig:
+    """Represent LspConfig."""
     enabled: bool = True
     startup_timeout: float = 30.0
     request_timeout: float = 15.0
@@ -18,6 +19,7 @@ class LspConfig:
 
 @dataclass(frozen=True)
 class ServerConfig:
+    """Represent ServerConfig."""
     command: tuple[str, ...]
     environment: Mapping[str, str] = field(default_factory=dict)
     extensions: tuple[str, ...] = ()
@@ -28,6 +30,7 @@ class ServerConfig:
 
 @dataclass(frozen=True)
 class RecursiveDiagnosticsConfig:
+    """Represent RecursiveDiagnosticsConfig."""
     max_files: int = 2000
     max_diagnostics: int = 250
     include_source: bool = False

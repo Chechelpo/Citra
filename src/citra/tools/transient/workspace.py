@@ -71,11 +71,13 @@ class Workspace(Tool):
         cls,
         context: ExecutionContext,
     ) -> tuple[ToolDefinition, ...]:
+        """Handle definitions for context."""
         del context
         return (ToolDefinition(definition=cls.DEFINITION),)
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
+        """Execute the execute operation."""
         operation = arguments.get("operation")
         if operation != "rollback":
             raise ValueError("'operation' must be 'rollback'.")
@@ -139,6 +141,7 @@ class Workspace(Tool):
         )
 
     def _repository_root(self, project_root: Path) -> Path:
+        """Handle repository root."""
         result = self._run_git(
             project_root,
             ("rev-parse", "--show-toplevel"),
@@ -167,6 +170,7 @@ class Workspace(Tool):
         project_root: Path,
         repository_root: Path,
     ) -> tuple[str, ...]:
+        """Handle normalize paths."""
         normalized: list[str] = []
         for value in values:
             if not isinstance(value, str) or not value.strip():
@@ -201,6 +205,7 @@ class Workspace(Tool):
         return tuple(normalized)
 
     def _run_git(self, cwd: Path, arguments: tuple[str, ...]):
+        """Handle run git."""
         return self.context.sandbox.run(
             [
                 "git",
@@ -226,6 +231,7 @@ class Workspace(Tool):
 
     @override
     def format_call_log(self, arguments: dict[str, Any]) -> str:
+        """Handle format call log."""
         paths = arguments.get("paths")
         count = len(paths) if isinstance(paths, list) else 0
         return f"operation={arguments.get('operation', '?')} | files={count}"

@@ -43,6 +43,7 @@ class CitraApplication:
         workflow: Workflow | None = None,
         workflow_registry: WorkflowRegistry | None = None,
     ) -> None:
+        """Initialize the instance."""
         if not isinstance(config, CitraConfig):
             raise TypeError("config must be a CitraConfig")
         if not isinstance(source_workspace, Path):
@@ -77,11 +78,18 @@ class CitraApplication:
         self.workspace = WorkspaceContext.create(
             workspace=self.source_workspace,
             browser_path=config.browser.browsers_path,
+            sandbox_mode=self.sandbox_config.mode,
         )
         try:
             sandbox_policy = config.sandbox_policy.clone()
             sandbox_policy.apply_workflow_config(self.sandbox_config)
-            sandbox_policy.add_readonly_bind(self.workspace.runtime)
+            sandbox_policy.add_readonly_bind(
+                self.workspace.runtime,
+                Path("/runtime"),
+            )
+            sandbox_policy.add_runtime_mounts(
+                self.workspace.runtime_readonly_binds
+            )
             for root in self.workspace.writable_roots:
                 if root != self.workspace.workspace:
                     sandbox_policy.add_writable_bind(root)
@@ -144,6 +152,7 @@ class CitraApplication:
         workflow: Workflow | None = None,
         workflow_registry: WorkflowRegistry | None = None,
     ) -> CitraApplication:
+        """Handle create."""
         config = config or CitraConfig.load()
         source = Path(
             source_workspace
@@ -164,6 +173,7 @@ class CitraApplication:
 
     @property
     def workflow_run(self) -> WorkflowRun | None:
+        """Handle workflow run."""
         return self.workflow_runtime.active_run
 
     def prepare_user_turn(self, content: str) -> None:
@@ -183,6 +193,7 @@ class CitraApplication:
             raise
 
     def run_agent_turn(self, user_input: str | None = None) -> None:
+        """Execute the run agent turn operation."""
         self.workspace.ensure_active()
         if user_input is not None:
             self.prepare_user_turn(user_input)
@@ -248,6 +259,7 @@ class CitraApplication:
                     raise
 
     def _activate_serial_step(self) -> None:
+        """Handle activate serial step."""
         run = self.workflow_runtime.active_run
         if run is None or run.is_terminal:
             raise RuntimeError("Cannot activate a terminal workflow run")
@@ -278,6 +290,7 @@ class CitraApplication:
         )
 
     def _checkpoint_revision(self) -> int:
+        """Handle checkpoint revision."""
         checkpoint = self.session.memory.get(CheckpointTool.TOOL_ID)
         if not isinstance(checkpoint, CheckpointTool):
             return 0
@@ -289,6 +302,7 @@ class CitraApplication:
         *,
         checkpoint_revision: int,
     ) -> str | None:
+        """Handle submit serial handoff."""
         checkpoint_tool = self.session.memory.get(CheckpointTool.TOOL_ID)
         if not isinstance(checkpoint_tool, CheckpointTool):
             return "the checkpoint memory tool was not used"
@@ -325,6 +339,7 @@ class CitraApplication:
         return None
 
     def _memory_completion_error(self) -> str | None:
+        """Handle memory completion error."""
         requirement = self.session.memory.get(RequirementTool.TOOL_ID)
         if (
             isinstance(requirement, RequirementTool)
@@ -343,6 +358,7 @@ class CitraApplication:
         return None
 
     def _latest_assistant_handoff(self) -> str | None:
+        """Handle latest assistant handoff."""
         for message in reversed(self.session.get_messages()):
             if message.get("role") != "assistant":
                 continue
@@ -354,6 +370,7 @@ class CitraApplication:
         return None
 
     def _skills_root(self) -> Path:
+        """Handle skills root."""
         return (
             Path(
                 os.environ.get(
@@ -365,6 +382,7 @@ class CitraApplication:
         )
 
     def _latest_user_message(self) -> str | None:
+        """Handle latest user message."""
         for message in reversed(self.session.get_messages()):
             if message.get("role") == "user":
                 content = message.get("content")
@@ -380,6 +398,7 @@ class CitraApplication:
         return None
 
     def handle_command(self, user_input: str) -> bool:
+        """Handle handle command."""
         body = user_input[1:]
         parts = body.split(None, 1)
         command_id = parts[0] if parts else ""
@@ -402,11 +421,13 @@ class CitraApplication:
 
     @property
     def is_closing(self) -> bool:
+        """Return whether is closing."""
         with self._close_lock:
             return self._closing or self._closed
 
     @property
     def hard_shutdown_requested(self) -> bool:
+        """Handle hard shutdown requested."""
         return self._hard_shutdown.is_set()
 
     def request_hard_shutdown(self) -> None:
@@ -422,6 +443,7 @@ class CitraApplication:
         )
 
     def close(self, *, force: bool = False) -> None:
+        """Handle close."""
         with self._close_lock:
             if self._closed or self._closing:
                 return
@@ -462,7 +484,9 @@ class CitraApplication:
             ) from errors[0]
 
     def __enter__(self) -> CitraApplication:
+        """Enter the managed lifecycle."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Exit the managed lifecycle."""
         self.close()
