@@ -77,6 +77,7 @@ class CitraApplication:
         self._hard_shutdown = Event()
         self.workspace = WorkspaceContext.create(
             workspace=self.source_workspace,
+            temporary_workspace=config.sandbox_policy.workspace_parent,
             browser_path=config.browser.browsers_path,
             sandbox_mode=self.sandbox_config.mode,
         )

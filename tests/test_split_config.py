@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
 
-from citra.config import CitraConfig, ModelConfigStore
+from citra.application import CitraApplication
+from citra.config import (
+    CitraConfig,
+    ModelConfigStore,
+    SandboxPolicy,
+    ToolConfigs,
+)
+from citra.workflows import ChatWorkflow
 
 
 def _write_config(
@@ -65,8 +73,13 @@ reasoning_effort = "medium"
         + "\n",
         encoding="utf-8",
     )
+    workspace_parent = tmp_path / "agent-runtimes"
     (config_dir / "sandbox.toml").write_text(
-        "[sandbox]\nglobal_network_disallow = true\n",
+        (
+            "[sandbox]\n"
+            "global_network_disallow = true\n"
+            f'workspace_parent = "{workspace_parent}"\n'
+        ),
         encoding="utf-8",
     )
     return config_dir, CitraConfig.load()
@@ -86,6 +99,12 @@ def test_canonical_config_aggregates_each_domain(
     assert config.browser.request_timeout == 12.5
     assert config.lsp.enabled is False
     assert config.sandbox_policy.global_disallow_network is True
+    assert config.sandbox_policy.workspace_parent == (
+        config_dir.parent / "agent-runtimes"
+    )
+    assert config.sandbox_policy.clone().workspace_parent == (
+        config.sandbox_policy.workspace_parent
+    )
     assert config.model_config_store.config_path == config_dir / "models.toml"
 
 
@@ -99,6 +118,61 @@ def test_required_config_files(
     (config_dir / filename).unlink()
     with pytest.raises(FileNotFoundError):
         CitraConfig.load()
+
+
+@pytest.mark.parametrize(
+    "workspace_parent",
+    ["relative/runtime-parent", 42],
+)
+def test_workspace_parent_must_be_an_absolute_path(
+    workspace_parent: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"sandbox\.workspace_parent.*absolute path string",
+    ):
+        SandboxPolicy.create(
+            {"sandbox": {"workspace_parent": workspace_parent}}
+        )
+
+
+def test_application_uses_configured_workspace_parent(
+    tmp_path: Path,
+) -> None:
+    source_workspace = tmp_path / "source"
+    source_workspace.mkdir()
+    workspace_parent = tmp_path / "agent-runtimes"
+    config = CitraConfig(
+        model_config_store=ModelConfigStore(tmp_path / "models.toml"),
+        tools=ToolConfigs.create(
+            {
+                "web-search": {"host_url": "https://search.invalid"},
+                "bash": {},
+                "subprocess": {},
+                "browser": {},
+            }
+        ),
+        sandbox_policy=SandboxPolicy(
+            workspace_parent=workspace_parent,
+        ),
+    )
+
+    with patch(
+        "citra.application.WorkspaceContext.create",
+        side_effect=RuntimeError("workspace-create-probe"),
+    ) as create_workspace, pytest.raises(
+        RuntimeError,
+        match="workspace-create-probe",
+    ):
+        CitraApplication(
+            config=config,
+            source_workspace=source_workspace,
+            workflow=ChatWorkflow(),
+        )
+
+    assert create_workspace.call_args.kwargs["temporary_workspace"] == (
+        workspace_parent
+    )
 
 
 def test_curl_section_is_rejected(

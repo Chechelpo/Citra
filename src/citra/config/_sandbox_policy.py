@@ -51,6 +51,8 @@ class SandboxPolicy(TomlConfig):
 
     mode: SandboxMode = SandboxMode.FULL_SANDBOX
 
+    workspace_parent: Path | None = None
+
     extra_ro_binds: list[Path] = field(
         default_factory=list,
     )
@@ -161,6 +163,12 @@ class SandboxPolicy(TomlConfig):
         defaults = cls()
 
         return cls(
+            workspace_parent=_optional_absolute_path(
+                sandbox,
+                "workspace_parent",
+                default=defaults.workspace_parent,
+            ),
+
             extra_ro_binds=_path_list(
                 sandbox,
                 "extra_readonly_binds",
@@ -402,6 +410,7 @@ class SandboxPolicy(TomlConfig):
         """Return an independent mutable policy for one sandbox lifecycle."""
         return SandboxPolicy(
             mode=self.mode,
+            workspace_parent=self.workspace_parent,
             extra_ro_binds=list(self.extra_ro_binds),
             extra_w_binds=list(self.extra_w_binds),
             runtime_results=list(self.runtime_results),
@@ -510,6 +519,55 @@ def _path(
     return Path(
         value
     ).expanduser()
+
+
+def _optional_absolute_path(
+    table: dict[str, Any],
+    name: str,
+    *,
+    default: Path | None,
+) -> Path | None:
+    """Parse an optional absolute host path from the sandbox policy."""
+    value = table.get(
+        name,
+        default,
+    )
+
+    if value is None:
+        logger.debug(
+            "Optional sandbox path is not configured",
+            extra={"origin": __name__, "field": name},
+        )
+        return None
+
+    if not isinstance(value, str):
+        logger.error(
+            "Sandbox path has an invalid value type",
+            extra={
+                "origin": __name__,
+                "field": name,
+                "value_type": type(value).__name__,
+            },
+        )
+        raise ValueError(
+            f"'sandbox.{name}' must be an absolute path string."
+        )
+
+    path = _path(value)
+    if not path.is_absolute():
+        logger.error(
+            "Sandbox path is not absolute",
+            extra={"origin": __name__, "field": name},
+        )
+        raise ValueError(
+            f"'sandbox.{name}' must be an absolute path string."
+        )
+
+    logger.debug(
+        "Configured optional sandbox path",
+        extra={"origin": __name__, "field": name, "path": str(path)},
+    )
+    return path.resolve()
 
 
 def _bool(
