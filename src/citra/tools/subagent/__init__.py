@@ -37,10 +37,12 @@ from .spec import (
 _LAZY_EXPORTS = {
     "RequestGuidanceTool": "citra.tools.subagent.guidance",
     "SubagentMode": "citra.tools.subagent.mode",
+    "SubagentWorkflow": "citra.tools.subagent.workflow",
     "SubagentSupervisor": "citra.tools.subagent.supervisor",
     "SubagentTool": "citra.tools.subagent.tool",
     "build_subagent_context": "citra.tools.subagent.factory",
     "build_subagent_mode": "citra.tools.subagent.mode",
+    "build_subagent_workflow": "citra.tools.subagent.workflow",
 }
 
 
@@ -49,7 +51,7 @@ def __getattr__(name: str):
         import importlib
 
         module = importlib.import_module(_LAZY_EXPORTS[name])
-        value = getattr(module, name)
+        value = vars(module)[name]
         globals()[name] = value
         return value
     raise AttributeError(
@@ -60,6 +62,7 @@ def __getattr__(name: str):
 __all__ = [
     "RequestGuidanceTool",
     "SubagentMode",
+    "SubagentWorkflow",
     "SubagentSnapshot",
     "SubagentSpec",
     "SubagentStatus",
@@ -68,4 +71,5 @@ __all__ = [
     "TranscriptEntry",
     "build_subagent_context",
     "build_subagent_mode",
+    "build_subagent_workflow",
 ]

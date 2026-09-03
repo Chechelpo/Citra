@@ -1,18 +1,11 @@
+
 from __future__ import annotations
 
 from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import TypeVar
 
-from .session_memory import (
-    CheckpointTool,
-    ConstraintTool,
-    DecisionTool,
-    FactTool,
-    RequirementTool,
-    TodoTool,
-    WorkingStateTool,
-)
+from .session_memory import *
 from .subagent import SubagentTool
 from .tool import Tool
 from .transient import (
@@ -42,7 +35,7 @@ T = TypeVar("T", bound=Hashable)
 
 @dataclass(frozen=True)
 class ToolSet:
-    """Tool implementations made available by a mode.
+    """Tool implementations made available by a workflow.
 
     Entries are identified by their stable ``TOOL_ID``. The public function
     name exposed to a model is resolved later, after an execution context is
@@ -53,6 +46,10 @@ class ToolSet:
     deferred_tools: tuple[type[Tool], ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.core_tools, tuple):
+            raise TypeError("core_tools must be a tuple")
+        if not isinstance(self.deferred_tools, tuple):
+            raise TypeError("deferred_tools must be a tuple")
         registered = self.core_tools + self.deferred_tools
 
         for tool_type in registered:
@@ -117,18 +114,26 @@ def _duplicates(values: tuple[T, ...]) -> tuple[T, ...]:
     return tuple(duplicates)
 
 
-def memory_tools() -> tuple[type[Tool], ...]:
-    """Return concrete conversation-memory tools."""
+def memory_tools(
+    *,
+    exclude: tuple[type[Tool], ...] = (),
+) -> tuple[type[Tool], ...]:
+    """Return concrete conversation-memory tools excluding selected tools."""
 
-    return (
-        RequirementTool,
+    tools = (
         TodoTool,
         DecisionTool,
         ConstraintTool,
         FactTool,
         CheckpointTool,
+        RequirementTool,
+        ScopeTool,
+        AcceptanceCriteriaTool,
         WorkingStateTool,
     )
+
+    excluded = set(exclude)
+    return tuple(tool for tool in tools if tool not in excluded)
 
 
 _CORE_TOOL_TYPES: tuple[type[Tool], ...] = (

@@ -1,37 +1,462 @@
-"""Workflow definitions and serial-run state.
+"""Workflow definitions, execution profiles, and runtime state.
 
-A workflow owns the sandbox policy for a Citra process.  Modes are ephemeral
-agent roles executed inside that workflow-owned sandbox; they do not create or
-replace the runtime when a workflow advances to another role.
+A workflow is the only agent-execution abstraction in Citra. Workflows that
+need one persistent agent derive from :class:`SingleModeWorkflow`; composite
+workflows arrange those same objects into validated steps.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, final
 
-from citra.modes import Mode, SandboxConfig
-from citra.sandbox import WorkspaceSandbox
+from citra.sandbox.sandbox import WorkspaceSandbox
+from citra.sandbox.sandbox_mode import SandboxMode
+from citra.config._sandbox_policy import SandboxPolicy
+from citra.context.workspace_context import WorkspaceContext
+from citra.tools.default_registry import ToolSet
+from citra.tools.skills.skill import Skill
+from citra.tools.tool import Tool
 
 if TYPE_CHECKING:
     from citra.agent import ConversationMemory
-    from citra.config import SandboxPolicy
-    from citra.context import WorkspaceContext
+    from citra.context import ExecutionContext
+
+
+@dataclass(frozen=True)
+class SandboxConfig:
+    """One workflow's contribution to the process sandbox policy."""
+
+    mode: SandboxMode = SandboxMode.FULL_SANDBOX
+    additional_ro_binds: tuple[Path, ...] = ()
+    additional_w_binds: tuple[Path, ...] = ()
+    global_network_disallow: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, SandboxMode):
+            raise TypeError("mode must be a SandboxMode")
+        if not isinstance(self.additional_ro_binds, tuple):
+            raise TypeError("additional_ro_binds must be a tuple")
+        if not isinstance(self.additional_w_binds, tuple):
+            raise TypeError("additional_w_binds must be a tuple")
+        object.__setattr__(
+            self,
+            "additional_ro_binds",
+            tuple(Path(path).expanduser() for path in self.additional_ro_binds),
+        )
+        object.__setattr__(
+            self,
+            "additional_w_binds",
+            tuple(Path(path).expanduser() for path in self.additional_w_binds),
+        )
+        if not isinstance(self.global_network_disallow, bool):
+            raise TypeError("global_network_disallow must be boolean")
+
+
+@dataclass(frozen=True)
+class TaskSteeringConfig:
+    """A user message injected every N turns; zero disables injection."""
+
+    every_n_turns: int = 0
+    content: str = ""
+    include_first: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.every_n_turns) is not int:
+            raise TypeError("every_n_turns must be an integer")
+        if not isinstance(self.content, str):
+            raise TypeError("content must be a string")
+        if not isinstance(self.include_first, bool):
+            raise TypeError("include_first must be boolean")
+        if self.every_n_turns < 0:
+            raise ValueError("every_n_turns cannot be negative")
+        if self.every_n_turns == 0 and (self.content or self.include_first):
+            raise ValueError(
+                "disabled task steering cannot define content or include_first"
+            )
+        if self.every_n_turns > 0 and not self.content.strip():
+            raise ValueError("enabled task steering requires non-empty content")
+
+    @property
+    def enabled(self) -> bool:
+        return self.every_n_turns > 0
+
+    def get_content(self, context: ExecutionContext) -> str:
+        """Return context-aware steering; subclasses may override this."""
+        del context
+        return self.content
+
+
+class Workflow(ABC):
+    """Process-level workflow and sandbox-policy owner."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        ...
+
+    @property
+    @abstractmethod
+    def description(self) -> str:
+        ...
+
+    @property
+    @abstractmethod
+    def sandbox_config(self) -> SandboxConfig:
+        ...
+
+    @property
+    @abstractmethod
+    def initial_workflow(self) -> SingleModeWorkflow:
+        """Return the first executable workflow in this definition."""
+        ...
+
+    @property
+    def resolved_sandbox_config(self) -> SandboxConfig:
+        """Compatibility name for the workflow's already-resolved policy."""
+        return self.sandbox_config
+
+    @property
+    def is_serial(self) -> bool:
+        return False
+
+    @property
+    def requires_memory(self) -> bool:
+        return False
+
+    @abstractmethod
+    def create_run(self, task: str) -> WorkflowRun:
+        ...
+
+    def validate(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Workflow name cannot be empty")
+        if not isinstance(self.description, str):
+            raise TypeError("workflow description must be a string")
+        if not isinstance(self.sandbox_config, SandboxConfig):
+            raise TypeError("workflow sandbox_config must be a SandboxConfig")
+        initial = self.initial_workflow
+        if not isinstance(initial, SingleModeWorkflow):
+            raise TypeError(
+                "workflow initial_workflow must be a SingleModeWorkflow"
+            )
+        if initial is not self:
+            initial.validate()
+            if initial.sandbox_config != self.sandbox_config:
+                raise ValueError(
+                    "workflow initial_workflow must expose the root workflow's "
+                    "sandbox configuration"
+                )
+
+
+class SingleModeWorkflow(Workflow):
+    """One persistent agent configuration represented as a workflow."""
+
+    @property
+    @abstractmethod
+    def tool_set(self) -> ToolSet:
+        ...
+
+    @property
+    def skills(self) -> tuple[Skill, ...]:
+        return ()
+
+    @property
+    @abstractmethod
+    def task_steering(self) -> TaskSteeringConfig:
+        ...
+
+    @property
+    @abstractmethod
+    def initial_working_states(self) -> tuple[str, ...]:
+        """Provisional memory states created on the first turn."""
+        ...
+
+    @abstractmethod
+    def get_system_prompt(self, context: ExecutionContext) -> str:
+        ...
+
+    @property
+    @final
+    def initial_workflow(self) -> SingleModeWorkflow:
+        return self
+
+    @final
+    def get_task_steering(
+        self,
+        current_turn: int,
+        context: ExecutionContext,
+    ) -> str | None:
+        if current_turn < 0:
+            raise ValueError("current_turn cannot be negative")
+
+        parts: list[str] = []
+        if current_turn == 0:
+            initial_state_steering = self._initial_state_steering(context)
+            if initial_state_steering:
+                parts.append(initial_state_steering)
+
+        steering = self.task_steering
+        if steering.enabled:
+            if current_turn == 0 and steering.include_first:
+                parts.append(steering.get_content(context))
+            elif current_turn > 0 and current_turn % steering.every_n_turns == 0:
+                parts.append(steering.get_content(context))
+
+        return "\n\n".join(part for part in parts if part.strip()) or None
+
+    def _initial_state_steering(self, context: ExecutionContext) -> str | None:
+        states = self.initial_working_states
+        if not states or not context.config.memory.enabled:
+            return None
+        if "working_state" in context.workspace.disabled_tool_ids:
+            return None
+
+        tool_type = self.tool_set.get_tool_with_id("working_state")
+        if tool_type is None:
+            return None
+        public_tool_id = tool_type.resolve_definition_for_context(
+            context
+        ).function.name
+        arguments = json.dumps(
+            {"action": "create", "contents": list(states)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return (
+            "Initialize this workflow's provisional memory before other task "
+            f"work. Call the `{public_tool_id}` tool once with exactly these "
+            f"arguments: `{arguments}`. These are working states, not "
+            "established facts; maintain, promote, resolve, or discard them "
+            "through the memory tools as the task develops."
+        )
+
+    @final
+    def validate(self) -> None:
+        super().validate()
+        if not isinstance(self.tool_set, ToolSet):
+            raise TypeError("workflow tool_set must be a ToolSet")
+        if not isinstance(self.skills, tuple) or any(
+            not isinstance(skill, Skill) for skill in self.skills
+        ):
+            raise TypeError("workflow skills must contain Skill instances")
+        if not isinstance(self.task_steering, TaskSteeringConfig):
+            raise TypeError("workflow task_steering must be a TaskSteeringConfig")
+        if not isinstance(self.initial_working_states, tuple):
+            raise TypeError("initial_working_states must be a tuple")
+        if any(
+            not isinstance(state, str) or not state.strip()
+            for state in self.initial_working_states
+        ):
+            raise ValueError(
+                "initial_working_states must contain non-empty strings"
+            )
+        duplicates = self._duplicates(self.initial_working_states)
+        if duplicates:
+            raise ValueError(
+                "Duplicate initial working states: "
+                + ", ".join(repr(state) for state in duplicates)
+            )
+        if (
+            self.initial_working_states
+            and "working_state" not in self.tool_set.core_tool_ids
+        ):
+            raise ValueError(
+                "Workflows with initial working states must expose the "
+                "'working_state' tool as a core tool"
+            )
+
+    def create_run(self, task: str) -> WorkflowRun:
+        return WorkflowRun(
+            workflow=self,
+            task=task,
+            steps=(WorkflowStep("agent", self, ("complete",)),),
+            max_executions=1,
+        )
+
+    @staticmethod
+    def _validate_tool_tuple(
+        name: str,
+        tools: tuple[type[Tool], ...],
+    ) -> None:
+        if not isinstance(tools, tuple):
+            raise TypeError(f"{name} must be a tuple")
+        if any(
+            not isinstance(tool, type) or not issubclass(tool, Tool)
+            for tool in tools
+        ):
+            raise TypeError(f"{name} must contain Tool subclasses")
+
+    @staticmethod
+    def _validate_skill_tuple(
+        name: str,
+        skills: tuple[type[Skill], ...],
+    ) -> None:
+        if not isinstance(skills, tuple):
+            raise TypeError(f"{name} must be a tuple")
+        if any(
+            not isinstance(skill, type) or not issubclass(skill, Skill)
+            for skill in skills
+        ):
+            raise TypeError(f"{name} must contain Skill subclasses")
+
+    @staticmethod
+    def _duplicates(values: tuple[Any, ...]) -> tuple[Any, ...]:
+        seen: set[Any] = set()
+        duplicates: list[Any] = []
+        for value in values:
+            if value in seen and value not in duplicates:
+                duplicates.append(value)
+            else:
+                seen.add(value)
+        return tuple(duplicates)
+
+
+class StaticWorkflow(SingleModeWorkflow):
+    """Base class for single-mode workflows declared in Python."""
+
+    _NAME: ClassVar[str]
+    _DESCRIPTION: ClassVar[str] = ""
+    _TOOLS: ClassVar[ToolSet]
+    _AVAILABLE_SKILLS: ClassVar[tuple[Skill, ...]] = ()
+    _SANDBOX_CONFIG: ClassVar[SandboxConfig] = SandboxConfig()
+    _TASK_STEERING: ClassVar[TaskSteeringConfig] = TaskSteeringConfig()
+    _INITIAL_WORKING_STATES: ClassVar[tuple[str, ...]] = ()
+
+    def __init__(self) -> None:
+        self.validate()
+
+    @property
+    @final
+    def name(self) -> str:
+        return self._NAME
+
+    @property
+    @final
+    def description(self) -> str:
+        return self._DESCRIPTION
+
+    @property
+    @final
+    def tool_set(self) -> ToolSet:
+        return self._TOOLS
+
+    @property
+    @final
+    def skills(self) -> tuple[Skill, ...]:
+        return self._AVAILABLE_SKILLS
+
+    @property
+    @final
+    def sandbox_config(self) -> SandboxConfig:
+        return self._SANDBOX_CONFIG
+
+    @property
+    @final
+    def task_steering(self) -> TaskSteeringConfig:
+        return self._TASK_STEERING
+
+    @property
+    @final
+    def initial_working_states(self) -> tuple[str, ...]:
+        return self._INITIAL_WORKING_STATES
+
+
+class UserWorkflow(SingleModeWorkflow):
+    """A single-mode workflow supplied by user configuration or callers."""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        system_prompt: str,
+        description: str = "",
+        core_tools: tuple[type[Tool], ...] = (),
+        allowed_tools: tuple[type[Tool], ...] = (),
+        available_skills: tuple[Skill, ...] = (),
+        sandbox_config: SandboxConfig = SandboxConfig(),
+        task_steering: TaskSteeringConfig = TaskSteeringConfig(),
+        initial_working_states: tuple[str, ...] = (),
+    ) -> None:
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            raise ValueError("system_prompt must be a non-empty string")
+        if not isinstance(description, str):
+            raise TypeError("description must be a string")
+        if not isinstance(sandbox_config, SandboxConfig):
+            raise TypeError("sandbox_config must be a SandboxConfig")
+        if not isinstance(task_steering, TaskSteeringConfig):
+            raise TypeError("task_steering must be a TaskSteeringConfig")
+        self._validate_tool_tuple("core_tools", core_tools)
+        self._validate_tool_tuple("allowed_tools", allowed_tools)
+        if not isinstance(available_skills, tuple) or any(
+            not isinstance(skill, Skill) for skill in available_skills
+        ):
+            raise TypeError("available_skills must contain Skill instances")
+        if not isinstance(initial_working_states, tuple):
+            raise TypeError("initial_working_states must be a tuple")
+        self._name = name
+        self._description = description
+        self._system_prompt = system_prompt
+        self._available_skills = available_skills
+        self._sandbox_config = sandbox_config
+        self._task_steering = task_steering
+        self._initial_working_states = initial_working_states
+        self._tool_set = ToolSet(
+            core_tools=core_tools,
+            deferred_tools=allowed_tools,
+        )
+        self.validate()
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def tool_set(self) -> ToolSet:
+        return self._tool_set
+
+    @property
+    def skills(self) -> tuple[Skill, ...]:
+        return self._available_skills
+
+    @property
+    def sandbox_config(self) -> SandboxConfig:
+        return self._sandbox_config
+
+    @property
+    def task_steering(self) -> TaskSteeringConfig:
+        return self._task_steering
+
+    @property
+    def initial_working_states(self) -> tuple[str, ...]:
+        return self._initial_working_states
+
+    def get_system_prompt(self, context: ExecutionContext) -> str:
+        del context
+        return self._system_prompt
 
 
 @dataclass(frozen=True)
 class WorkflowStep:
-    """One mode turn and the transitions it is allowed to request."""
+    """One single-mode workflow and its allowed transitions."""
 
     step_id: str
-    mode: Mode
+    workflow: SingleModeWorkflow
     allowed_next: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not self.step_id.strip():
+        if not isinstance(self.step_id, str) or not self.step_id.strip():
             raise ValueError("Workflow step id cannot be empty")
+        if not isinstance(self.allowed_next, tuple):
+            raise TypeError("Workflow allowed_next must be a tuple")
         if not self.allowed_next:
             raise ValueError(
                 f"Workflow step {self.step_id!r} must allow a transition"
@@ -45,16 +470,27 @@ class WorkflowStep:
             raise ValueError(
                 f"Workflow step {self.step_id!r} has duplicate transitions"
             )
-        self.mode.validate()
+        if not isinstance(self.workflow, SingleModeWorkflow):
+            raise TypeError("Workflow steps require a SingleModeWorkflow")
+        self.workflow.validate()
 
 
 @dataclass(frozen=True)
 class WorkflowHandoff:
-    """Validated route plus the outgoing role's actual assistant message."""
+    """Validated route plus the outgoing workflow's assistant message."""
 
     step_id: str
     summary: str
     next_step: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("step_id", self.step_id),
+            ("summary", self.summary),
+            ("next_step", self.next_step),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"Workflow handoff {name} cannot be empty")
 
 
 @dataclass(frozen=True)
@@ -63,70 +499,11 @@ class WorkflowSnapshot:
 
     workflow: str
     task: str
-    current_step: str | None
+    current_step: str
     completed: bool
     cancelled: bool
     execution_count: int
     handoffs: tuple[WorkflowHandoff, ...]
-
-
-class Workflow(ABC):
-    """Process-level orchestration definition and sandbox-policy owner."""
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        ...
-
-    @property
-    @abstractmethod
-    def description(self) -> str | None:
-        ...
-
-    @property
-    @abstractmethod
-    def sandbox_config(self) -> SandboxConfig | None:
-        """Optional workflow override; ``None`` inherits the initial mode."""
-        ...
-
-    @property
-    def resolved_sandbox_config(self) -> SandboxConfig:
-        """Policy frozen when the workflow runtime is provisioned."""
-        return self.sandbox_config or self.initial_mode.sandbox_config
-
-    @property
-    @abstractmethod
-    def initial_mode(self) -> Mode:
-        ...
-
-    @property
-    def is_serial(self) -> bool:
-        return False
-
-    @property
-    def requires_memory(self) -> bool:
-        """Whether memory tools remain enabled for this workflow."""
-        return False
-
-    @abstractmethod
-    def create_run(self, task: str) -> WorkflowRun:
-        ...
-
-    def validate(self) -> None:
-        if not self.name.strip():
-            raise ValueError("Workflow name cannot be empty")
-        self.initial_mode.validate()
-        if self.sandbox_config is not None and not isinstance(
-            self.sandbox_config,
-            SandboxConfig,
-        ):
-            raise TypeError(
-                "workflow sandbox_config must be a SandboxConfig or None"
-            )
-        if not isinstance(self.resolved_sandbox_config, SandboxConfig):
-            raise TypeError(
-                "workflow must resolve to a valid SandboxConfig"
-            )
 
 
 class WorkflowRun:
@@ -140,13 +517,31 @@ class WorkflowRun:
         steps: tuple[WorkflowStep, ...],
         max_executions: int = 32,
     ) -> None:
+        if not isinstance(workflow, Workflow):
+            raise TypeError("workflow must be a Workflow")
+        if not isinstance(task, str):
+            raise TypeError("task must be a string")
+        if not isinstance(steps, tuple):
+            raise TypeError("steps must be a tuple")
+        if type(max_executions) is not int:
+            raise TypeError("max_executions must be an integer")
         task = task.strip()
         if not task:
             raise ValueError("Workflow task cannot be empty")
         if not steps:
             raise ValueError("Workflow run requires at least one step")
+        if any(not isinstance(step, WorkflowStep) for step in steps):
+            raise TypeError("steps must contain WorkflowStep instances")
         if max_executions < 1:
             raise ValueError("max_executions must be positive")
+
+        workflow.validate()
+        for step in steps:
+            if step.workflow.sandbox_config != workflow.sandbox_config:
+                raise ValueError(
+                    "Every workflow step must expose the root workflow's "
+                    "sandbox configuration"
+                )
 
         self.workflow = workflow
         self.task = task
@@ -175,7 +570,6 @@ class WorkflowRun:
 
     @property
     def memory(self) -> ConversationMemory:
-        """Task-scoped structured memory shared by isolated role sessions."""
         return self._memory
 
     @property
@@ -196,7 +590,6 @@ class WorkflowRun:
             return self._pending_handoff is not None
 
     def begin_step(self) -> WorkflowStep:
-        """Start one mode execution and reset its handoff slot."""
         with self._lock:
             if self._completed or self._cancelled:
                 raise RuntimeError("Workflow run is already terminal")
@@ -211,7 +604,6 @@ class WorkflowRun:
             return self._steps[self._current_step]
 
     def submit_handoff(self, *, summary: str, next_step: str) -> WorkflowHandoff:
-        """Record the active role's sole explicit cross-role artifact."""
         if not isinstance(summary, str) or not isinstance(next_step, str):
             raise TypeError("Workflow handoff fields must be strings")
         summary = summary.strip()
@@ -241,7 +633,6 @@ class WorkflowRun:
             return handoff
 
     def advance(self) -> WorkflowHandoff:
-        """Consume the pending handoff and apply its validated transition."""
         with self._lock:
             handoff = self._pending_handoff
             if handoff is None:
@@ -265,7 +656,6 @@ class WorkflowRun:
             return True
 
     def phase_input(self) -> str:
-        """Build the role-local task and latest assistant-message handoff."""
         with self._lock:
             step = self._steps[self._current_step]
             lines = [
@@ -300,14 +690,13 @@ class WorkflowRun:
 
     def snapshot(self) -> WorkflowSnapshot:
         with self._lock:
+            current_step = (
+                "" if self._completed or self._cancelled else self._current_step
+            )
             return WorkflowSnapshot(
                 workflow=self.workflow.name,
                 task=self.task,
-                current_step=(
-                    None
-                    if self._completed or self._cancelled
-                    else self._current_step
-                ),
+                current_step=current_step,
                 completed=self._completed,
                 cancelled=self._cancelled,
                 execution_count=self._execution_count,
@@ -323,28 +712,43 @@ class WorkflowRuntime:
         *,
         workflow: Workflow,
         workspace: WorkspaceContext,
-        policy: SandboxPolicy | None = None,
-        sandbox: WorkspaceSandbox | None = None,
+        sandbox: WorkspaceSandbox,
     ) -> None:
+        if not isinstance(workflow, Workflow):
+            raise TypeError("workflow must be a Workflow")
+        if not isinstance(workspace, WorkspaceContext):
+            raise TypeError("workspace must be a WorkspaceContext")
+        if not isinstance(sandbox, WorkspaceSandbox):
+            raise TypeError("sandbox must be a WorkspaceSandbox")
         workflow.validate()
         self.workflow = workflow
         self.workspace = workspace
-        self._sandbox_config = workflow.resolved_sandbox_config
-        if sandbox is None:
-            if policy is None:
-                raise ValueError("WorkflowRuntime requires a finalized policy.")
-            sandbox = WorkspaceSandbox(
-                workspace.workspace,
-                policy,
-                base_environment=workspace.environment(),
-            )
+        self._sandbox_config = workflow.sandbox_config
         self._sandbox = sandbox
         if self._sandbox.mode != self._sandbox_config.mode:
             raise RuntimeError(
-                f"Workflow sandbox mode differs from its frozen policy sandbox mode {self.sandbox.mode} vs config mode {self._sandbox_config.mode}"
+                "Workflow sandbox mode differs from its frozen policy: "
+                f"{self._sandbox.mode} vs {self._sandbox_config.mode}"
             )
         self._active_run: WorkflowRun | None = None
         self._lock = RLock()
+
+    @classmethod
+    def provision(
+        cls,
+        *,
+        workflow: Workflow,
+        workspace: WorkspaceContext,
+        policy: SandboxPolicy,
+    ) -> WorkflowRuntime:
+        if not isinstance(policy, SandboxPolicy):
+            raise TypeError("policy must be a SandboxPolicy")
+        sandbox = WorkspaceSandbox(
+            workspace,
+            policy,
+            base_environment=workspace.environment(),
+        )
+        return cls(workflow=workflow, workspace=workspace, sandbox=sandbox)
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -359,12 +763,22 @@ class WorkflowRuntime:
         with self._lock:
             return self._active_run
 
+    def require_active_run(self) -> WorkflowRun:
+        run = self.active_run
+        if run is None or run.is_terminal:
+            raise RuntimeError("Workflow runtime has no active run")
+        return run
+
+    @property
+    def active_workflow(self) -> SingleModeWorkflow:
+        run = self.active_run
+        if run is not None and not run.is_terminal:
+            return run.current_step.workflow
+        return self.workflow.initial_workflow
+
     def start_run(self, task: str) -> WorkflowRun:
         with self._lock:
-            if (
-                self._active_run is not None
-                and not self._active_run.is_terminal
-            ):
+            if self._active_run is not None and not self._active_run.is_terminal:
                 raise RuntimeError("A workflow run is already active")
             run = self.workflow.create_run(task)
             self._active_run = run
@@ -377,50 +791,12 @@ class WorkflowRuntime:
             return self._active_run.cancel()
 
 
-class SingleModeWorkflow(Workflow):
-    """One persistent agent session running a selected mode."""
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        description: str,
-        mode: Mode,
-        sandbox_config: SandboxConfig | None = None,
-    ) -> None:
-        self._name = name
-        self._description = description
-        self._mode = mode
-        self._sandbox_config = sandbox_config
-        self.validate()
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str:
-        return self._description
-
-    @property
-    def sandbox_config(self) -> SandboxConfig | None:
-        return self._sandbox_config
-
-    @property
-    def initial_mode(self) -> Mode:
-        return self._mode
-
-    def create_run(self, task: str) -> WorkflowRun:
-        return WorkflowRun(
-            workflow=self,
-            task=task,
-            steps=(WorkflowStep("agent", self._mode, ("complete",)),),
-            max_executions=1,
-        )
-
-
 __all__ = [
+    "SandboxConfig",
     "SingleModeWorkflow",
+    "StaticWorkflow",
+    "TaskSteeringConfig",
+    "UserWorkflow",
     "Workflow",
     "WorkflowHandoff",
     "WorkflowRun",

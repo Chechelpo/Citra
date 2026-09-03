@@ -14,26 +14,19 @@ class WorkflowCommand(Command):
         if action not in {"status", "show", "cancel"}:
             return CommandResult(output="Usage: /workflow [status|cancel]")
 
-        workflow = getattr(self.context, "workflow", None)
-        if workflow is None:
-            raise RuntimeError("Workflow state is unavailable.")
-        run = getattr(self.context, "workflow_run", None)
-        runtime = getattr(self.context, "workflow_runtime", None)
+        runtime = self.context.workflow_runtime
+        workflow = runtime.workflow
+        run = runtime.active_run
         if action == "cancel":
-            if runtime is None or not runtime.cancel_run():
+            if not runtime.cancel_run():
                 return CommandResult(output="No active workflow run to cancel.")
             return CommandResult(output="Cancelled the active workflow run.")
         sandbox = self.context.sandbox
         lines = [
             f"Workflow: {workflow.name}",
-            f"mode: {self.context.mode.name}",
+            f"active workflow: {self.context.workflow.name}",
             f"sandbox: {sandbox.mode.name.lower()}",
-            "sandbox policy: "
-            + (
-                "workflow override"
-                if workflow.sandbox_config
-                else "mode inherited"
-            ),
+            "sandbox policy: workflow-owned",
         ]
         if run is None:
             lines.append("run: persistent single-mode session")

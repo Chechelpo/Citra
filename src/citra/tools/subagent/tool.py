@@ -233,7 +233,7 @@ class SubagentTool(Tool):
         super().__init__(
             context=context,
         )
-        supervisor = getattr(context, "subagents", None)
+        supervisor = context.subagents
         if supervisor is None:
             raise RuntimeError(
                 "ExecutionContext is missing a 'subagents' supervisor; "

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from citra.config._constants import SANDBOX_CONFIG_FILE
 from citra.config._file_config import TomlConfig
@@ -13,12 +13,26 @@ from citra.config.runtime_discovery import (
 from citra.sandbox.sandbox_mode import SandboxMode
 
 
+class WorkflowSandboxConfig(Protocol):
+    @property
+    def mode(self) -> SandboxMode: ...
+
+    @property
+    def additional_ro_binds(self) -> tuple[Path, ...]: ...
+
+    @property
+    def additional_w_binds(self) -> tuple[Path, ...]: ...
+
+    @property
+    def global_network_disallow(self) -> bool: ...
+
+
 @dataclass
 class SandboxPolicy(TomlConfig):
     """
     Complete mutable policy for one sandbox lifecycle.
 
-    Modes, workflows, runtime discovery, and operator configuration may
+    Workflows, runtime discovery, and operator configuration may
     contribute to this object before WorkspaceSandbox is constructed.
 
     WorkspaceSandbox consumes only the finalized SandboxPolicy.
@@ -39,7 +53,9 @@ class SandboxPolicy(TomlConfig):
     )
 
     base_readonly_binds: list[Path] = field(
-        default_factory=list,
+        default_factory=lambda: [
+            Path("/usr/bin")
+        ]
     )
 
     masked_host_dirs: list[Path] = field(
@@ -308,29 +324,28 @@ class SandboxPolicy(TomlConfig):
             result
         )
 
-    def apply_mode_config(
+    def apply_workflow_config(
         self,
-        config: object,
+        config: WorkflowSandboxConfig,
     ) -> None:
-        """Merge one mode/workflow contribution into this operator policy.
+        """Merge one workflow contribution into this operator policy.
 
         Bind lists are additive.  Network denial is monotonic: either the
-        selected mode/workflow or the operator configuration may deny it.
+        selected workflow or the operator configuration may deny it.
         """
-        mode = getattr(config, "mode", None)
-        if not isinstance(mode, SandboxMode):
+        if not isinstance(config.mode, SandboxMode):
             raise TypeError("Sandbox mode contribution has no valid mode.")
 
         mode_readonly = tuple(
             _path(path)
-            for path in getattr(config, "additional_ro_binds", ())
+            for path in config.additional_ro_binds
         )
         mode_writable = tuple(
             _path(path)
-            for path in getattr(config, "additional_w_binds", ())
+            for path in config.additional_w_binds
         )
 
-        self.mode = mode
+        self.mode = config.mode
         self.extra_ro_binds = list(
             dict.fromkeys((*mode_readonly, *self.extra_ro_binds))
         )
@@ -339,8 +354,12 @@ class SandboxPolicy(TomlConfig):
         )
         self.global_disallow_network = bool(
             self.global_disallow_network
-            or getattr(config, "global_network_disallow", False)
+            or config.global_network_disallow
         )
+
+    def apply_mode_config(self, config: WorkflowSandboxConfig) -> None:
+        """Compatibility alias for :meth:`apply_workflow_config`."""
+        self.apply_workflow_config(config)
 
     def clone(self) -> SandboxPolicy:
         """Return an independent mutable policy for one sandbox lifecycle."""

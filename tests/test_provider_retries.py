@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import io
 from types import SimpleNamespace
+from typing import Any, cast
 import urllib.error
 
 import pytest
 
+from citra.config import ModelConfig, RetryConfig
+from citra.context import ExecutionContext
 from citra.utils.chat_completions_api import call_api
 from citra.utils.chat_completions_api.persistent_requests import _should_retry_http_error
 
@@ -63,6 +66,8 @@ def test_rate_limits_and_server_errors_are_retryable() -> None:
 
 
 class _Response:
+    status = 200
+
     def __init__(self, payload: dict) -> None:
         self._body = json.dumps(payload).encode("utf-8")
 
@@ -76,21 +81,26 @@ class _Response:
         return self._body
 
 
-def _context():
-    return SimpleNamespace(
-        model_config=SimpleNamespace(
-            host="https://openrouter.example/v1",
-            api_key="test",
-            id="test-model",
-            max_tokens=128,
-            retry=SimpleNamespace(
-                max_attempts=3,
-                request_timeout=1,
-                initial_backoff=0,
-                max_backoff=0,
-            ),
-        )
+def _model_config() -> ModelConfig:
+    return ModelConfig(
+        host="https://openrouter.example/v1",
+        encrypted_key="",
+        id="test-model",
+        max_input_tokens=1_000,
+        max_output_tokens=128,
+        reasoning_effort=None,
+        retry=RetryConfig(
+            max_attempts=3,
+            request_timeout=1,
+            initial_backoff=0,
+            max_backoff=0,
+        ),
+        _plaintext_api_key="test",
     )
+
+
+def _context() -> ExecutionContext:
+    return cast(ExecutionContext, cast(Any, SimpleNamespace()))
 
 
 def test_call_api_retries_openrouter_provider_400(monkeypatch) -> None:
@@ -129,9 +139,14 @@ def test_call_api_retries_openrouter_provider_400(monkeypatch) -> None:
             raise value
         return value
 
-    monkeypatch.setattr("citra.utils.chat_completions_api.system_prompt", lambda _: "system")
     monkeypatch.setattr("citra.utils.chat_completions_api.urllib.request.urlopen", urlopen)
-    result = call_api(_context(), [], {})
+    result = call_api(
+        _context(),
+        [],
+        {},
+        model_config=_model_config(),
+        sys_prompt="system",
+    )
     assert result["choices"][0]["message"]["content"] == "ok"
     assert calls == 2
 
@@ -151,8 +166,13 @@ def test_call_api_does_not_retry_permanent_bad_request(monkeypatch) -> None:
             io.BytesIO(body),
         )
 
-    monkeypatch.setattr("citra.utils.chat_completions_api.system_prompt", lambda _: "system")
     monkeypatch.setattr("citra.utils.chat_completions_api.urllib.request.urlopen", urlopen)
     with pytest.raises(RuntimeError, match="invalid tool"):
-        call_api(_context(), [], {})
+        call_api(
+            _context(),
+            [],
+            {},
+            model_config=_model_config(),
+            sys_prompt="system",
+        )
     assert calls == 1

@@ -1,27 +1,25 @@
 from __future__ import annotations
 
 import logging
-import os
 import platform
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from citra.context.session_context import WorkspaceContext
+from citra.context.workspace_context import WorkspaceContext
 from citra.tools.linting import LintRunner
 from citra.tools.skills.skill_registry import SkillRegistry
 from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
 from citra.utils.model_tokenizer import tokenize
 from citra.utils.repo_map import RepoMap
-from citra.sandbox import WorkspaceSandbox
-from citra.sandbox import SandboxedFilesystem
+from citra.sandbox.sandbox import WorkspaceSandbox
+from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 
-from citra.config import CitraConfig
+from citra.config import CitraConfig, ModelConfig, WebSearchConfig
 
 if TYPE_CHECKING:
-    from citra.modes import Mode
     from citra.utils.lsp import LspManager
-    from citra.workflows import Workflow, WorkflowRun, WorkflowRuntime
+    from citra.workflows import SingleModeWorkflow, WorkflowRuntime
 
 DEFAULT_CONTEXT_TOKEN_LIMIT = 2_000
 
@@ -33,39 +31,17 @@ class ExecutionContext:
     """
     workspace: WorkspaceContext
     skills: SkillRegistry
+    config: CitraConfig
+    workflow_runtime: WorkflowRuntime
     logger = logging.getLogger(__name__)
 
     lsp_manager: LspManager | None = None
     user_interactions: object | None = None
     subagents: object | None = None
-    workflow_runtime: WorkflowRuntime | None = None
-    workflow_run: WorkflowRun | None = None
-    provided_config: CitraConfig | None = field(
-        default=None,
-        repr=False,
-    )
-    provided_mode: Mode | None = field(
-        default=None,
-        repr=False,
-    )
-    provided_workflow: Workflow | None = field(
-        default=None,
-        repr=False,
-    )
-    provided_sandbox: WorkspaceSandbox | None = field(
-        default=None,
-        repr=False,
-    )
     __os: str = field(
         init=False,
     )
-    __config: CitraConfig = field(
-        init=False,
-    )
-    __mode: Mode = field(
-        init=False,
-    )
-    __workflow: Workflow = field(
+    __workflow: SingleModeWorkflow = field(
         init=False,
     )
     __sandbox: WorkspaceSandbox = field(
@@ -82,90 +58,36 @@ class ExecutionContext:
     def __post_init__(
         self,
     ) -> None:
+        from citra.workflows import WorkflowRuntime
+
+        if not isinstance(self.workspace, WorkspaceContext):
+            raise TypeError("workspace must be a WorkspaceContext")
+        if not isinstance(self.skills, SkillRegistry):
+            raise TypeError("skills must be a SkillRegistry")
+        if not isinstance(self.config, CitraConfig):
+            raise TypeError("config must be a CitraConfig")
+        if not isinstance(self.workflow_runtime, WorkflowRuntime):
+            raise TypeError("workflow_runtime must be a WorkflowRuntime")
+
         os_name = platform.system().lower()
 
         if os_name == "darwin":
             os_name = "macos"
 
-        config = self.provided_config
-
-        if config is None:
-            config_path_raw = os.environ.get(
-                "CITRA_CONFIG_PATH"
-            )
-
-            if config_path_raw is None:
-                raise RuntimeError(
-                    "CITRA_CONFIG_PATH is not defined. "
-                    "Citra should be started through start.sh."
-                )
-
-            config = CitraConfig.load()
-
         workflow_runtime = self.workflow_runtime
-        workflow = self.provided_workflow
-        if workflow_runtime is not None:
-            if (
-                workflow is not None
-                and workflow_runtime.workflow is not workflow
-            ):
-                raise ValueError(
-                    "ExecutionContext workflow and WorkflowRuntime differ"
-                )
-            workflow = workflow_runtime.workflow
-
-        mode = self.provided_mode
-        if workflow is not None and mode is None:
-            mode = workflow.initial_mode
-        if mode is None:
-            from citra.modes import ModeRegistry
-
-            mode = ModeRegistry(
-                config_path=os.environ.get("CITRA_CONFIG_PATH"),
-            ).active_mode
-
-        if workflow is None:
-            from citra.workflows import simple_workflow
-
-            workflow = simple_workflow(mode)
-
-        if workflow_runtime is None:
-            from citra.workflows import WorkflowRuntime
-
-            policy = config.sandbox_policy.clone()
-            policy.apply_mode_config(workflow.resolved_sandbox_config)
-            policy.add_readonly_bind(self.workspace.runtime)
-            for root in self.workspace.writable_roots:
-                if root != self.workspace.workspace:
-                    policy.add_writable_bind(root)
-            workflow_runtime = WorkflowRuntime(
-                workflow=workflow,
-                workspace=self.workspace,
-                policy=policy,
-                sandbox=self.provided_sandbox,
-            )
-            object.__setattr__(self, "workflow_runtime", workflow_runtime)
-        elif (
-            self.provided_sandbox is not None
-            and self.provided_sandbox is not workflow_runtime.sandbox
-        ):
-            raise ValueError(
-                "ExecutionContext sandbox is not owned by its WorkflowRuntime"
-            )
+        workflow = workflow_runtime.active_workflow
         sandbox = workflow_runtime.sandbox
         self.workspace.provisioning.health_check_tools(
             sandbox,
             cwd=self.workspace.workspace,
         )
         self.workspace.write_runtime_manifest()
-        filesystem = SandboxedFilesystem(
-            sandbox
-        )
+        filesystem: SandboxedFilesystem = SandboxedFilesystem(sandbox)
         subprocesses = ManagedSubprocesses(sandbox)
         browser = BrowserManager(
             sandbox,
             self.workspace.workspace,
-            request_timeout=config.browser.request_timeout,
+            request_timeout=self.config.browser.request_timeout,
             browsers_path=(
                 self.workspace.provisioning.asset_path("playwright-browsers")
                 or self.workspace.cache / "playwright"
@@ -175,25 +97,13 @@ class ExecutionContext:
         lint_runner = LintRunner(
             self.workspace,
             sandbox,
-            config.lint,
+            self.config.lint,
         )
 
         object.__setattr__(
             self,
             "_ExecutionContext__os",
             os_name,
-        )
-
-        object.__setattr__(
-            self,
-            "_ExecutionContext__config",
-            config,
-        )
-
-        object.__setattr__(
-            self,
-            "_ExecutionContext__mode",
-            mode,
         )
 
         object.__setattr__(
@@ -237,31 +147,25 @@ class ExecutionContext:
         return self.__os
 
     @property
-    def config(
-        self,
-    ) -> CitraConfig:
-        return self.__config
-
-    @property
-    def mode(self) -> Mode:
-        return self.__mode
-
-    @property
-    def workflow(self) -> Workflow:
+    def workflow(self) -> SingleModeWorkflow:
         return self.__workflow
 
-    def activate_mode(
+    def activate_workflow(
         self,
-        mode: Mode,
+        workflow: SingleModeWorkflow,
         *,
         skills: SkillRegistry,
-        workflow_run: WorkflowRun | None,
     ) -> None:
-        """Bind one isolated mode turn to the persistent workflow runtime."""
-        mode.validate()
-        object.__setattr__(self, "_ExecutionContext__mode", mode)
+        """Bind one serial phase to the persistent workflow runtime."""
+        workflow.validate()
+        root = self.workflow_runtime.workflow
+        if not root.is_serial:
+            raise RuntimeError("Only serial workflows can activate a new phase")
+        active = self.workflow_runtime.require_active_run().current_step.workflow
+        if workflow is not active:
+            raise ValueError("Activated workflow is not the runtime's active phase")
+        object.__setattr__(self, "_ExecutionContext__workflow", workflow)
         object.__setattr__(self, "skills", skills)
-        object.__setattr__(self, "workflow_run", workflow_run)
 
     @property
     def sandbox(
@@ -294,35 +198,29 @@ class ExecutionContext:
             # service close calls below then become bookkeeping operations.
             self.workspace.processes.terminate_all(force=True)
         manager = self.lsp_manager
-        close_lsp = getattr(manager, "close", None)
-        if callable(close_lsp):
-            try:
-                close_lsp(force=force)
-            except TypeError:
-                close_lsp()
+        if manager is not None:
+            manager.close(force=force)
         subagents = self.subagents
-        close_subagents = getattr(subagents, "close", None)
-        if callable(close_subagents):
-            try:
-                close_subagents()
-            except Exception:
-                self.logger.exception(
-                    "Failed to close subagent supervisor."
-                )
+        if subagents is not None:
+            from citra.tools.subagent.supervisor import SubagentSupervisor
+            if isinstance(subagents, SubagentSupervisor):
+                try:
+                    subagents.close()
+                except Exception:
+                    self.logger.exception(
+                        "Failed to close subagent supervisor."
+                    )
         self.__browser.close(force=force)
         self.__subprocesses.close(force=force)
 
-    @property
-    def model_config(
-        self,
-    ):
-        return self.__config.model
+    def model_config(self) -> ModelConfig:
+        return self.config.model()
 
     @property
     def web_search_config(
         self,
-    ):
-        return self.__config.tools.web_search
+    ) -> WebSearchConfig:
+        return self.config.tools.web_search
 
     def has_command(
         self,
@@ -350,7 +248,7 @@ class ExecutionContext:
         if max_tokens <= 0:
             raise ValueError("max_tokens must be greater than zero")
 
-        model_id = self.__config.model().id
+        model_id = self.config.model().id
         total_tokens = tokenize(model_id, text)
 
         if total_tokens <= max_tokens:

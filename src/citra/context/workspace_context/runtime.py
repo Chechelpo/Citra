@@ -18,7 +18,9 @@ import stat
 import subprocess
 from threading import Lock
 import time
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Sequence
+
+from citra.sandbox.sandbox import WorkspaceSandbox
 
 
 class RuntimeProvisionError(RuntimeError):
@@ -222,19 +224,6 @@ class ProvisionedTool:
         return bool(self.commands) and self.health != "failed"
 
 
-class SandboxRunner(Protocol):
-    def run(
-        self,
-        command: Sequence[str],
-        *,
-        cwd: str | Path | None = None,
-        timeout: int,
-        network: bool,
-        environment: Mapping[str, str] | None = None,
-        input_text: str | None = None,
-    ) -> object: ...
-
-
 @dataclass
 class RuntimeProvisioning:
     """Resolved runtime manifest plus the process-local command resolver."""
@@ -285,7 +274,7 @@ class RuntimeProvisioning:
 
     def health_check_tools(
         self,
-        sandbox: SandboxRunner,
+        sandbox: WorkspaceSandbox,
         *,
         cwd: Path,
         timeout: int = 5,
@@ -310,8 +299,8 @@ class RuntimeProvisioning:
                     timeout=timeout,
                     network=False,
                 )
-                returncode = getattr(result, "returncode", None)
-                output = str(getattr(result, "output", "")).strip()
+                returncode = result.returncode
+                output = result.output.strip()
                 if returncode == 0:
                     provisioned.health = "passed"
                     provisioned.health_detail = output[:500] or None

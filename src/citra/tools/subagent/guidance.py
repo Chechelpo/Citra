@@ -12,7 +12,7 @@ an ``answer`` argument.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, override
+from typing import Any, Protocol, override
 
 from ...context import ExecutionContext
 from ..tool import Tool, ToolDefinition
@@ -22,6 +22,12 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+
+
+class GuidanceSupervisor(Protocol):
+    """Supervisor operation exposed to a worker guidance bridge."""
+
+    def request_guidance(self, subagent_id: str, question: str) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class SubagentGuidanceBridge:
     """
 
     subagent_id: str
-    supervisor: Any
+    supervisor: GuidanceSupervisor
 
     def request_guidance(self, question: str) -> str:
         return self.supervisor.request_guidance(
@@ -58,8 +64,8 @@ class RequestGuidanceTool(Tool):
     INVALIDATES_TOOL_CACHE = False
 
     # The tool is model-facing for the subagent only. The orchestrator
-    # never sees it because the subagent's mode does not register the
-    # ``subagent`` tool, and the orchestrator's mode does not register
+    # never sees it because the subagent workflow does not register the
+    # ``subagent`` tool, and the orchestrator workflow does not register
     # ``request_guidance``.
 
     DEFINITION = ChatCompletionTool(
@@ -96,7 +102,7 @@ class RequestGuidanceTool(Tool):
         context: ExecutionContext,
     ) -> None:
         super().__init__(context=context)
-        bridge = getattr(context, "subagents", None)
+        bridge = context.subagents
         if not isinstance(bridge, SubagentGuidanceBridge):
             raise RuntimeError(
                 "ExecutionContext is missing its subagent guidance bridge."

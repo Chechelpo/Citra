@@ -166,7 +166,7 @@ class SubagentSupervisor:
         responsible for creating a nested ``WorkspaceContext`` and a
         constrained ``ExecutionContext`` for the new subagent. Splitting
         this out keeps the supervisor free of ``WorkspaceContext`` and
-        ``Mode`` construction details.
+        workflow construction details.
         """
         with self.__close_lock:
             if self.__closed:
@@ -248,23 +248,7 @@ class SubagentSupervisor:
 
     def _resolve_readonly_bind(self, raw: str) -> Path:
         """Resolve a model-supplied bind through the parent's path policy."""
-        resolve_path = getattr(self.__parent_workspace, "resolve_path", None)
-        if callable(resolve_path):
-            candidate = Path(resolve_path(raw)).resolve()
-        else:
-            candidate = Path(raw).expanduser()
-            if not candidate.is_absolute():
-                candidate = self.__parent_workspace.workspace / candidate
-            candidate = candidate.resolve()
-            try:
-                candidate.relative_to(
-                    Path(self.__parent_workspace.workspace).resolve()
-                )
-            except ValueError as error:
-                raise ValueError(
-                    "Subagent read-only binds must remain inside the "
-                    f"orchestrator workspace: {candidate}"
-                ) from error
+        candidate = self.__parent_workspace.resolve_path(raw).resolve()
         if not candidate.exists():
             raise FileNotFoundError(
                 f"Subagent read-only bind does not exist: {candidate}"

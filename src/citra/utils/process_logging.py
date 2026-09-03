@@ -1,0 +1,113 @@
+"""Private last-process diagnostics for the Citra controller."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import logging
+import os
+from pathlib import Path
+import platform
+import time
+from types import TracebackType
+from typing import Iterator
+
+
+LOG_DIRECTORY_NAME = ".citra.logs"
+LAST_PROCESS_LOG_NAME = "last.log"
+
+
+class _CitraLogFilter(logging.Filter):
+    """Keep dependency debug chatter out of the project diagnostic log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name == "citra" or record.name.startswith("citra.")
+
+
+class _UtcFormatter(logging.Formatter):
+    converter = staticmethod(time.gmtime)
+
+
+@contextmanager
+def process_log(project_root: str | Path) -> Iterator[Path]:
+    """Capture Citra logs in ``.citra.logs/last.log`` for this process.
+
+    The file is truncated at process start, uses owner-only permissions, and
+    is flushed after every record so a crash still leaves useful diagnostics.
+    Existing application logging handlers are preserved and restored.
+    """
+
+    root = Path(project_root).expanduser().resolve()
+    log_directory = root / LOG_DIRECTORY_NAME
+    log_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    log_directory.chmod(0o700)
+
+    # Keep process diagnostics out of ordinary Git status without modifying
+    # the project's root ignore policy.
+    ignore_file = log_directory / ".gitignore"
+    ignore_file.write_text("*\n", encoding="utf-8")
+    ignore_file.chmod(0o600)
+
+    log_path = log_directory / LAST_PROCESS_LOG_NAME
+    descriptor = os.open(
+        log_path,
+        os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+        0o600,
+    )
+    os.chmod(log_path, 0o600)
+    stream = os.fdopen(descriptor, "w", encoding="utf-8", buffering=1)
+
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.DEBUG)
+    handler.addFilter(_CitraLogFilter())
+    handler.setFormatter(
+        _UtcFormatter(
+            "%(asctime)sZ %(levelname)s %(name)s [%(threadName)s] %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+    )
+
+    root_logger = logging.getLogger()
+    previous_level = root_logger.level
+    root_logger.addHandler(handler)
+    if previous_level == logging.NOTSET or previous_level > logging.DEBUG:
+        root_logger.setLevel(logging.DEBUG)
+
+    process_logger = logging.getLogger("citra.process")
+    process_logger.info(
+        "Citra process started | pid=%d | project=%s | python=%s | "
+        "platform=%s | time=%s",
+        os.getpid(),
+        root,
+        platform.python_version(),
+        platform.platform(),
+        datetime.now(timezone.utc).isoformat(),
+    )
+
+    error: BaseException | None = None
+    traceback: TracebackType | None = None
+    try:
+        yield log_path
+    except BaseException as caught:
+        error = caught
+        traceback = caught.__traceback__
+        process_logger.critical(
+            "Citra process terminated unexpectedly.",
+            exc_info=(type(caught), caught, traceback),
+        )
+        raise
+    finally:
+        if error is None:
+            process_logger.info("Citra process stopped normally.")
+        handler.flush()
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(previous_level)
+        handler.close()
+        stream.close()
+
+
+__all__ = [
+    "LAST_PROCESS_LOG_NAME",
+    "LOG_DIRECTORY_NAME",
+    "process_log",
+]

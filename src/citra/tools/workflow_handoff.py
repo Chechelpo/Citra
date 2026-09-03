@@ -1,4 +1,4 @@
-"""Typed controller handoff used by serial workflow role modes."""
+"""Typed controller handoff used by serial workflow phases."""
 
 from __future__ import annotations
 
@@ -68,9 +68,7 @@ class WorkflowHandoffTool(Tool):
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
-        run = getattr(self.context, "workflow_run", None)
-        if run is None:
-            raise RuntimeError("No serial workflow run is active")
+        run = self.context.workflow_runtime.require_active_run()
         handoff = run.submit_handoff(
             summary=str(arguments["summary"]),
             next_step=str(arguments["next_step"]),

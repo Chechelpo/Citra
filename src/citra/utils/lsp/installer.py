@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Protocol, Sequence
+from typing import Callable, Iterable
+
+from citra.sandbox.sandbox import WorkspaceSandbox
 
 from .servers.base import InstallCandidate, ServerDefinition
 
@@ -15,18 +17,6 @@ _MANAGER_PRIORITY = (
     "go",
     "cargo",
 )
-
-
-class _Sandbox(Protocol):
-    def run(
-        self,
-        command: Sequence[str],
-        *,
-        cwd: str | Path | None,
-        timeout: int,
-        network: bool,
-        environment: dict[str, str] | None = None,
-    ) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -69,10 +59,10 @@ def execute_install(
     *,
     dry_run: bool,
     resolver: Callable[[str], str | None],
-    sandbox: _Sandbox | None = None,
+    sandbox: WorkspaceSandbox | None = None,
     cwd: Path | None = None,
     environment: dict[str, str] | None = None,
-    timeout: int = 300,
+    timeout: float = 300,
 ) -> InstallResult:
     command = candidate.command
     if dry_run:
@@ -99,8 +89,8 @@ def execute_install(
             network=True,
             environment=environment,
         )
-        returncode = int(getattr(completed, "returncode", 1))
-        output = str(getattr(completed, "output", ""))
+        returncode = completed.returncode
+        output = completed.output
     except Exception as error:
         returncode = 127
         output = str(error)

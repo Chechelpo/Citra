@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 
+from citra.logging import Logger
 from citra.utils.prompt import build_system_prompt
 
 from ..cli.rendering import (
@@ -29,6 +30,9 @@ from ..utils.chat_completions_api import (
 from ..utils.terminal import RESET, YELLOW
 from .response import execute_tool_call, get_assistant_message
 from .session import AgentSession
+
+
+_logger = Logger("agent_runner.py")
 
 
 ApiCall = Callable[..., dict]
@@ -68,52 +72,68 @@ class AgentRunner:
         self.event_sink = event_sink
         self.render_output = render_output
 
+        _logger.debug(
+            "AgentRunner initialized",
+            workflow=context.workflow.__class__.__name__,
+        )
+
     def run_turn(self) -> None:
-        ensure_active = getattr(self.context, "ensure_active", None)
-        if callable(ensure_active):
-            ensure_active()
+        self.context.ensure_active()
 
         turn_number = self.session.begin_turn()
-        mode = getattr(self.context, "mode", None)
-        get_task_steering = getattr(mode, "get_task_steering", None)
-        steering = (
-            get_task_steering(
-                turn_number - 1,
-                self.context,
-            )
-            if callable(get_task_steering)
-            else None
+
+        _logger.info(
+            "Starting agent turn",
+            turn=turn_number,
+        )
+
+        workflow = self.context.workflow
+        steering = workflow.get_task_steering(
+            turn_number - 1,
+            self.context,
         )
 
         if steering is not None and not isinstance(steering, str):
-            raise TypeError("Mode task steering must be a string or None")
-        if steering:
-            self.session.add_user_message(steering)
-        prompt: str = (
-            build_system_prompt(self.context)
-            if hasattr(self.context, "workspace")
-            else ""
-        )
+            _logger.error("Workflow returned invalid steering instructions")
+            raise TypeError("Workflow task steering must be a string or None")
 
-        tool_registry = ToolRegistry(toolset=self.context.mode.tool_set)
+        if steering:
+            _logger.debug(
+                "Applying workflow steering",
+                length=len(steering),
+            )
+            self.session.add_user_message(steering)
+
+        prompt = build_system_prompt(self.context)
+
+        tool_registry = ToolRegistry(toolset=workflow.tool_set)
+
         core_tool_ids, deferred_catalog = _configured_tools(
             self.context,
             tool_registry,
         )
+
+        _logger.debug(
+            "Configured tools",
+            core=len(core_tool_ids),
+            deferred=len(deferred_catalog),
+        )
+
         enabled_tool_ids: set[str] = set()
 
         while True:
             if self._runtime_is_closing():
+                _logger.warning("Runtime closing; stopping agent loop")
                 return
+
             self.session.flush_steering()
 
-            # Keep the tool schema order monotonic for prompt-cache locality:
-            # core tools and the loader stay fixed, deferred tools append only.
             tools_by_id = tool_registry.instantiate(
                 self.context,
                 self.session,
                 tool_ids=core_tool_ids,
             )
+
             if deferred_catalog:
                 enable_tools = EnableTools(
                     context=self.context,
@@ -121,6 +141,7 @@ class AgentRunner:
                     enabled_tool_ids=enabled_tool_ids,
                 )
                 tools_by_id[enable_tools.id] = enable_tools
+
             tools_by_id.update(
                 tool_registry.instantiate(
                     self.context,
@@ -128,19 +149,19 @@ class AgentRunner:
                     tool_ids=enabled_tool_ids,
                 )
             )
-            # The model-facing name is selected from the current context and
-            # can differ from the stable Citra ID. Build the dispatch map only
-            # after every tool for this request has resolved its definition.
+
             tools = tool_registry.index_by_model_name(
                 tools_by_id.values()
             )
 
-            model_value = self.context.config.model
-            model_config = model_value() if callable(model_value) else model_value
-            model_id = str(getattr(model_config, "id", "test-model"))
-            max_input_tokens = int(
-                getattr(model_config, "max_input_tokens", 1_000_000)
+            _logger.trace(
+                "Resolved tools for model request",
+                count=len(tools),
             )
+
+            model_config = self.context.config.model()
+            model_id = model_config.id
+            max_input_tokens = model_config.max_input_tokens
 
             api_arguments: dict[str, Any] = {
                 "context": self.context,
@@ -152,30 +173,50 @@ class AgentRunner:
             }
 
             reasoning_effort = model_config.reasoning_effort
+
             if reasoning_effort is not None:
                 api_arguments["reasoning_effort"] = reasoning_effort
 
             if self.api_call is call_api:
-                # Freeze the active model for the entire HTTP request and all
-                # of its retries. A config change only affects the next cycle.
                 api_arguments["model_config"] = model_config
-                api_arguments["retry_interrupt"] = self.session.steering.has_pending
+                api_arguments["retry_interrupt"] = (
+                    self.session.steering.has_pending
+                )
 
             if prompt:
                 api_arguments["sys_prompt"] = prompt
+
+            _logger.debug(
+                "Calling model",
+                model=model_id,
+                tools=len(tools),
+            )
+
             try:
                 response = self.api_call(**api_arguments)
+
             except ModelRequestInterrupted:
-                # No assistant message was accepted, so this is a safe place
-                # to flush steering and rebuild the request immediately.
+                _logger.info(
+                    "Model request interrupted by steering"
+                )
                 continue
 
             if self._runtime_is_closing():
+                _logger.warning(
+                    "Runtime closed after model response"
+                )
                 return
 
             assistant = get_assistant_message(response)
+
             text = assistant.get("content")
+
             if isinstance(text, str) and text:
+                _logger.trace(
+                    "Assistant returned text",
+                    length=len(text),
+                )
+
                 self._emit(
                     AgentRunEvent(
                         kind="assistant",
@@ -183,61 +224,111 @@ class AgentRunner:
                         content=text,
                     )
                 )
+
                 if self.render_output:
                     render_assistant_text(text)
+
             tool_calls = cast(
                 list[ChatCompletionMessageFunctionToolCallParam],
                 assistant.get("tool_calls") or [],
             )
 
+            _logger.debug(
+                "Assistant response processed",
+                tool_calls=len(tool_calls),
+            )
+
             self.session.add_assistant_message(assistant)
+
             if not tool_calls:
-                # Steering may have arrived while a final-looking response was
-                # in flight. Treat that response as an intermediate message
-                # and give the model the correction before ending the turn.
                 if self.session.steering.has_pending():
+                    _logger.debug(
+                        "Steering pending after final response; continuing"
+                    )
                     continue
+
                 todo_tool = tools_by_id.get(TodoTool.TOOL_ID)
                 requirement_tool = tools_by_id.get(RequirementTool.TOOL_ID)
+
                 if (
                     isinstance(requirement_tool, RequirementTool)
                     and requirement_tool.has_unsatisfied_requirements()
                     and not self._is_serial_role_turn()
                 ):
+                    _logger.info(
+                        "Continuing due to unsatisfied requirements"
+                    )
+
                     self.session.add_user_message(
                         "Continue: valid task requirements remain unsatisfied. "
                         "Satisfy them with verification evidence, or remove "
                         "only requirements that are truly obsolete or invalid."
                     )
                     continue
+
                 if (
                     isinstance(todo_tool, TodoTool)
                     and todo_tool.has_outstanding_todos()
                     and not self._is_serial_role_turn()
                 ):
+                    _logger.info(
+                        "Continuing due to outstanding TODOs"
+                    )
+
                     self.session.add_user_message(
                         "Continue: valid conversation TODOs remain outstanding. "
                         "Complete them, or remove only entries that are truly stale "
                         "or invalid, before returning a final answer."
                     )
                     continue
+
+                _logger.info(
+                    "Agent turn completed",
+                    turn=turn_number,
+                )
+
                 return
+
             cancel_remaining = False
+
             for tool_call in tool_calls:
                 if self._runtime_is_closing():
+                    _logger.warning(
+                        "Runtime closing during tool execution"
+                    )
                     return
+
                 call_id = tool_call.get("id")
+
                 if not call_id:
-                    raise RuntimeError("Model returned a tool call without an id.")
+                    _logger.error(
+                        "Tool call missing id"
+                    )
+                    raise RuntimeError(
+                        "Model returned a tool call without an id."
+                    )
+
                 if not cancel_remaining and self.session.steering.has_pending():
                     cancel_remaining = True
+
+                    _logger.info(
+                        "Cancelling remaining tools due to steering"
+                    )
+
                     if self.render_output:
                         print(
                             f"\n{YELLOW}⏺ Steering received. "
                             f"Cancelling remaining tool calls.{RESET}"
                         )
+
                 function = tool_call["function"]
                 tool_name = str(function.get("name") or "unknown")
+
+                _logger.debug(
+                    "Executing tool call",
+                    tool=tool_name,
+                )
+
                 self._emit(
                     AgentRunEvent(
                         kind="tool-call",
@@ -246,18 +337,22 @@ class AgentRunner:
                         tool=tool_name,
                     )
                 )
+
                 if self.render_output:
                     render_tool_call_start(tool_call)
+
                 memory_tool = (
                     memory_tool_for_call(tools, tool_call)
                     if self.render_output
                     else None
                 )
+
                 memory_before = (
                     build_memory_context(tools)
                     if memory_tool
                     else None
                 )
+
                 result = (
                     _CANCELLED_BY_STEERING
                     if cancel_remaining
@@ -267,6 +362,13 @@ class AgentRunner:
                         session=self.session,
                     )
                 )
+
+                _logger.debug(
+                    "Tool call completed",
+                    tool=tool_name,
+                    result_length=len(result),
+                )
+
                 self._emit(
                     AgentRunEvent(
                         kind="tool-result",
@@ -275,51 +377,57 @@ class AgentRunner:
                         tool=tool_name,
                     )
                 )
+
                 if self.render_output:
                     render_tool_call_result(result)
-                self.session.add_tool_result(call_id, result)
+
+                self.session.add_tool_result(
+                    call_id,
+                    result,
+                )
+
                 if not cancel_remaining and memory_tool is not None:
-                    render_memory_change(tools, memory_before)
+                    render_memory_change(
+                        tools,
+                        memory_before,
+                    )
 
     def _emit(self, event: AgentRunEvent) -> None:
         sink = self.event_sink
+
         if sink is not None:
             sink(event)
 
     def _runtime_is_closing(self) -> bool:
-        workspace = getattr(self.context, "workspace", None)
-        return bool(getattr(workspace, "is_closing", False))
+        return self.context.workspace.is_closing
 
     def _is_serial_role_turn(self) -> bool:
         """Return whether TODOs may survive this isolated role boundary."""
-        workflow = getattr(self.context, "workflow", None)
-        run = getattr(self.context, "workflow_run", None)
-        return bool(
-            workflow is not None
-            and getattr(workflow, "is_serial", False)
-            and run is not None
-        )
+        runtime = self.context.workflow_runtime
+        return runtime.workflow.is_serial and runtime.active_run is not None
 
 
 def _configured_tools(
     context: ExecutionContext,
     tool_registry: ToolRegistry,
 ) -> tuple[set[str], dict[str, str]]:
-    """Apply runtime-mode exclusions before exposing any tool schemas."""
-    disabled_tool_ids = set(
-        getattr(
-            getattr(context, "workspace", None),
-            "disabled_tool_ids",
-            (),
-        )
-    )
+    """Apply runtime workflow exclusions before exposing tool schemas."""
+
+    disabled_tool_ids = set(context.workspace.disabled_tool_ids)
 
     core_tool_ids = set(tool_registry.core_tool_ids) - disabled_tool_ids
+
     deferred_catalog = {
         tool_id: summary
         for tool_id, summary in tool_registry.deferred_catalog(context).items()
         if tool_id not in disabled_tool_ids
     }
+
+    _logger.trace(
+        "Filtered configured tools",
+        disabled=len(disabled_tool_ids),
+        active=len(core_tool_ids),
+    )
 
     return core_tool_ids, deferred_catalog
 
@@ -331,4 +439,11 @@ def run_agent_turn(
     api_call: ApiCall = call_api,
 ) -> None:
     """Compatibility function using an already lifecycle-owned context."""
-    AgentRunner(context, session, api_call=api_call).run_turn()
+
+    _logger.debug("Running compatibility agent turn")
+
+    AgentRunner(
+        context,
+        session,
+        api_call=api_call,
+    ).run_turn()

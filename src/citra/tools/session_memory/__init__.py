@@ -6,6 +6,8 @@ from .todo_tool import TodoTool
 from .memory_tool import MemoryTool
 from .requirement_tool import RequirementTool
 from .working_state_tool import WorkingStateTool
+from .scope_tool import ScopeTool
+from .acceptance_criteria_tool import AcceptanceCriteriaTool
 
 __all__ = [
     "ConstraintTool",
@@ -15,5 +17,7 @@ __all__ = [
     "TodoTool",
     "MemoryTool",
     "RequirementTool",
-    "WorkingStateTool"
+    "WorkingStateTool",
+    "ScopeTool",
+    "AcceptanceCriteriaTool"
 ]

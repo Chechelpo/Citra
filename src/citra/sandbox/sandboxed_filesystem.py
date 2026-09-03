@@ -37,14 +37,15 @@ class SandboxedFilesystem:
             ensure_ascii=False,
         )
         result: SandboxResult = self._sandbox.run(
-            [sys.executable, "-m", "citra.sandbox.filesystem"],
+            ["python", "-m", "citra.sandbox.filesystem"],
             timeout=timeout,
             network=False,
             input_text=payload,
             environment={
                 "PYTHONPATH": str(source_root),
                 "PYTHONNOUSERSITE": "1",
-            },
+                **self._sandbox.filesystem_environment(),
+            }
         )
         if result.timed_out:
             raise TimeoutError(

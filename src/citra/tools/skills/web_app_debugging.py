@@ -30,13 +30,7 @@ class WebAppDebugging(Skill):
         self,
         context: ExecutionContext,
     ) -> str:
-        if not bool(
-            getattr(
-                getattr(context.config, "memory", None),
-                "enabled",
-                True,
-            )
-        ):
+        if not context.config.memory.enabled:
             return _PROMPT.replace(_MEMORY_INSTRUCTION, "")
         return _PROMPT
 

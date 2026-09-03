@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -13,7 +14,6 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from ..agent.interactions import UserPromptRequest
 from ..agent.runner import ApiCall
 from ..application import CitraApplication
-from ..modes import Mode, ModeRegistry
 from ..workflows import Workflow, WorkflowRegistry
 from ..utils.chat_completions_api import call_api
 from ..utils.terminal import (
@@ -32,34 +32,11 @@ from ..utils.terminal_input import terminal_input
 from .rendering import print_header
 
 
+logger = logging.getLogger(__name__)
+
+
 class HardShutdownRequested(RuntimeError):
     """The second interrupt requested bounded application shutdown."""
-
-
-def select_startup_mode(
-    registry: ModeRegistry,
-    *,
-    input_service: Any = terminal_input,
-) -> Mode:
-    """Select a mode before any runtime or sandbox service is constructed."""
-    print(f"{BOLD}Select a Citra mode:{RESET}")
-    for index, mode in enumerate(registry.modes, 1):
-        description = f" — {mode.description}" if mode.description else ""
-        default = (
-            f" {GREEN}(default){RESET}"
-            if mode is registry.default_mode
-            else ""
-        )
-        print(f"  {DIM}{index}.{RESET} {mode.name}{description}{default}")
-
-    while True:
-        selection = input_service.prompt(
-            f"{BOLD}{BLUE}mode❯{RESET} "
-        ).strip()
-        try:
-            return registry.select(selection)
-        except (KeyError, ValueError) as error:
-            print(f"{RED}⏺ {error}{RESET}")
 
 
 def select_startup_workflow(
@@ -153,13 +130,7 @@ def run_turn_with_steering(
         nonlocal soft_stop_requested
         if not soft_stop_requested:
             soft_stop_requested = True
-            request_soft_stop = getattr(application, "request_soft_stop", None)
-            if callable(request_soft_stop):
-                request_soft_stop()
-            else:
-                application.session.queue_steering(
-                    "Stop the current work safely and return control to the user."
-                )
+            application.request_soft_stop()
             print(f"{YELLOW}⏺ Stop instruction queued. Press Ctrl+C again to exit.{RESET}")
             return
 
@@ -238,25 +209,15 @@ def main(
     *,
     api_call: ApiCall = call_api,
     input_service: Any = terminal_input,
-    interactive_mode_selection: bool | None = None,
     interactive_workflow_selection: bool | None = None,
 ) -> None:
-    mode_registry = ModeRegistry(
-        config_path=os.environ.get("CITRA_CONFIG_PATH"),
-    )
     workflow_registry = WorkflowRegistry(
         config_path=os.environ.get("CITRA_CONFIG_PATH"),
-        mode_registry=mode_registry,
-    )
-    prompt_override = (
-        interactive_workflow_selection
-        if interactive_workflow_selection is not None
-        else interactive_mode_selection
     )
     should_prompt = (
         sys.stdin.isatty()
-        if prompt_override is None
-        else prompt_override
+        if interactive_workflow_selection is None
+        else interactive_workflow_selection
     )
     workflow = (
         select_startup_workflow(
@@ -266,19 +227,8 @@ def main(
         if should_prompt
         else workflow_registry.select()
     )
-    if workflow.name == "simple":
-        mode = (
-            select_startup_mode(
-                mode_registry,
-                input_service=input_service,
-            )
-            if should_prompt
-            else mode_registry.select()
-        )
-        workflow = workflow_registry.set_simple_mode(mode)
     application = CitraApplication.create(
         api_call=api_call,
-        mode_registry=mode_registry,
         workflow=workflow,
         workflow_registry=workflow_registry,
     )
@@ -310,9 +260,14 @@ def main(
                 break
             except HardShutdownRequested as error:
                 if str(error):
+                    logger.error(
+                        "Hard shutdown failed: %s",
+                        error,
+                    )
                     print(f"{RED}⏺ Hard shutdown error: {error}{RESET}")
                 break
             except Exception as error:
+                logger.exception("Agent turn failed: %s", error)
                 print(f"{RED}⏺ Error: {error}{RESET}")
     finally:
         project = application.workspace.workspace

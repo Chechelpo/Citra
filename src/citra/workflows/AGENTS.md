@@ -1,18 +1,20 @@
 # AGENTS.md — `citra.workflows`
 
-This package owns process-level orchestration and sandbox policy selection.
+This package owns every selectable execution workflow, process-level
+orchestration, and sandbox policy selection. There is no separate runtime mode
+abstraction: an ordinary agent configuration is a `SingleModeWorkflow`.
 
 ## Invariants
 
 - Select the workflow before provisioning the workspace or sandbox.
 - `WorkflowRuntime` owns the concrete `WorkspaceSandbox`; application and
   execution contexts only retain references to that owned instance.
-- `Workflow.sandbox_config` is an optional override. When it is `None`, freeze
-  the initial mode's sandbox policy at startup and maintain it for the entire
-  run.
+- Every root `Workflow` exposes one concrete `sandbox_config`. Freeze that
+  policy at startup and maintain it for the entire run; serial phase workflows
+  must use the same configuration.
 - Never replace the `WorkspaceContext`, `WorkspaceSandbox`, runtime, LSP
   manager, process supervisor, or subagent supervisor at a serial phase edge.
-- Every serial role gets a new `AgentSession` and `SkillRegistry`.
+- Every serial phase gets a new `AgentSession` and `SkillRegistry`.
 - Every serial role session shares the task-scoped `ConversationMemory` owned
   by its `WorkflowRun`; it never shares conversation or tool-call history.
 - Cross-role context is limited to the original task, shared filesystem,
@@ -29,9 +31,9 @@ This package owns process-level orchestration and sandbox policy selection.
 
 ## Built-ins
 
-- `simple`: one persistent agent running a selected mode; inherits that mode's
-  sandbox policy.
+- `chat`: one persistent conversational workflow.
+- `task`: one persistent general-purpose task workflow.
 - `serial_roles`: explore → plan → implement → test → review with validated
   backward and repeat transitions; overrides the sandbox with `FULL_SANDBOX`.
-- `architect`: one architect mode with real component subagents; overrides the
+- `architect`: one architect workflow with real component subagents; uses the
   sandbox with `FULL_SANDBOX`.

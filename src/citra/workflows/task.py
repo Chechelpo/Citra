@@ -1,99 +1,90 @@
-from __future__ import annotations
+"""General-purpose single-mode task workflow."""
 
+from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-from citra.modes import TaskSteeringConfig
-from citra.modes.mode import SandboxConfig, SandboxMode, StaticMode
 from citra.tools.default_registry import ToolSet
-from citra.utils.prompt import collect_environment
+from citra.tools.session_memory import (
+    ConstraintTool,
+    DecisionTool,
+    FactTool,
+    TodoTool,
+)
+from citra.tools.transient import (
+    Bash,
+    Diagram,
+    Document,
+    Edit,
+    Glob,
+    Lsp,
+    PromptUser,
+    Read,
+    Tree,
+    WebSearch,
+    Workspace,
+    Write,
+)
 from citra.utils.directory_tree import render_tree
-from citra.tools.session_memory import TodoTool
-from citra.tools.session_memory import FactTool
-from citra.tools.session_memory import ConstraintTool
-from citra.tools.session_memory import DecisionTool
-from citra.tools.transient import *
+from citra.utils.prompt import collect_environment
 
+from .workflow import SandboxConfig, StaticWorkflow, TaskSteeringConfig
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
     from citra.utils.prompt import EnvironmentInfo
 
 
-class SimpleTask(StaticMode):
+class TaskWorkflow(StaticWorkflow):
+    """Focused repository work in one persistent agent session."""
+
     _NAME = "task"
     _DESCRIPTION = (
-        "General-purpose task execution mode for focused repository work."
+        "General-purpose task workflow for focused repository work."
     )
-
-    # ---------------------------------------------------------------------
-    # Tools
-    # ---------------------------------------------------------------------
-
     _TOOLS = ToolSet(
         core_tools=(
-            Edit, Write, Read, Glob, Bash, Workspace, Tree, TodoTool, FactTool, DecisionTool, ConstraintTool
+            Edit,
+            Write,
+            Read,
+            Glob,
+            Bash,
+            Workspace,
+            Tree,
+            TodoTool,
+            FactTool,
+            DecisionTool,
+            ConstraintTool,
         ),
-        deferred_tools=(
-            Lsp, WebSearch, PromptUser, Document, Diagram
-        ),
+        deferred_tools=(Lsp, WebSearch, PromptUser, Document, Diagram),
     )
-
-    # ---------------------------------------------------------------------
-    # Skills
-    # ---------------------------------------------------------------------
-
-    _AVAILABLE_SKILLS = (
-        # FooSkill(),
-        # BarSkill(),
-    )
-
-    # ---------------------------------------------------------------------
-    # Sandbox
-    # ---------------------------------------------------------------------
-
-    _SANDBOX_CONFIG = SandboxConfig(
-        mode=SandboxMode.FULL_SANDBOX,
-    )
-
-    # ---------------------------------------------------------------------
-    # Optional steering
-    # ---------------------------------------------------------------------
-
+    _SANDBOX_CONFIG = SandboxConfig()
     _TASK_STEERING = TaskSteeringConfig(
         every_n_turns=10,
-        include_first=False,
-        content="""
-Review the current task, progress, and remaining work.
-
-Update your plan if new evidence has invalidated any assumptions or changed
-what needs to be done. Then continue executing the task.
-""".strip(),
+        content=(
+            "Review the current task, progress, and remaining work.\n\n"
+            "Update your plan if new evidence has invalidated any assumptions "
+            "or changed what needs to be done. Then continue executing the task."
+        ),
     )
 
-    # Optional provisional memory created at the beginning of the task.
-    _INITIAL_WORKING_STATES = ()
-
-    # ---------------------------------------------------------------------
-    # Prompt
-    # ---------------------------------------------------------------------
-
     @override
-    def get_system_prompt(
-        self,
-        context: ExecutionContext,
-    ) -> str:
+    def get_system_prompt(self, context: ExecutionContext) -> str:
         environment: EnvironmentInfo = collect_environment(context)
-        initial_tree = render_tree(workspace=context.workspace, limit=100, max_depth=2)
+        initial_tree = render_tree(
+            workspace=context.workspace,
+            limit=100,
+            max_depth=2,
+        )
         return f"""
 # Role
 
 You are a helpful assistant task agent. Take the role the user asks you to.
 
-Inspect the current state, make the necessary changes, verify them, and
-leave the project in a coherent state. Do not create Git commits or stage
-files; repository history belongs to the user. Use the workspace tool to roll
-back an exact tracked file when an attempted change is wrong.
+Inspect the current state, make the necessary changes, verify them, and leave
+the project in a coherent state. Do not create Git commits or stage files;
+repository history belongs to the user. Use the workspace tool to roll back an
+exact tracked file when an attempted change is wrong.
 
 # Environment
 
@@ -186,3 +177,6 @@ Before finishing, make sure:
 
 Report what was changed and any important verification results.
 """.strip()
+
+
+__all__ = ["TaskWorkflow"]

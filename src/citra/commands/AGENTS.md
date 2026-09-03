@@ -55,6 +55,8 @@ Re-exports `Command`, `CommandRegistry`, `CommandResult`,
 | `debug`| `DebugCommand`| `debug.py` | Toggle the grey model-request debug lines in `chat_completions_api.py` (`on`, `off`, or no argument to flip). |
 | `agent`| `AgentCommand`| `agent.py` | List or inspect subagents and send steering, guidance answers, or cancellation directly from the CLI. |
 | `workflow`| `WorkflowCommand`| `workflow.py` | Inspect or cancel the active workflow run and show its resolved sandbox policy, phase, and transitions. |
+| `workspace`| `WorkspaceCommand`| `workspace.py` | Show the copied checkout path or open an interactive user shell in it. |
+| `apply`| `ApplyCommand`| `apply.py` | Preview baseline-relative checkout changes, apply them to the private original source after confirmation, and safely stage eligible paths without committing. |
 
 Legacy alias: bare `/exit` is mapped to `/q` by `CitraApplication`.
 
@@ -90,6 +92,8 @@ active turn.
 
 - Commands receive raw text **after** the command name (already
   stripped).  Most commands ignore `args`.
+- `/apply` is controller-only. Never expose the original source path or apply
+  operation as a model tool, prompt capability, or process environment value.
 - `HelpCommand` reads from `COMMAND_REGISTRY.help_lines()` — new
   commands appear in `/help` automatically once registered.
 - `TestCommand` is the most complex command; it demonstrates how to

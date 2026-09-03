@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from citra.context.environment_fetching import EnvironmentInfo
 from citra.tools.skills.skill import Skill
+
+if TYPE_CHECKING:
+    from citra.context import ExecutionContext
 
 
 __all__ = [
@@ -16,15 +20,14 @@ __all__ = [
 ]
 
 
-def build_system_prompt(context) -> str:
-    """Build the active mode's system prompt for one model request."""
-    return context.mode.get_system_prompt(context)
+def build_system_prompt(context: ExecutionContext) -> str:
+    """Build the active workflow's system prompt for one model request."""
+    return context.workflow.get_system_prompt(context)
 
 
-def collect_environment(context) -> EnvironmentInfo:
+def collect_environment(context: ExecutionContext) -> EnvironmentInfo:
     """Return public execution metadata without project-controller paths."""
-    workspace = getattr(context, "workspace", None)
-    value = getattr(workspace, "environment_info", None)
+    value = context.workspace.environment_info
     if isinstance(value, EnvironmentInfo):
         return value
     return EnvironmentInfo.collect_environment()

@@ -22,9 +22,9 @@ from threading import Lock
 from typing import Mapping, Sequence
 import venv
 
-from .environment_fetching import EnvironmentInfo
+from citra.context.environment_fetching import EnvironmentInfo
 
-from .available_tools import default_runtime_assets, default_tool_definitions
+from citra.context.available_tools import default_runtime_assets, default_tool_definitions
 from .runtime import (
     RuntimeAsset,
     RuntimeProcessSupervisor,
@@ -33,6 +33,7 @@ from .runtime import (
     ToolDefinition,
     write_json_atomic,
 )
+from .source_baseline import SourceEntry, capture_source_baseline
 
 
 _PATH_ALIAS_PATTERN = re.compile(r"^@([a-z_]+)(?:/(.*))?$")
@@ -144,6 +145,7 @@ class WorkspaceContext:
     # Controller/runtime services.
     provisioning: RuntimeProvisioning
     private_source_paths: tuple[Path, ...]
+    source_baseline: dict[str, SourceEntry] | None
     created_at: str
     workspace_initial_bytes: int
     startup_warnings: tuple[str, ...]
@@ -424,6 +426,14 @@ class WorkspaceContext:
                 excluded_roots=private_source_paths,
             )
 
+            try:
+                source_baseline = capture_source_baseline(workspace_path)
+            except (OSError, RuntimeError, ValueError) as error:
+                source_baseline = None
+                copy_warnings.append(
+                    "Source apply baseline is unavailable: " + str(error)
+                )
+
             lifecycle.set(
                 RuntimeState.PROVISIONING_RUNTIME
             )
@@ -513,6 +523,7 @@ class WorkspaceContext:
                 private_source_paths=(
                     private_source_paths
                 ),
+                source_baseline=source_baseline,
                 created_at=created_at,
                 workspace_initial_bytes=(
                     workspace_bytes
@@ -567,6 +578,13 @@ class WorkspaceContext:
             )
 
             raise
+
+    def python_runtime(self) -> Path:
+        return self.env / "python"
+
+
+    def python_bin(self) -> Path:
+        return self.env / "bin"
 
     @property
     def runtime_id(
@@ -2150,7 +2168,8 @@ def _private_source_exclusions(
 ) -> tuple[Path, ...]:
     """Return controller-owned paths that must never enter the copied source."""
     candidates = [
-        library
+        library,
+        source_root / ".citra.logs",
     ]
 
     for name in (

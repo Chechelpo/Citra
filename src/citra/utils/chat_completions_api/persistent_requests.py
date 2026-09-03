@@ -4,26 +4,25 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
+import logging
 import random
 import socket
 import ssl
 import time
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import Any, Callable, cast
 import urllib.error
 import urllib.request
 
 from openai.types.chat import ChatCompletionSystemMessageParam
 
 from ...agent import ChatMessage
+from ...config import ModelConfig
 from ...context import ExecutionContext
 from ...tools.session_memory import MemoryTool
 from ...tools.tool import Tool
 from ..api import chat_completions_url
 from ..prompt import build_system_prompt
 from .model_normalization import normalize_model_response
-
-if TYPE_CHECKING:
-    from ...context import ModelConfig
 
 from ..terminal import (
     BLUE,
@@ -36,6 +35,9 @@ from ..terminal import (
     YELLOW,
     separator,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 # Set to False to immediately fail on HTTP 429 responses instead of
@@ -53,6 +55,7 @@ DEFAULT_MAX_RETRIES: int = 12
 
 def _debug_print(message: str) -> None:
     """Print a grey diagnostic line when debug printing is enabled."""
+    logger.debug(message)
     if DEBUG_PRINTING:
         print(
             f"{DIM}"
@@ -322,6 +325,19 @@ def _retry_after_error(
             delay,
             retry_after,
         )
+
+    logger.warning(
+        "Model request %s; retrying in %.1fs (attempt %d/%d).",
+        reason,
+        delay,
+        attempt + 1,
+        max_attempts,
+        exc_info=(
+            type(error),
+            error,
+            error.__traceback__,
+        ),
+    )
 
     print(
         f"{YELLOW}"
@@ -1464,56 +1480,17 @@ def _append_continue_work_message(
 
 def _resolve_model_snapshot(
     context: ExecutionContext,
-    model_config: "ModelConfig | Any | None",
-) -> Any:
+    model_config: ModelConfig | None,
+) -> ModelConfig:
     """Resolve the model once for the lifetime of one HTTP request.
 
-    ``ExecutionContext.config.model()`` is the canonical source. The fallback
-    accepts the older direct ``context.model_config`` test/integration shape
-    without allowing retries to re-resolve a different active profile.
+    ``ExecutionContext.config.model()`` is the canonical source. A supplied
+    snapshot is reused without re-resolving the active profile during retries.
     """
-    if model_config is not None:
-        return model_config
-
-    config = getattr(context, "config", None)
-    if config is not None:
-        resolver = getattr(config, "model", None)
-        if callable(resolver):
-            return resolver()
-
-    legacy = getattr(context, "model_config", None)
-    if callable(legacy):
-        legacy = legacy()
-    if legacy is not None:
-        return legacy
-
-    raise AttributeError(
-        "Execution context does not expose a model configuration."
-    )
-
-
-def _model_max_output_tokens(model: Any) -> int:
-    value = getattr(model, "max_output_tokens", None)
-    if value is None:
-        value = getattr(model, "max_tokens", None)
-    if value is None:
-        raise AttributeError(
-            "Model config does not define max_output_tokens."
-        )
-    return int(value)
-
-
-def _model_api_key(model: Any) -> str:
-    decrypt = getattr(model, "decrypt_api_key", None)
-    if callable(decrypt):
-        return str(decrypt())
-
-    legacy = getattr(model, "api_key", None)
-    if legacy is None:
-        raise AttributeError(
-            "Model config does not expose an API credential."
-        )
-    return str(legacy)
+    model = model_config if model_config is not None else context.config.model()
+    if not isinstance(model, ModelConfig):
+        raise TypeError("model_config must be a ModelConfig")
+    return model
 
 
 def call_api(
@@ -1728,7 +1705,7 @@ def call_api(
 
     payload: dict[str, Any] = {
         "model": model.id,
-        "max_tokens": _model_max_output_tokens(model),
+        "max_tokens": model.max_output_tokens,
         "messages": request_messages,
     }
 
@@ -1777,7 +1754,7 @@ def call_api(
                     "application/json"
                 ),
                 "Authorization": (
-                    f"Bearer {_model_api_key(model)}"
+                    f"Bearer {model.decrypt_api_key()}"
                 ),
             },
             method="POST",
@@ -1807,11 +1784,7 @@ def call_api(
                     "utf-8",
                     errors="replace",
                 )
-                response_status = getattr(
-                    response,
-                    "status",
-                    200,
-                )
+                response_status = response.status
 
             elapsed = time.monotonic() - started_at
             _debug_print(
@@ -1854,6 +1827,11 @@ def call_api(
 
             diagnostic = _choice_output_diagnostic(
                 decoded
+            )
+            logger.warning(
+                "Model API returned HTTP 200 without usable assistant "
+                "output: %s",
+                diagnostic,
             )
             print(
                 f"{YELLOW}"
@@ -1901,6 +1879,11 @@ def call_api(
             )
 
             if gmicloud_balance_ignored:
+                logger.warning(
+                    "Ignoring GMICloud HTTP %d insufficient-balance "
+                    "response under retry policy.",
+                    error.code,
+                )
                 print(
                     f"{YELLOW}"
                     f"⏺ Ignoring GMICloud HTTP {error.code} "
@@ -1909,6 +1892,11 @@ def call_api(
                     f"{RESET}"
                 )
             else:
+                logger.error(
+                    "Model API returned HTTP %d: %s",
+                    error.code,
+                    detail or error.reason,
+                )
                 print(
                     f"{RED}"
                     f"✖ Model API returned HTTP "
@@ -1954,6 +1942,10 @@ def call_api(
                 stealth_continue_used = True
                 recovery_request_pending = True
 
+                logger.warning(
+                    "Stealth provider failure detected; issuing one "
+                    "continuation recovery request."
+                )
                 print(
                     f"{YELLOW}"
                     f"⏺ Stealth provider failure detected. "
@@ -2241,5 +2233,3 @@ def normalize_message_content(
         )
 
     return normalized
-
-

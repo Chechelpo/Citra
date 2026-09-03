@@ -13,9 +13,9 @@ from citra.tools.skills.task_recognition import TaskRecognition
 from .skill import Skill
 
 if TYPE_CHECKING:
-    from citra.modes import Mode
     from citra.context import ExecutionContext
     from citra.agent import AgentSession
+    from citra.workflows import SingleModeWorkflow
 
 
 class SkillRegistry:
@@ -24,7 +24,7 @@ class SkillRegistry:
     def __init__(
         self,
         agent_session: AgentSession,
-        mode: Mode,
+        workflow: SingleModeWorkflow,
         skills_root: Path | None,
         *,
         memory_enabled: bool = True,
@@ -38,9 +38,9 @@ class SkillRegistry:
         self.agent_session = agent_session
         self.skills_root = skills_root
         self.skills: dict[str, Skill] = {}
-        self.mode = mode
+        self.workflow = workflow
         
-        built_in_skills: tuple[Skill, ...] = mode.skills
+        built_in_skills: tuple[Skill, ...] = workflow.skills
         if memory_enabled:
             built_in_skills = (TaskRecognition(), *built_in_skills)
         self._register(built_in_skills)
@@ -49,7 +49,7 @@ class SkillRegistry:
         
     def _load(self) -> None:
         """
-        Load the declarative filesystem skills enabled for this mode.
+        Load the declarative filesystem skills enabled for this workflow.
         """
         if not self.skills_root.is_dir():
             return

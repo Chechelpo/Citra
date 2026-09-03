@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, override
 
-from citra.modes import Mode, SandboxConfig, TaskSteeringConfig
 from citra.sandbox import SandboxMode
 from citra.tools.default_registry import ToolSet, memory_tools
 from citra.tools.session_memory import CheckpointTool
@@ -15,8 +14,16 @@ from citra.utils.prompt import collect_environment
 from citra.utils.prompt import EnvironmentInfo
 from citra.tools.transient import Subprocess
 from citra.tools.transient import Browser
+from citra.tools.session_memory import *
 
-from .workflow import Workflow, WorkflowRun, WorkflowStep
+from .workflow import (
+    SandboxConfig,
+    SingleModeWorkflow,
+    TaskSteeringConfig,
+    Workflow,
+    WorkflowRun,
+    WorkflowStep,
+)
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
@@ -25,7 +32,7 @@ if TYPE_CHECKING:
 _SERIAL_SANDBOX = SandboxConfig(mode=SandboxMode.FULL_SANDBOX)
 
 
-class _RoleMode(Mode):
+class _RoleWorkflow(SingleModeWorkflow):
     """A stateless role used for exactly one isolated workflow phase."""
 
     ROLE: ClassVar[str]
@@ -33,7 +40,7 @@ class _RoleMode(Mode):
     INSTRUCTIONS: ClassVar[str]
     TOOLS: ClassVar[ToolSet]
     TASK_STEERING: ClassVar[TaskSteeringConfig]
-    _AVAILABLE_SKILLS: ClassVar[tuple[Skill]] = tuple()
+    _AVAILABLE_SKILLS: ClassVar[tuple[Skill, ...]] = ()
 
     @property
     def name(self) -> str:
@@ -48,12 +55,11 @@ class _RoleMode(Mode):
         return self.TOOLS
 
     @property
-    def skills(self) -> tuple:
-        return ()
+    def skills(self) -> tuple[Skill, ...]:
+        return self._AVAILABLE_SKILLS
 
     @property
     def sandbox_config(self) -> SandboxConfig:
-        # Compatibility only. The SerialRolesWorkflow owns this policy.
         return _SERIAL_SANDBOX
 
     @property
@@ -66,10 +72,7 @@ class _RoleMode(Mode):
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
-        run = getattr(context, "workflow_run", None)
-        if run is None:
-            raise RuntimeError("Serial role mode requires an active workflow run")
-
+        run = context.workflow_runtime.require_active_run()
         step = run.current_step
         checkpoint_name = CheckpointTool.resolve_definition_for_context(
             context
@@ -132,70 +135,268 @@ simulate the next role in this turn.
 """.strip()
 
 
-class ExplorerMode(_RoleMode):
+class ExplorerWorkflow(_RoleWorkflow):
     ROLE = "explore"
     DESCRIPTION = "Inspect the repository and establish grounded constraints."
-
+    
     INSTRUCTIONS = """
-First, use the prompt user tool to clarify the user request as much as possible. Ask for requirements, constraints, how the user wants to feel it, etc.
+Your responsibility is to transform the user's request into a grounded,
+implementation-ready problem definition.
 
-Second: Start your very first turn with registering the user's requirements with your requirements tool. This is mandatory
+You are the only workflow role allowed to communicate directly with the user.
+Use that ability to remove ambiguity before handing work to the next phase.
 
-Third: Inspect the relevant source, tests, configuration, entry points, and existing
-behavior. Run safe diagnostics when useful. Do not modify project files.
-Produce a precise map of relevant paths, confirmed behavior, constraints,
-risks, and unknowns. Advance to plan when the task is sufficiently grounded;
-repeat explore only when a concrete evidence gap remains.
+## Phase 1: Understand the request
 
+Start by using the prompt user tool when relevant. Clarify:
+
+- What the user wants changed or achieved.
+- Why they need it.
+- What success looks like.
+- What is explicitly included.
+- What is explicitly excluded.
+- Any constraints, preferences, or expectations.
+
+Do not ask unnecessary questions. If the repository already provides the answer,
+use evidence instead of asking the user.
+
+Immediately register confirmed user requirements with the requirements tool.
+This is mandatory.
+
+Register:
+- functional needs as requirements;
+- hard limitations as constraints;
+- observable facts as facts.
+
+Do not put all information into requirements. Keep each memory category scoped
+correctly.
+
+## Phase 2: Establish request boundaries
+
+Create a precise scope boundary.
+
+Use the scope tool to record:
+
+- what belongs to this change;
+- what does not belong to this change.
+
+A request without scope is considered incomplete because later roles may expand
+the task beyond the user's intent.
+
+## Phase 3: Define success
+
+Identify acceptance criteria.
+
+Use the acceptance criteria tool to record conditions that prove the request
+is satisfied.
+
+Acceptance criteria must describe observable outcomes, not implementation
+details.
+
+Good:
+"The user can export a report containing all transactions."
+
+Bad:
+"Create a ReportExporterService class."
+
+## Phase 4: Inspect the environment
+
+After understanding the request, inspect the repository.
+
+Investigate:
+
+- relevant source code;
+- tests;
+- configuration;
+- entry points;
+- dependencies;
+- existing behavior;
+- documentation.
+
+Do not modify project files.
+
+Separate findings into:
+
+Facts:
+- directly verified repository information.
+
+Requirements:
+- what must happen.
+
+Constraints:
+- what cannot change.
+
+Hypotheses:
+- possible explanations requiring validation.
+
+Unknowns:
+- missing information blocking confidence.
+
+## Phase 5: Capture the current state
+
+Document the current behavior before changes.
+
+Capture:
+
+- how the system currently works;
+- existing workflows;
+- relevant architecture;
+- current limitations;
+- existing dependencies.
+
+The next roles should understand what they are changing and why.
+
+## Phase 6: Identify quality expectations
+
+Determine whether the request has important quality expectations.
+
+Capture relevant concerns such as:
+
+- performance;
+- availability;
+- security;
+- scalability;
+- maintainability;
+- compatibility.
+
+Only register them when they materially affect the solution.
+
+## Phase 7: Prepare handoff
+
+Before advancing:
+
+Verify that another isolated agent could understand the request without
+conversation history.
+
+The handoff must contain:
+
+- user goal;
+- requirements;
+- scope;
+- constraints;
+- acceptance criteria;
+- current state;
+- relevant facts;
+- risks;
+- unresolved questions.
+
+Do not provide a solution design. Your role is understanding the problem,
+not solving it.
+
+Advance to plan only when the request is sufficiently grounded.
+Return to explore when important information is missing.
 """.strip()
 
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=4,
         content="""
-Re-ground the exploration before continuing.
+    Re-ground the exploration before continuing.
 
-Check that:
+    Check that:
 
-1. Your conclusions come from repository evidence rather than assumptions.
-2. You have inspected the relevant source, tests, configuration, entry points,
-   and executable behavior where useful.
-3. Confirmed and relevant facts are clearly registered via the tool and have accurate citations separated from hypotheses and unknowns.
-4. Important paths, requirements, constraints, risks, and unresolved questions
-   are represented in durable memory.
-5. You have not modified project files.
+    1. The user's actual goal is captured, not only the requested implementation.
+    2. Requirements, constraints, facts, scope, and acceptance criteria are stored
+    in their correct memory categories.
+    3. Scope boundaries are explicit.
+    4. Acceptance criteria describe observable success.
+    5. Current behavior is understood before proposing changes.
+    6. Repository conclusions are backed by evidence.
+    7. Unknowns and assumptions are clearly separated.
+    8. The next role could understand the task without access to this conversation.
 
-Ask whether another explorer could reconstruct the important repository facts
-from the filesystem and memory without relying on your conversation history.
-
-If a concrete evidence gap remains, keep exploring. If the task is sufficiently
-grounded, stop broadening the investigation and prepare a precise handoff to
-plan.
-""".strip(),
+    If important ambiguity remains, ask the user or continue exploring.
+    If the request is sufficiently understood, prepare the handoff to plan.
+    """,
     )
 
     TOOLS = ToolSet(
-        core_tools=(PromptUser,SkillTool, Read, Glob, Tree, Bash, Lsp, *memory_tools()),
-        deferred_tools=(),
+        core_tools=(PromptUser, SkillTool, Read, Glob, Tree, *memory_tools()),
+        deferred_tools=(Lsp,),
     )
 
 
-class PlannerMode(_RoleMode):
+class PlannerWorkflow(_RoleWorkflow):
     ROLE = "plan"
     DESCRIPTION = "Create an implementation plan from verified evidence."
 
     INSTRUCTIONS = """
-Validate the exploration handoff against the shared filesystem where needed.
-Produce an ordered implementation plan with affected paths, invariants,
-acceptance criteria, verification commands, and rollback or compatibility
-concerns. 
+Your responsibility is to transform the explored problem into an executable
+solution plan.
 
-    1. Register every part of your plan into TODOs for the implementer.
-    2. Check that on all TODO completions, the project is finished
+The exploration phase provides the problem definition. Validate it against the
+repository before planning. Do not blindly accept assumptions.
 
-Do not modify project files. Return to explore if essential facts
-are missing, repeat plan if the plan itself remains incomplete, or advance to
-implement when it is executable.
+Determine the smallest coherent solution that satisfies the request.
+
+For every task, decide the appropriate level of change:
+
+- local code modification;
+- refactoring existing structure;
+- extracting or modifying components;
+- changing interfaces;
+- introducing new architectural elements;
+- modifying deployment or configuration.
+
+Do not introduce architectural complexity unless the requirements,
+constraints, or quality expectations justify it.
+
+## Solution design
+
+Define:
+
+- affected files and modules;
+- affected components or boundaries when relevant;
+- responsibilities of changed elements;
+- dependencies and interactions;
+- important interfaces or contracts;
+- data/control flow changes;
+- required design decisions.
+
+When changing structure, consider:
+
+- cohesion;
+- coupling;
+- maintainability;
+- compatibility;
+- existing repository conventions.
+
+## Architectural reasoning
+
+For non-trivial decisions:
+
+- identify alternatives considered;
+- explain why the chosen option fits the context;
+- record relevant trade-offs.
+
+Remember that architectural decisions are decisions that affect the structure
+or quality attributes of the system. Do not elevate ordinary implementation
+details into architecture.
+
+## Implementation plan
+
+Create ordered TODOs for the implementer.
+
+Each TODO should include:
+
+- concrete action;
+- affected location;
+- reason;
+- acceptance criteria covered;
+- verification approach.
+
+The implementer should be able to execute the plan without rediscovering the
+design.
+
+Do not modify project files.
+
+Return to explore if:
+- requirements are unclear;
+- important constraints are unknown;
+- repository evidence contradicts the request.
+
+Stay in plan while the solution design is incomplete.
+Advance to implement only when the plan is executable.
 """.strip()
 
     TASK_STEERING = TaskSteeringConfig(
@@ -230,7 +431,7 @@ needs work. Advance to implement once it is genuinely executable.
     )
 
 
-class ImplementerMode(_RoleMode):
+class ImplementerWorkflow(_RoleWorkflow):
     ROLE = "implement"
     DESCRIPTION = "Implement the approved plan in the current project."
 
@@ -289,7 +490,7 @@ verification, prepare the handoff to test.
     )
 
 
-class TesterMode(_RoleMode):
+class TesterWorkflow(_RoleWorkflow):
     ROLE = "test"
     DESCRIPTION = "Verify the implementation without repairing it implicitly."
 
@@ -335,7 +536,7 @@ fresh reviewer to judge the completed change.
     )
 
 
-class ReviewerMode(_RoleMode):
+class ReviewerWorkflow(_RoleWorkflow):
     ROLE = "review"
     DESCRIPTION = "Review the complete change with fresh reasoning."
 
@@ -388,27 +589,27 @@ class SerialRolesWorkflow(Workflow):
     _steps = (
         WorkflowStep(
             "explore",
-            ExplorerMode(),
+            ExplorerWorkflow(),
             ("explore", "plan"),
         ),
         WorkflowStep(
             "plan",
-            PlannerMode(),
+            PlannerWorkflow(),
             ("explore", "plan", "implement"),
         ),
         WorkflowStep(
             "implement",
-            ImplementerMode(),
+            ImplementerWorkflow(),
             ("plan", "implement", "test"),
         ),
         WorkflowStep(
             "test",
-            TesterMode(),
+            TesterWorkflow(),
             ("plan", "implement", "test", "review"),
         ),
         WorkflowStep(
             "review",
-            ReviewerMode(),
+            ReviewerWorkflow(),
             (
                 "explore",
                 "plan",
@@ -419,6 +620,15 @@ class SerialRolesWorkflow(Workflow):
             ),
         ),
     )
+
+    def __init__(self) -> None:
+        self.validate()
+        for step in self._steps:
+            if step.workflow.sandbox_config != self.sandbox_config:
+                raise ValueError(
+                    "Serial workflow phases must share the root workflow's "
+                    "sandbox configuration"
+                )
 
     @property
     def name(self) -> str:
@@ -435,8 +645,8 @@ class SerialRolesWorkflow(Workflow):
         return _SERIAL_SANDBOX
 
     @property
-    def initial_mode(self) -> Mode:
-        return self._steps[0].mode
+    def initial_workflow(self) -> SingleModeWorkflow:
+        return self._steps[0].workflow
 
     @property
     def is_serial(self) -> bool:

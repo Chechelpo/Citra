@@ -9,7 +9,7 @@ from threading import Lock, Thread
 import time
 from typing import Any, IO
 
-from citra.sandbox import WorkspaceSandbox
+from citra.sandbox.sandbox import WorkspaceSandbox
 
 
 @dataclass

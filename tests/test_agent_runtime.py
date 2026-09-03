@@ -27,7 +27,7 @@ from citra.config.config_loader import (
     WorkspaceContextConfig,
     _parse_runtime_config,
 )
-from citra.context.runtime import (
+from citra.context.workspace_context.runtime import (
     CopyPolicy,
     RuntimeAsset,
     RuntimeProcessSupervisor,
@@ -35,7 +35,7 @@ from citra.context.runtime import (
     RuntimeProvisionError,
     ToolDefinition,
 )
-from citra.context.session_context import (
+from citra.context.workspace_context import (
     RuntimeClosingError,
     WorkspaceContext,
 )

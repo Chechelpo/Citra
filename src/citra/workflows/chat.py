@@ -1,10 +1,9 @@
-"""Conversational mode with an ordinary writable project directory."""
+"""Conversational single-mode workflow."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-from citra.modes.mode import SandboxConfig, SandboxMode, StaticMode
 from citra.tools.default_registry import ToolSet
 from citra.tools.transient import (
     Bash,
@@ -26,11 +25,13 @@ from citra.tools.transient import (
 )
 from citra.utils.prompt import collect_environment
 
+from .workflow import SandboxConfig, StaticWorkflow
+
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
 
 
-class ChatMode(StaticMode):
+class ChatWorkflow(StaticWorkflow):
     """A helpful chat assistant that can work with the current project."""
 
     _NAME = "chat"
@@ -38,15 +39,7 @@ class ChatMode(StaticMode):
         "Conversational assistant with a writable project and optional tools."
     )
     _TOOLS = ToolSet(
-        core_tools=(
-            Read,
-            Write,
-            Edit,
-            Glob,
-            Tree,
-            Workspace,
-            PromptUser,
-        ),
+        core_tools=(Read, Write, Edit, Glob, Tree, Workspace, PromptUser),
         deferred_tools=(
             Bash,
             Git,
@@ -59,9 +52,7 @@ class ChatMode(StaticMode):
             ReadImage,
         ),
     )
-    _SANDBOX_CONFIG = SandboxConfig(
-        mode=SandboxMode.FULL_SANDBOX,
-    )
+    _SANDBOX_CONFIG = SandboxConfig()
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
@@ -91,4 +82,4 @@ execution, tests, builds, and similar project work—not for Git mutation.
 """.strip()
 
 
-__all__ = ["ChatMode"]
+__all__ = ["ChatWorkflow"]

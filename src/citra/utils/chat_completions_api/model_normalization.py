@@ -5,6 +5,8 @@ import math
 import re
 from typing import Any
 
+from ...tools.tool import Tool
+
 
 # ============================================================================
 # Public API
@@ -27,7 +29,7 @@ def normalize_model_response(
     response: dict[str, Any],
     *,
     model_id: str,
-    tools: dict[str, Any],
+    tools: dict[str, Tool],
 ) -> dict[str, Any]:
     """
     Dispatch response normalization by model family.
@@ -92,7 +94,7 @@ def normalize_model_response(
     response: dict[str, Any],
     *,
     model_id: str,
-    tools: dict[str, Any],
+    tools: dict[str, Tool],
 ) -> dict[str, Any]:
     """
     Normalize model-specific response quirks.
@@ -115,7 +117,7 @@ def normalize_model_response(
 
 
 def _tool_registry(
-    tools: dict[str, Any],
+    tools: dict[str, Tool],
 ) -> tuple[
     dict[str, str],
     dict[str, dict[str, Any]],
@@ -138,22 +140,7 @@ def _tool_registry(
         canonical_name = key_name
         schema: dict[str, Any] = {}
 
-        spec: Any = None
-
-        if isinstance(tool, dict):
-            spec = tool
-        else:
-            get_as_tool = getattr(
-                tool,
-                "get_as_tool",
-                None,
-            )
-
-            if callable(get_as_tool):
-                try:
-                    spec = get_as_tool()
-                except Exception:
-                    spec = None
+        spec = tool.get_as_tool()
 
         if isinstance(spec, dict):
             function = spec.get("function")
@@ -875,7 +862,7 @@ def _parse_kimi_suffix(
 def normalize_kimi_tool_calls(
     response: dict[str, Any],
     *,
-    tools: dict[str, Any],
+    tools: dict[str, Tool],
 ) -> dict[str, Any]:
     aliases, schemas = _tool_registry(
         tools

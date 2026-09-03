@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from citra.context.session_context import RuntimeState, WorkspaceContext
+from citra.context.workspace_context import RuntimeState, WorkspaceContext
 
 
 def _git(project: Path, *arguments: str) -> None:
@@ -41,6 +41,8 @@ def test_project_is_copied_without_legacy_aliases_and_preserved(
 
     assert project != original
     assert (project / ".git").is_dir()
+    assert context.source_baseline is not None
+    assert "tracked.txt" in context.source_baseline
     assert not (project / "@source").exists()
     assert context.display_path(project) == "."
     assert "CITRA_SOURCE" not in context.environment()

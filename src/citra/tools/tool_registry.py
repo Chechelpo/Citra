@@ -35,7 +35,7 @@ class _MemoryToolFactory(Protocol):
 
 
 class ToolRegistry:
-    """Instantiate a mode's tools while preserving internal/public identity.
+    """Instantiate a workflow's tools while preserving internal/public identity.
 
     Registry selection always uses stable Citra ``TOOL_ID`` values. Once the
     active context has selected each tool's model-facing definition,
@@ -83,18 +83,10 @@ class ToolRegistry:
                 continue
 
             if issubclass(tool_type, MemoryTool):
-                configured_memory = getattr(
-                    getattr(context, "config", None),
-                    "memory",
-                    None,
+                workflow_requires_memory = (
+                    context.workflow_runtime.workflow.requires_memory
                 )
-                workflow = getattr(context, "workflow", None)
-                workflow_requires_memory = bool(
-                    getattr(workflow, "requires_memory", False)
-                )
-                memory_configured = bool(
-                    getattr(configured_memory, "enabled", True)
-                )
+                memory_configured = context.config.memory.enabled
                 if not session.memory_enabled or not (
                     memory_configured or workflow_requires_memory
                 ):

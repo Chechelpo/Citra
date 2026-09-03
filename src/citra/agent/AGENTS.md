@@ -78,10 +78,11 @@ active. A serial workflow is the deliberate exception: every role receives a
 fresh `AgentSession` but shares one task-scoped `ConversationMemory`, and the
 workflow enables memory regardless of the ordinary conversation preference.
 
-At the start of each user turn, `AgentRunner` asks the selected mode for its
+At the start of each user turn, `AgentRunner` asks the active single-mode
+workflow for its
 turn-indexed task steering. Non-empty steering is appended as a normal user
 message before the first model request for that turn. System prompts are also
-resolved from `context.mode`; the runner does not own a global hard-coded
+resolved from `context.workflow`; the runner does not own a global hard-coded
 prompt.
 
 ### Message ownership

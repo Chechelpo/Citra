@@ -8,52 +8,57 @@ import pytest
 from citra import application as application_module
 from citra.agent import AgentSession
 from citra.application import CitraApplication
-from citra.modes import SandboxConfig, UserMode
-from citra.sandbox import SandboxMode
+from citra.config import SandboxPolicy
+from citra.context import WorkspaceContext
+from citra.sandbox import SandboxMode, WorkspaceSandbox
 from citra.tools.default_registry import ToolSet, memory_tools
 from citra.tools.session_memory import CheckpointTool, RequirementTool
 from citra.tools.subagent.supervisor import _paths_overlap
 from citra.tools.tool_registry import ToolRegistry
 from citra.workflows import (
     SerialRolesWorkflow,
-    SingleModeWorkflow,
+    SandboxConfig,
+    UserWorkflow,
     WorkflowRegistry,
     WorkflowRuntime,
-    simple_workflow,
 )
 from citra.workflows.workflow import WorkflowRun, WorkflowStep
 
 
-def _mode(name: str, sandbox_mode: SandboxMode) -> UserMode:
-    return UserMode(
+def _workflow(name: str, sandbox_mode: SandboxMode) -> UserWorkflow:
+    return UserWorkflow(
         name=name,
         system_prompt=f"prompt:{name}",
         sandbox_config=SandboxConfig(mode=sandbox_mode),
     )
 
 
-def test_workflow_policy_optionally_overrides_mode_policy() -> None:
-    mode = _mode("mode", SandboxMode.PARTIAL_SANDBOX)
-    inherited = simple_workflow(mode)
-    override = SingleModeWorkflow(
+def test_single_mode_workflow_owns_one_concrete_policy() -> None:
+    workflow = _workflow("workflow", SandboxMode.PARTIAL_SANDBOX)
+    override = UserWorkflow(
         name="override",
         description="test",
-        mode=mode,
+        system_prompt="prompt:override",
         sandbox_config=SandboxConfig(mode=SandboxMode.FULL_SANDBOX),
     )
 
-    assert inherited.sandbox_config is None
-    assert inherited.resolved_sandbox_config is mode.sandbox_config
-    assert override.resolved_sandbox_config.mode is SandboxMode.FULL_SANDBOX
+    assert workflow.resolved_sandbox_config is workflow.sandbox_config
+    assert override.sandbox_config.mode is SandboxMode.FULL_SANDBOX
 
 
-def test_workflow_runtime_owns_the_concrete_sandbox() -> None:
+def test_workflow_runtime_owns_the_concrete_sandbox(tmp_path: Path) -> None:
     workflow = SerialRolesWorkflow()
-    sandbox = SimpleNamespace(mode=SandboxMode.FULL_SANDBOX)
+    policy = SandboxPolicy()
+    policy.apply_workflow_config(workflow.sandbox_config)
+    sandbox = WorkspaceSandbox(
+        tmp_path,
+        policy,
+        base_environment={},
+    )
 
     runtime = WorkflowRuntime(
         workflow=workflow,
-        workspace=SimpleNamespace(),
+        workspace=object.__new__(WorkspaceContext),
         sandbox=sandbox,
     )
 
@@ -69,15 +74,16 @@ def test_workflow_runtime_owns_the_concrete_sandbox() -> None:
     assert runtime.start_run("second task").task == "second task"
 
 
-def test_workflow_registry_defaults_to_simple(tmp_path: Path) -> None:
+def test_workflow_registry_contains_all_selectable_workflows(tmp_path: Path) -> None:
     registry = WorkflowRegistry(config_path=tmp_path)
 
     assert tuple(item.name for item in registry.workflows) == (
-        "simple",
+        "chat",
+        "task",
         "serial_roles",
         "architect",
     )
-    assert registry.select().name == "simple"
+    assert registry.select().name == "chat"
 
 
 def test_workflow_registry_reads_configured_default(tmp_path: Path) -> None:
@@ -122,7 +128,7 @@ def test_serial_roles_use_standard_memory_tools_for_handoff() -> None:
         ("review", "complete"),
     ):
         assert run.current_step.step_id == phase
-        tool_ids = run.current_step.mode.tool_set.core_tool_ids
+        tool_ids = run.current_step.workflow.tool_set.core_tool_ids
         assert expected_memory_ids <= tool_ids
         assert "workflow_handoff" not in tool_ids
         run.submit_handoff(
@@ -140,7 +146,7 @@ def test_serial_role_sessions_reuse_memory_but_not_conversation() -> None:
             memory=SimpleNamespace(enabled=False),
             model=lambda: SimpleNamespace(id="test-model"),
         ),
-        workflow=workflow,
+        workflow_runtime=SimpleNamespace(workflow=workflow),
     )
     registry = ToolRegistry(
         ToolSet(core_tools=(CheckpointTool,), deferred_tools=())
@@ -208,7 +214,7 @@ def test_serial_loop_has_a_controller_execution_bound() -> None:
         steps=(
             WorkflowStep(
                 "explore",
-                workflow.initial_mode,
+                workflow.initial_workflow,
                 ("explore",),
             ),
         ),
@@ -228,7 +234,7 @@ def test_application_uses_fresh_session_per_serial_role(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    workflow = SerialRolesWorkflow()
+    root_workflow = SerialRolesWorkflow()
     activated: list[tuple[str, object, object]] = []
     executed: list[tuple[str, object]] = []
     role_inputs: list[str] = []
@@ -242,16 +248,14 @@ def test_application_uses_fresh_session_per_serial_role(
             self.current_checkpoint = None
 
     class FakeContext:
-        mode = workflow.initial_mode
-        workflow_run = None
+        workflow = root_workflow.initial_workflow
         sandbox = shared_sandbox
 
-        def activate_mode(self, mode, *, skills, workflow_run) -> None:
+        def activate_workflow(self, workflow, *, skills) -> None:
             del skills
             assert self.sandbox is shared_sandbox
-            self.mode = mode
-            self.workflow_run = workflow_run
-            activated.append((mode.name, application.session, self.sandbox))
+            self.workflow = workflow
+            activated.append((workflow.name, application.session, self.sandbox))
 
     transitions = {
         "explore": "plan",
@@ -268,7 +272,7 @@ def test_application_uses_fresh_session_per_serial_role(
             self.session = session
 
         def run_turn(self) -> None:
-            phase = self.context.workflow_run.current_step.step_id
+            phase = application.workflow_runtime.active_run.current_step.step_id
             executed.append((phase, self.session))
             role_inputs.append(str(self.session.get_messages()[0]["content"]))
             checkpoint = self.session.memory.get_or_create(
@@ -290,7 +294,7 @@ def test_application_uses_fresh_session_per_serial_role(
         active_run = None
 
         def start_run(self, task: str):
-            self.active_run = workflow.create_run(task)
+            self.active_run = root_workflow.create_run(task)
             return self.active_run
 
     monkeypatch.setattr(application_module, "AgentRunner", FakeRunner)
@@ -303,7 +307,7 @@ def test_application_uses_fresh_session_per_serial_role(
 
     application = CitraApplication.__new__(CitraApplication)
     application.config = SimpleNamespace(memory=SimpleNamespace(enabled=True))
-    application.workflow = workflow
+    application.workflow = root_workflow
     application.workspace = SimpleNamespace(ensure_active=lambda: None)
     application.context = FakeContext()
     application._api_call = object()

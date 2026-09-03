@@ -11,20 +11,19 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 from citra.context import (
     CitraConfig,
     ExecutionContext,
     WorkspaceContext,
 )
-from citra.context.runtime import RuntimeProvisioning
+from citra.context.workspace_context.runtime import RuntimeProvisioning
 from citra.tools.skills.skill_registry import SkillRegistry
-from citra.workflows import SingleModeWorkflow, WorkflowRuntime
+from citra.workflows import WorkflowRuntime
 
-from .guidance import SubagentGuidanceBridge
+from .guidance import GuidanceSupervisor, SubagentGuidanceBridge
 from .spec import SubagentSpec
-from .mode import build_subagent_mode, default_subagent_toolset
+from .workflow import build_subagent_workflow, default_subagent_toolset
 
 
 def build_subagent_context(
@@ -32,7 +31,7 @@ def build_subagent_context(
     parent_workspace: WorkspaceContext,
     parent_config: CitraConfig,
     parent_skills: SkillRegistry,
-    supervisor: Any,
+    supervisor: GuidanceSupervisor,
     spec: SubagentSpec,
     write_path: Path,
     readonly_binds: tuple[Path, ...],
@@ -72,7 +71,7 @@ def build_subagent_context(
         private_source_paths=parent_workspace.private_source_paths,
     )
 
-    mode = build_subagent_mode(
+    workflow = build_subagent_workflow(
         subagent_id=spec.subagent_id,
         task=spec.task,
         write_path=write_path,
@@ -81,41 +80,28 @@ def build_subagent_context(
         system_prompt_addendum=spec.system_prompt_addendum,
         toolset=default_subagent_toolset(),
     )
-    # Subagents follow the same ownership rule as foreground agents: a
-    # one-mode workflow owns their concrete sandbox.
-    workflow = SingleModeWorkflow(
-        name=f"subagent:{spec.subagent_id}",
-        description="One constrained subagent turn.",
-        mode=mode,
-        sandbox_config=mode.sandbox_config,
-    )
     policy = parent_config.sandbox_policy.clone()
-    policy.apply_mode_config(mode.sandbox_config)
+    policy.apply_workflow_config(workflow.sandbox_config)
     policy.add_readonly_bind(workspace.runtime)
     for path in readonly_binds:
         policy.add_readonly_bind(path)
     for root in workspace.writable_roots:
         if root != workspace.workspace:
             policy.add_writable_bind(root)
-    workflow_runtime = WorkflowRuntime(
+    workflow_runtime = WorkflowRuntime.provision(
         workflow=workflow,
         workspace=workspace,
         policy=policy,
     )
-    sandbox = workflow_runtime.sandbox
-
     return ExecutionContext(
         workspace,
         skills=parent_skills,
+        config=_subagent_config(parent_config, spec),
+        workflow_runtime=workflow_runtime,
         subagents=SubagentGuidanceBridge(
             subagent_id=spec.subagent_id,
             supervisor=supervisor,
         ),
-        workflow_runtime=workflow_runtime,
-        provided_config=_subagent_config(parent_config, spec),
-        provided_mode=mode,
-        provided_workflow=workflow,
-        provided_sandbox=sandbox,
     )
 
 
@@ -156,7 +142,7 @@ def _subagent_config(
     """
     Derive a subagent-specific config from the orchestrator's config.
 
-    The subagent's mode already restricts which tools are exposed; the
+    The subagent's workflow already restricts which tools are exposed; the
     config tweaks here are belt-and-suspenders so even if a future change
     re-introduces a tool, the subagent cannot reach outside its sandbox.
     The subagent's model is pinned to ``models.subagent`` (falling back

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol, runtime_checkable
+
+from citra.tools.subagent.spec import SubagentSnapshot
 
 from .command import Command, CommandResult
 
@@ -22,6 +24,19 @@ The command is also available from the foreground steering prompt while the
 orchestrator is running."""
 
 
+@runtime_checkable
+class SubagentController(Protocol):
+    def poll(self) -> tuple[SubagentSnapshot, ...]: ...
+
+    def snapshot(self, subagent_id: str) -> SubagentSnapshot | None: ...
+
+    def steer(self, subagent_id: str, message: str) -> bool: ...
+
+    def answer_guidance(self, subagent_id: str, message: str) -> bool: ...
+
+    def cancel(self, subagent_id: str, *, reason: str) -> bool: ...
+
+
 class AgentCommand(Command):
     """Inspect and control one worker without routing through the model."""
 
@@ -29,8 +44,8 @@ class AgentCommand(Command):
     description = "Inspect, steer, answer, or cancel a subagent."
 
     def _run(self, args: str) -> CommandResult:
-        supervisor = getattr(self.context, "subagents", None)
-        if supervisor is None or not callable(getattr(supervisor, "poll", None)):
+        supervisor = self.context.subagents
+        if not isinstance(supervisor, SubagentController):
             raise RuntimeError("Subagent supervision is unavailable.")
 
         parts = args.split(maxsplit=2)
@@ -84,7 +99,7 @@ class AgentCommand(Command):
 
     @staticmethod
     def _send_message(
-        supervisor: Any,
+        supervisor: SubagentController,
         parts: list[str],
         *,
         operation: str,
@@ -104,7 +119,10 @@ class AgentCommand(Command):
         return _terminal_or_unknown(supervisor, subagent_id)
 
 
-def _terminal_or_unknown(supervisor: Any, subagent_id: str) -> str:
+def _terminal_or_unknown(
+    supervisor: SubagentController,
+    subagent_id: str,
+) -> str:
     snapshot = supervisor.snapshot(subagent_id)
     if snapshot is None:
         return f"Unknown subagent: {subagent_id!r}."
@@ -114,7 +132,7 @@ def _terminal_or_unknown(supervisor: Any, subagent_id: str) -> str:
     )
 
 
-def _format_list(snapshots: tuple[Any, ...]) -> str:
+def _format_list(snapshots: tuple[SubagentSnapshot, ...]) -> str:
     if not snapshots:
         return "No subagents are currently tracked."
     lines = ["Subagents:"]
@@ -131,7 +149,7 @@ def _format_list(snapshots: tuple[Any, ...]) -> str:
     return "\n".join(lines)
 
 
-def _format_one(snapshot: Any | None) -> str:
+def _format_one(snapshot: SubagentSnapshot | None) -> str:
     if snapshot is None:
         return "Unknown subagent. Use /agent list to inspect tracked ids."
 

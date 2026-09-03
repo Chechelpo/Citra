@@ -26,6 +26,7 @@ from .runtime import (
     ToolDefinition,
 )
 from .session_context import RuntimeClosingError, RuntimeState, WorkspaceContext
+from .source_baseline import SourceEntry
 from citra.config import ModelConfigStore
 
 AgentRuntime = WorkspaceContext
@@ -55,6 +56,7 @@ __all__ = [
     "NotificationConfig",
     "RetryConfig",
     "SandboxPolicy",
+    "SourceEntry",
     "SubprocessConfig",
     "WebSearchConfig",
     "WorkspaceContext",

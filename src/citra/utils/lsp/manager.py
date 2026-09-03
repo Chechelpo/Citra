@@ -11,8 +11,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from citra.context.session_context import WorkspaceContext
-from citra.sandbox import WorkspaceSandbox
+from citra.context.workspace_context import WorkspaceContext
+from citra.sandbox.sandbox import WorkspaceSandbox
 from citra.sandbox.filesystem_ops import ReadRawInput
 from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 
@@ -646,20 +646,16 @@ class LspManager:
         # Prefer the project/tmp roots, then any additional lifecycle root
         # exposed through ``allowed_roots``. This keeps @tmp as one project root
         # rather than creating a server per temporary file.
-        roots: list[Path] = []
-        for name in (
-            "workspace",
-            "tmp",
-            "home",
-            "cache",
-            "config",
-            "data",
-            "runtime",
-        ):
-            value = getattr(self.workspace, name, None)
-            if isinstance(value, Path) and value not in roots:
-                roots.append(value)
-        for value in getattr(self.workspace, "allowed_roots", ()):
+        roots = [
+            self.workspace.workspace,
+            self.workspace.tmp,
+            self.workspace.home,
+            self.workspace.cache,
+            self.workspace.config,
+            self.workspace.data,
+            self.workspace.runtime,
+        ]
+        for value in self.workspace.allowed_roots:
             root = Path(value)
             if root not in roots:
                 roots.append(root)
@@ -707,7 +703,7 @@ class LspManager:
 
         if definition.id == "vue":
             plugin = (
-                self._vue_plugin_location(getattr(self.workspace, "workspace", None))
+                self._vue_plugin_location(self.workspace.workspace)
                 or self._vue_plugin_location(None)
             )
             optional["typescript_bridge"] = self._which("typescript-language-server")

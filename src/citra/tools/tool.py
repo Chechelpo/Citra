@@ -196,11 +196,7 @@ class Tool(ABC):
         context: ExecutionContext,
         definitions: tuple[ToolDefinition, ...],
     ) -> ChatCompletionTool:
-        config = getattr(context, "config", None)
-        model_value = getattr(config, "model", None)
-        if callable(model_value):
-            model_value = model_value()
-        model_id = str(getattr(model_value, "id", "generic"))
+        model_id = context.config.model().id
 
         if not definitions:
             raise InvalidToolDefinition(

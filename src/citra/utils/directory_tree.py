@@ -5,7 +5,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Iterable
 
-from citra.context.session_context import WorkspaceContext
+from citra.context.workspace_context import WorkspaceContext
 
 
 DEFAULT_MAX_DEPTH = 3

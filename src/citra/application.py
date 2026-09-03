@@ -11,13 +11,12 @@ from .agent import AgentSession, UserInteractionBroker
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
-from .modes import Mode, ModeRegistry
 from .workflows import (
+    SingleModeWorkflow,
     Workflow,
     WorkflowRegistry,
     WorkflowRun,
     WorkflowRuntime,
-    simple_workflow,
 )
 from citra.utils.lsp import LspConfig, LspManager
 from .tools.session_memory import (
@@ -41,33 +40,33 @@ class CitraApplication:
         config: CitraConfig,
         source_workspace: Path,
         api_call: ApiCall = call_api,
-        mode: Mode | None = None,
-        mode_registry: ModeRegistry | None = None,
         workflow: Workflow | None = None,
         workflow_registry: WorkflowRegistry | None = None,
     ) -> None:
+        if not isinstance(config, CitraConfig):
+            raise TypeError("config must be a CitraConfig")
+        if not isinstance(source_workspace, Path):
+            raise TypeError("source_workspace must be a Path")
+        if not callable(api_call):
+            raise TypeError("api_call must be callable")
+        if workflow is not None and not isinstance(workflow, Workflow):
+            raise TypeError("workflow must be a Workflow")
+        if (
+            workflow_registry is not None
+            and not isinstance(workflow_registry, WorkflowRegistry)
+        ):
+            raise TypeError("workflow_registry must be a WorkflowRegistry")
         self.config = config
         self._api_call = api_call
         self.source_workspace = source_workspace.resolve()
-        self.mode_registry = mode_registry or ModeRegistry(
-            config_path=os.environ.get("CITRA_CONFIG_PATH"),
-        )
         self.workflow_registry = workflow_registry or WorkflowRegistry(
             config_path=os.environ.get("CITRA_CONFIG_PATH"),
-            mode_registry=self.mode_registry,
         )
-        if workflow is None:
-            if mode is not None:
-                workflow = simple_workflow(mode)
-            else:
-                workflow = self.workflow_registry.active_workflow
-        self.workflow = workflow
+        self.workflow = workflow or self.workflow_registry.active_workflow
         self.workflow.validate()
-        initial_mode = self.workflow.initial_mode
-        initial_mode.validate()
-        # Resolve the optional workflow override once. This policy owns the
-        # sandbox for the complete workflow and never changes at phase edges.
-        self.sandbox_config = self.workflow.resolved_sandbox_config
+        initial_workflow = self.workflow.initial_workflow
+        initial_workflow.validate()
+        self.sandbox_config = self.workflow.sandbox_config
         self.session = AgentSession(
             memory_enabled=config.memory.enabled,
         )
@@ -81,12 +80,12 @@ class CitraApplication:
         )
         try:
             sandbox_policy = config.sandbox_policy.clone()
-            sandbox_policy.apply_mode_config(self.sandbox_config)
+            sandbox_policy.apply_workflow_config(self.sandbox_config)
             sandbox_policy.add_readonly_bind(self.workspace.runtime)
             for root in self.workspace.writable_roots:
                 if root != self.workspace.workspace:
                     sandbox_policy.add_writable_bind(root)
-            self.workflow_runtime = WorkflowRuntime(
+            self.workflow_runtime = WorkflowRuntime.provision(
                 workflow=self.workflow,
                 workspace=self.workspace,
                 policy=sandbox_policy,
@@ -94,7 +93,7 @@ class CitraApplication:
             self.skills = SkillRegistry(
                 agent_session=self.session,
                 memory_enabled=config.memory.enabled,
-                mode=initial_mode,
+                workflow=initial_workflow,
                 skills_root=self._skills_root(),
             )
             self.interactions = UserInteractionBroker()
@@ -119,14 +118,11 @@ class CitraApplication:
             self.context = ExecutionContext(
                 self.workspace,
                 skills=self.skills,
+                config=config,
+                workflow_runtime=self.workflow_runtime,
                 lsp_manager=self.lsp_manager,
                 user_interactions=self.interactions,
                 subagents=self.subagent_supervisor,
-                workflow_runtime=self.workflow_runtime,
-                provided_config=config,
-                provided_mode=initial_mode,
-                provided_workflow=self.workflow,
-                provided_sandbox=sandbox,
             )
             self.runner = AgentRunner(
                 self.context,
@@ -145,8 +141,6 @@ class CitraApplication:
         config: CitraConfig | None = None,
         source_workspace: str | Path | None = None,
         api_call: ApiCall = call_api,
-        mode: Mode | None = None,
-        mode_registry: ModeRegistry | None = None,
         workflow: Workflow | None = None,
         workflow_registry: WorkflowRegistry | None = None,
     ) -> CitraApplication:
@@ -159,16 +153,14 @@ class CitraApplication:
             config=config,
             source_workspace=source,
             api_call=api_call,
-            mode=mode,
-            mode_registry=mode_registry,
             workflow=workflow,
             workflow_registry=workflow_registry,
         )
 
     @property
-    def mode(self) -> Mode:
-        """Currently active mode, which may change between serial phases."""
-        return self.context.mode
+    def active_workflow(self) -> SingleModeWorkflow:
+        """Workflow currently executing, including a serial workflow phase."""
+        return self.context.workflow
 
     @property
     def workflow_run(self) -> WorkflowRun | None:
@@ -259,7 +251,7 @@ class CitraApplication:
         run = self.workflow_runtime.active_run
         if run is None or run.is_terminal:
             raise RuntimeError("Cannot activate a terminal workflow run")
-        mode = run.current_step.mode
+        workflow = run.current_step.workflow
         # Conversation history and reasoning are role-local. Structured memory
         # is task-scoped and deliberately shared by the workflow run.
         session = AgentSession(
@@ -270,15 +262,14 @@ class CitraApplication:
         skills = SkillRegistry(
             agent_session=session,
             memory_enabled=True,
-            mode=mode,
+            workflow=workflow,
             skills_root=self._skills_root(),
         )
         self.session = session
         self.skills = skills
-        self.context.activate_mode(
-            mode,
+        self.context.activate_workflow(
+            workflow,
             skills=skills,
-            workflow_run=run,
         )
         self.runner = AgentRunner(
             self.context,

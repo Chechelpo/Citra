@@ -1,24 +1,23 @@
-"""Built-in simple and architect workflows."""
+"""Built-in single-mode workflows."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-from citra.modes import Mode, SandboxConfig
-from citra.modes.mode import StaticMode
-from citra.sandbox import SandboxMode
 from citra.tools.default_registry import ToolSet, all_tools
 from citra.tools.subagent import SubagentTool
 from citra.utils.directory_tree import render_tree
 
-from .workflow import SingleModeWorkflow
+from .chat import ChatWorkflow
+from .task import TaskWorkflow
+from .workflow import SandboxConfig, SingleModeWorkflow, StaticWorkflow
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
 
 
-class ArchitectMode(StaticMode):
-    """Single orchestrator mode that delegates bounded component work."""
+class ArchitectWorkflow(StaticWorkflow):
+    """A single agent that delegates bounded component work."""
 
     _NAME = "architect"
     _DESCRIPTION = (
@@ -33,7 +32,7 @@ class ArchitectMode(StaticMode):
             if tool is not SubagentTool
         ),
     )
-    _SANDBOX_CONFIG = SandboxConfig(mode=SandboxMode.FULL_SANDBOX)
+    _SANDBOX_CONFIG = SandboxConfig()
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
@@ -45,7 +44,7 @@ class ArchitectMode(StaticMode):
 # Role: system architect and integrator
 
 Translate the user's high-level greenfield or system-level requirement into a
-coherent implementation. You are one orchestrator agent in one workflow mode;
+coherent implementation. You are one orchestrator agent in one workflow;
 component workers are genuine isolated subagents.
 
 # Initial tree
@@ -58,8 +57,7 @@ component workers are genuine isolated subagents.
 2. Design the complete system once: components, ownership, dependency
    direction, public APIs, shared data models, and acceptance criteria.
 3. Write the architecture and frozen component contracts into the project
-   before delegation. Treat those contracts as immutable inputs to
-   component workers.
+   before delegation. Treat those contracts as immutable worker inputs.
 4. Use `{subagent_name}` to delegate only non-overlapping component write
    roots. Give each worker a self-contained task, relevant read-only context,
    its frozen API contract, and acceptance criteria.
@@ -81,26 +79,24 @@ component workers are genuine isolated subagents.
 """.strip()
 
 
-def simple_workflow(mode: Mode) -> SingleModeWorkflow:
-    """Wrap a selected mode and inherit its sandbox policy."""
-    return SingleModeWorkflow(
-        name="simple",
-        description="One persistent agent running a selected mode.",
-        mode=mode,
-        sandbox_config=None,
-    )
+def simple_workflow(workflow: SingleModeWorkflow) -> SingleModeWorkflow:
+    """Compatibility helper; a single-mode workflow needs no wrapper."""
+    return workflow
 
 
-def architect_workflow() -> SingleModeWorkflow:
-    mode = ArchitectMode()
-    return SingleModeWorkflow(
-        name="architect",
-        description=(
-            "One architect mode orchestrating isolated component subagents."
-        ),
-        mode=mode,
-        sandbox_config=SandboxConfig(mode=SandboxMode.FULL_SANDBOX),
-    )
+def architect_workflow() -> ArchitectWorkflow:
+    """Compatibility factory for the built-in architect workflow."""
+    return ArchitectWorkflow()
 
 
-__all__ = ["ArchitectMode", "architect_workflow", "simple_workflow"]
+ArchitectMode = ArchitectWorkflow
+
+
+__all__ = [
+    "ArchitectMode",
+    "ArchitectWorkflow",
+    "ChatWorkflow",
+    "TaskWorkflow",
+    "architect_workflow",
+    "simple_workflow",
+]

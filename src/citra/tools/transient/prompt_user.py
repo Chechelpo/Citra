@@ -801,26 +801,7 @@ class PromptUser(Tool):
             )
 
         else:
-            config = getattr(
-                self.context,
-                "config",
-                None,
-            )
-
-            notifications = getattr(
-                config,
-                "notifications",
-                None,
-            )
-
-            if (
-                notifications is None
-                or getattr(
-                    notifications,
-                    "prompt_bell",
-                    True,
-                )
-            ):
+            if self.context.config.notifications.prompt_bell:
                 terminal_bell()
 
             print()

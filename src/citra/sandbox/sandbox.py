@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +13,12 @@ from typing import Iterable, Mapping, Sequence
 
 from citra.config import SandboxPolicy
 from citra.sandbox.sandbox_mode import SandboxMode
+
+if TYPE_CHECKING:
+    from citra.context import WorkspaceContext
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,16 +42,15 @@ class WorkspaceSandbox:
 
     def __init__(
         self,
-        source: str | Path,
+        workspace: WorkspaceContext,
         policy: SandboxPolicy,
         *,
         base_environment: Mapping[str, str] | None = None,
     ) -> None:
-        self.__source = Path(
-            source
-        ).expanduser().resolve()
-
+        self.__workspace = workspace
+        self.__source = workspace.workspace
         self.__policy = policy
+
         self.__base_environment = dict(
             os.environ if base_environment is None else base_environment
         )
@@ -56,6 +64,8 @@ class WorkspaceSandbox:
             raise NotADirectoryError(
                 f"Sandbox source is not a directory: {self.__source}"
             )
+
+        self._ensure_filesystem_environment()
 
     @property
     def source(self) -> Path:
@@ -270,29 +280,79 @@ class WorkspaceSandbox:
             )
         )
 
-        for path in policy.masked_host_dirs:
-            if path.exists():
-                args.extend(
-                    (
-                        "--tmpfs",
-                        str(path),
-                    )
+        masked_dirs = tuple(
+            path
+            for path in policy.masked_host_dirs
+            if path.exists()
+        )
+        masked_files = tuple(
+            path
+            for path in policy.masked_host_files
+            if path.is_file()
+        )
+        readonly_binds = _minimal_readonly_binds(
+            path
+            for path in policy.readonly_binds
+            if path.exists()
+        )
+        writable_binds = tuple(
+            path
+            for path in self.writable_binds()
+            if path.exists()
+        )
+        device_binds = tuple(
+            path
+            for path in policy.extra_device_binds
+            if path.exists()
+        )
+        private_files = tuple(
+            path
+            for path in policy.private_files
+            if path.is_file()
+        )
+
+        # Bubblewrap starts from an empty root. It can create the final mount
+        # point, but only when every parent already exists in the namespace.
+        # Runtime discovery deliberately exposes individual executables (for
+        # example /usr/bin/cargo), so recreate their directory hierarchy
+        # without broadening the sandbox by binding the host directories.
+        args.extend(
+            _mount_parent_arguments(masked_dirs)
+        )
+
+        for path in _parents_first(masked_dirs):
+            args.extend(
+                (
+                    "--tmpfs",
+                    str(path),
                 )
+            )
 
-        for path in policy.masked_host_files:
-            if path.is_file():
-                args.extend(
-                    (
-                        "--ro-bind",
-                        "/dev/null",
-                        str(path),
-                    )
+        args.extend(
+            _mount_parent_arguments(masked_files)
+        )
+
+        for path in masked_files:
+            args.extend(
+                (
+                    "--ro-bind",
+                    "/dev/null",
+                    str(path),
                 )
+            )
 
-        for path in policy.readonly_binds:
-            if not path.exists():
-                continue
+        args.extend(
+            _mount_parent_arguments(
+                (
+                    *readonly_binds,
+                    *writable_binds,
+                    *device_binds,
+                    *private_files,
+                )
+            )
+        )
 
+        for path in _parents_first(readonly_binds):
             args.extend(
                 (
                     "--ro-bind",
@@ -301,10 +361,7 @@ class WorkspaceSandbox:
                 )
             )
 
-        for path in self.writable_binds():
-            if not path.exists():
-                continue
-
+        for path in _parents_first(writable_binds):
             args.extend(
                 (
                     "--bind",
@@ -313,10 +370,7 @@ class WorkspaceSandbox:
                 )
             )
 
-        for path in policy.extra_device_binds:
-            if not path.exists():
-                continue
-
+        for path in _parents_first(device_binds):
             args.extend(
                 (
                     "--dev-bind",
@@ -325,10 +379,7 @@ class WorkspaceSandbox:
                 )
             )
 
-        for path in policy.private_files:
-            if not path.is_file():
-                continue
-
+        for path in private_files:
             args.extend(
                 (
                     "--ro-bind",
@@ -409,6 +460,11 @@ class WorkspaceSandbox:
             command=command,
             cwd=cwd_path,
             network=network,
+        )
+
+        logger.debug(
+            "Starting Bubblewrap command with %d argument(s).",
+            len(bwrap_command),
         )
 
         process = subprocess.Popen(
@@ -568,6 +624,93 @@ class WorkspaceSandbox:
             )
         except subprocess.TimeoutExpired:
             pass
+    
+    def filesystem_environment(self) -> dict[str, str]:
+        """
+        Environment contract required by the Citra filesystem worker.
+
+        ScopedFilesystem consumes these variables to construct its virtual
+        filesystem aliases.
+        """
+
+        runtime_root = self.__source / ".citra-runtime"
+
+        return {
+            "HOME": str(runtime_root / "home"),
+            "CITRA_TMP": str(runtime_root / "tmp"),
+            "CITRA_CACHE": str(runtime_root / "cache"),
+            "XDG_CONFIG_HOME": str(runtime_root / "config"),
+            "XDG_DATA_HOME": str(runtime_root / "data"),
+            "XDG_RUNTIME_DIR": str(runtime_root / "runtime"),
+        }
+
+    def _ensure_filesystem_environment(
+        self,
+    ) -> None:
+        runtime_root = self.__source / ".citra-runtime"
+
+        for directory in (
+            runtime_root / "home",
+            runtime_root / "tmp",
+            runtime_root / "cache",
+            runtime_root / "config",
+            runtime_root / "data",
+            runtime_root / "runtime",
+        ):
+            directory.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+def _minimal_readonly_binds(paths: Iterable[Path]) -> tuple[Path, ...]:
+    """Remove read-only binds already covered by a directory bind."""
+    result: list[Path] = []
+
+    for path in _parents_first(paths):
+        if any(
+            parent.is_dir() and _is_within(parent, path)
+            for parent in result
+        ):
+            continue
+        result.append(path)
+
+    return tuple(result)
+
+def _parents_first(paths: Iterable[Path]) -> tuple[Path, ...]:
+    """Return unique mount paths with parents ordered before descendants."""
+
+    return tuple(
+        sorted(
+            dict.fromkeys(paths),
+            key=lambda path: (
+                len(path.parts),
+                str(path),
+            ),
+        )
+    )
+
+
+def _mount_parent_arguments(paths: Iterable[Path]) -> tuple[str, ...]:
+    """Build Bubblewrap ``--dir`` arguments for absolute mount parents."""
+
+    parents: set[Path] = set()
+
+    for path in paths:
+        if not path.is_absolute():
+            raise ValueError(
+                f"Sandbox bind paths must be absolute: {path}"
+            )
+
+        current = path.parent
+        while current != current.parent:
+            parents.add(current)
+            current = current.parent
+
+    arguments: list[str] = []
+    for parent in _parents_first(parents):
+        arguments.extend(("--dir", str(parent)))
+
+    return tuple(arguments)
 
 
 def _is_within(root: Path, path: Path) -> bool:

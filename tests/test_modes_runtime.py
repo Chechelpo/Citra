@@ -2,18 +2,28 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
+
+import pytest
 
 from citra.agent import AgentSession
 from citra.agent import runner as runner_module
 from citra.agent.runner import AgentRunner
 from citra.cli import repl as repl_module
-from citra.cli.repl import select_startup_mode, select_startup_workflow
-from citra.modes import ModeRegistry, SandboxConfig, TaskSteeringConfig, UserMode
+from citra.cli.repl import select_startup_workflow
 from citra.config import SandboxPolicy
-from citra.utils.prompt import build_system_prompt
 from citra.sandbox import SandboxMode, WorkspaceSandbox
-from citra.workflows import WorkflowRegistry
+from citra.utils.prompt import build_system_prompt
+from citra.workflows import (
+    ChatWorkflow,
+    SandboxConfig,
+    SingleModeWorkflow,
+    TaskSteeringConfig,
+    TaskWorkflow,
+    UserWorkflow,
+    WorkflowRun,
+    WorkflowRegistry,
+    WorkflowStep,
+)
 
 
 class _Input:
@@ -24,15 +34,15 @@ class _Input:
         return next(self._responses)
 
 
-def _mode(
+def _workflow(
     name: str,
     *,
-    sandbox: SandboxConfig | None = None,
-    steering: TaskSteeringConfig | None = None,
-) -> UserMode:
-    return UserMode(
+    sandbox: SandboxConfig = SandboxConfig(),
+    steering: TaskSteeringConfig = TaskSteeringConfig(),
+) -> UserWorkflow:
+    return UserWorkflow(
         name=name,
-        description=f"{name} mode",
+        description=f"{name} workflow",
         system_prompt=f"prompt:{name}",
         sandbox_config=sandbox,
         task_steering=steering,
@@ -42,15 +52,13 @@ def _mode(
 def test_registry_reads_default_and_accepts_empty_number_or_name(
     tmp_path: Path,
 ) -> None:
-    config = tmp_path / "config"
-    config.mkdir()
-    (config / "mode.toml").write_text(
+    (tmp_path / "workflow.toml").write_text(
         'default = "second"\n',
         encoding="utf-8",
     )
-    registry = ModeRegistry(
-        config_path=config,
-        modes=(_mode("first"), _mode("second")),
+    registry = WorkflowRegistry(
+        config_path=tmp_path,
+        workflows=(_workflow("first"), _workflow("second")),
     )
 
     assert registry.select().name == "second"
@@ -58,69 +66,50 @@ def test_registry_reads_default_and_accepts_empty_number_or_name(
     assert registry.select("second").name == "second"
 
 
-def test_startup_selector_uses_configured_default_on_enter(
-    tmp_path: Path,
-) -> None:
-    config = tmp_path / "config"
-    config.mkdir()
-    (config / "mode.toml").write_text(
+def test_startup_selector_uses_configured_default_on_enter(tmp_path: Path) -> None:
+    (tmp_path / "workflow.toml").write_text(
         'default = "second"\n',
         encoding="utf-8",
     )
-    registry = ModeRegistry(
-        config_path=config,
-        modes=(_mode("first"), _mode("second")),
+    registry = WorkflowRegistry(
+        config_path=tmp_path,
+        workflows=(_workflow("first"), _workflow("second")),
     )
 
-    selected = select_startup_mode(
-        registry,
-        input_service=_Input(""),
-    )
+    selected = select_startup_workflow(registry, input_service=_Input(""))
 
     assert selected.name == "second"
 
 
-def test_startup_workflow_selector_defaults_to_simple() -> None:
+def test_registry_treats_ordinary_modes_as_single_mode_workflows() -> None:
+    workflows = WorkflowRegistry().workflows
+
+    assert tuple(item.name for item in workflows) == (
+        "chat",
+        "task",
+        "serial_roles",
+        "architect",
+    )
+    assert isinstance(workflows[0], SingleModeWorkflow)
+    assert isinstance(workflows[1], SingleModeWorkflow)
+
+
+def test_repl_selects_one_workflow_before_runtime_creation(monkeypatch) -> None:
     registry = WorkflowRegistry(
-        mode_registry=ModeRegistry(
-            modes=(_mode("first"),),
-            default_mode="first",
-        )
-    )
-
-    selected = select_startup_workflow(
-        registry,
-        input_service=_Input(""),
-    )
-
-    assert selected.name == "simple"
-
-
-def test_repl_selects_mode_before_application_runtime_is_created(
-    monkeypatch,
-) -> None:
-    registry = ModeRegistry(
-        modes=(_mode("first"), _mode("second")),
-        default_mode="second",
+        workflows=(_workflow("first"), _workflow("second")),
+        default_workflow="second",
     )
     events: list[str] = []
 
     class _StartupInput:
-        calls = 0
-
         def prompt(self, _message: str) -> str:
-            self.calls += 1
-            if self.calls == 1:
+            if not events:
                 events.append("workflow selected")
-                return ""
-            if self.calls == 2:
-                events.append("mode selected")
                 return ""
             raise EOFError
 
     class _Application:
         config = object()
-        source_workspace = Path(".")
         workspace = SimpleNamespace(workspace=Path("."))
         hard_shutdown_requested = False
 
@@ -128,21 +117,11 @@ def test_repl_selects_mode_before_application_runtime_is_created(
             del force
 
     def create_application(**kwargs) -> _Application:
-        assert kwargs["workflow"].name == "simple"
-        assert kwargs["workflow"].initial_mode.name == "second"
+        assert kwargs["workflow"].name == "second"
         events.append("runtime created")
         return _Application()
 
-    monkeypatch.setattr(
-        repl_module,
-        "ModeRegistry",
-        lambda **_kwargs: registry,
-    )
-    monkeypatch.setattr(
-        repl_module,
-        "WorkflowRegistry",
-        lambda **_kwargs: WorkflowRegistry(mode_registry=registry),
-    )
+    monkeypatch.setattr(repl_module, "WorkflowRegistry", lambda **_kwargs: registry)
     monkeypatch.setattr(
         repl_module.CitraApplication,
         "create",
@@ -152,63 +131,52 @@ def test_repl_selects_mode_before_application_runtime_is_created(
 
     repl_module.main(
         input_service=_StartupInput(),
-        interactive_mode_selection=True,
+        interactive_workflow_selection=True,
     )
 
-    assert events == [
-        "workflow selected",
-        "mode selected",
-        "runtime created",
-    ]
+    assert events == ["workflow selected", "runtime created"]
 
 
-def test_mode_sandbox_policy_is_authoritative_and_operator_policy_adds(
+def test_workflow_sandbox_policy_is_authoritative_and_additive(
     tmp_path: Path,
 ) -> None:
-    mode_ro = tmp_path / "mode-ro"
-    mode_rw = tmp_path / "mode-rw"
+    workflow_ro = tmp_path / "workflow-ro"
+    workflow_rw = tmp_path / "workflow-rw"
     operator_ro = tmp_path / "operator-ro"
     operator_rw = tmp_path / "operator-rw"
-    for path in (mode_ro, mode_rw, operator_ro, operator_rw):
+    for path in (workflow_ro, workflow_rw, operator_ro, operator_rw):
         path.mkdir()
     policy = SandboxPolicy(
         extra_ro_binds=[operator_ro],
         extra_w_binds=[operator_rw],
     )
-    policy.apply_mode_config(
+    policy.apply_workflow_config(
         SandboxConfig(
             mode=SandboxMode.FULL_SANDBOX,
-            additional_ro_binds=(mode_ro,),
-            additional_w_binds=(mode_rw,),
+            additional_ro_binds=(workflow_ro,),
+            additional_w_binds=(workflow_rw,),
             global_network_disallow=True,
         )
     )
     sandbox = WorkspaceSandbox(tmp_path, policy, base_environment={})
 
     assert sandbox.mode is SandboxMode.FULL_SANDBOX
-    assert sandbox.readonly_binds() == (
-        mode_ro,
-        operator_ro,
-    )
-    assert sandbox.writable_binds() == (
-        tmp_path,
-        mode_rw,
-        operator_rw,
-    )
+    assert sandbox.readonly_binds()[:2] == (workflow_ro, operator_ro)
+    assert sandbox.writable_binds()[:3] == (tmp_path, workflow_rw, operator_rw)
     assert sandbox.allows_network(True) is False
 
 
-def test_operator_can_further_restrict_mode_network() -> None:
+def test_operator_can_further_restrict_workflow_network() -> None:
     policy = SandboxPolicy(global_disallow_network=True)
-    policy.apply_mode_config(SandboxConfig(global_network_disallow=False))
+    policy.apply_workflow_config(SandboxConfig(global_network_disallow=False))
     sandbox = WorkspaceSandbox(Path.cwd(), policy, base_environment={})
 
     assert sandbox.allows_network(True) is False
     assert sandbox.allows_network(False) is False
 
 
-def test_system_prompt_and_task_steering_are_owned_by_mode() -> None:
-    mode = _mode(
+def test_system_prompt_and_task_steering_are_owned_by_workflow() -> None:
+    workflow = _workflow(
         "custom",
         steering=TaskSteeringConfig(
             every_n_turns=2,
@@ -216,36 +184,40 @@ def test_system_prompt_and_task_steering_are_owned_by_mode() -> None:
             include_first=True,
         ),
     )
-    context = SimpleNamespace(mode=mode)
+    context = SimpleNamespace(
+        workflow=workflow,
+        config=SimpleNamespace(memory=SimpleNamespace(enabled=False)),
+        workspace=SimpleNamespace(disabled_tool_ids=()),
+    )
 
     assert build_system_prompt(context) == "prompt:custom"
-    assert mode.get_task_steering(0, context) == "re-check constraints"
-    assert mode.get_task_steering(1, context) is None
-    assert mode.get_task_steering(2, context) == "re-check constraints"
+    assert workflow.get_task_steering(0, context) == "re-check constraints"
+    assert workflow.get_task_steering(1, context) is None
+    assert workflow.get_task_steering(2, context) == "re-check constraints"
 
 
-def test_runner_injects_mode_steering_before_first_request(monkeypatch) -> None:
-    mode = _mode(
+def test_runner_injects_workflow_steering_before_first_request(monkeypatch) -> None:
+    workflow = _workflow(
         "custom",
         steering=TaskSteeringConfig(
             every_n_turns=3,
-            content="mode steering",
+            content="workflow steering",
             include_first=True,
         ),
     )
+    model = SimpleNamespace(
+        id="test-model",
+        max_input_tokens=10_000,
+        reasoning_effort=None,
+    )
     context = SimpleNamespace(
-        mode=mode,
-        workspace=SimpleNamespace(
-            is_closing=False,
-            disabled_tool_ids=(),
-        ),
+        workflow=workflow,
+        workspace=SimpleNamespace(is_closing=False, disabled_tool_ids=()),
         config=SimpleNamespace(
-            model=lambda: SimpleNamespace(
-                id="test-model",
-                max_input_tokens=10_000,
-                reasoning_effort=None,
-            ),
+            memory=SimpleNamespace(enabled=False),
+            model=lambda: model,
         ),
+        ensure_active=lambda: None,
     )
     session = AgentSession(memory_enabled=False)
     session.add_user_message("original request")
@@ -270,26 +242,50 @@ def test_runner_injects_mode_steering_before_first_request(monkeypatch) -> None:
             return {}
 
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
+    monkeypatch.setattr("citra.agent.session.tokenize", lambda *_args, **_kwargs: 1)
 
     def api_call(**kwargs) -> dict:
         requests.append(kwargs)
-        return {
-            "choices": [
-                {"message": {"role": "assistant", "content": None}}
-            ]
-        }
+        return {"choices": [{"message": {"role": "assistant", "content": None}}]}
 
     AgentRunner(context, session, api_call=api_call).run_turn()
 
     assert requests[0]["sys_prompt"] == "prompt:custom"
     assert requests[0]["messages"][-1] == {
         "role": "user",
-        "content": "mode steering",
+        "content": "workflow steering",
     }
 
 
-def test_builtin_modes_use_the_sandboxed_project_view() -> None:
-    from citra.modes import ChatMode, SimpleTask
+def test_builtin_single_mode_workflows_use_full_sandbox() -> None:
+    assert ChatWorkflow().sandbox_config.mode is SandboxMode.FULL_SANDBOX
+    assert TaskWorkflow().sandbox_config.mode is SandboxMode.FULL_SANDBOX
 
-    assert ChatMode().sandbox_config.mode is SandboxMode.FULL_SANDBOX
-    assert SimpleTask().sandbox_config.mode is SandboxMode.FULL_SANDBOX
+
+def test_workflow_constructors_validate_exact_inputs() -> None:
+    with pytest.raises(ValueError, match="name"):
+        UserWorkflow(name="", system_prompt="prompt")
+    with pytest.raises(TypeError, match="core_tools"):
+        UserWorkflow(name="invalid", system_prompt="prompt", core_tools=[])
+    with pytest.raises(TypeError, match="additional_ro_binds"):
+        SandboxConfig(additional_ro_binds=[])
+    with pytest.raises(ValueError, match="default_workflow"):
+        WorkflowRegistry(default_workflow="")
+
+
+def test_composite_steps_must_share_the_root_sandbox_config() -> None:
+    root = _workflow(
+        "root",
+        sandbox=SandboxConfig(mode=SandboxMode.PARTIAL_SANDBOX),
+    )
+    step_workflow = _workflow(
+        "step",
+        sandbox=SandboxConfig(mode=SandboxMode.FULL_SANDBOX),
+    )
+
+    with pytest.raises(ValueError, match="root workflow"):
+        WorkflowRun(
+            workflow=root,
+            task="test",
+            steps=(WorkflowStep("step", step_workflow, ("complete",)),),
+        )

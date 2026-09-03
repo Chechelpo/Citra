@@ -1,4 +1,4 @@
-"""Workflow registry and pre-sandbox startup selection."""
+"""Unified workflow registry and pre-sandbox startup selection."""
 
 from __future__ import annotations
 
@@ -6,38 +6,45 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
-from citra.modes import Mode, ModeRegistry
-
-from .builtins import architect_workflow, simple_workflow
+from .builtins import ArchitectWorkflow, ChatWorkflow, TaskWorkflow
 from .serial_roles import SerialRolesWorkflow
 from .workflow import Workflow
 
 
 WORKFLOW_CONFIG_FILE = "workflow.toml"
-BUILTIN_DEFAULT_WORKFLOW = "simple"
+BUILTIN_DEFAULT_WORKFLOW = "chat"
 
 
 class WorkflowRegistry:
-    """Registry for workflows selected before runtime and sandbox creation."""
+    """Registry for every selectable Citra execution workflow."""
 
     def __init__(
         self,
         *,
         config_path: str | Path | None = None,
-        mode_registry: ModeRegistry | None = None,
         workflows: Iterable[Workflow] | None = None,
         default_workflow: str | None = None,
     ) -> None:
-        self.mode_registry = mode_registry or ModeRegistry(
-            config_path=config_path
-        )
-        installed = tuple(workflows) if workflows is not None else (
-            simple_workflow(self.mode_registry.default_mode),
-            SerialRolesWorkflow(),
-            architect_workflow(),
-        )
+        if config_path is not None and not isinstance(config_path, (str, Path)):
+            raise TypeError("config_path must be a string or Path")
+        if default_workflow is not None and (
+            not isinstance(default_workflow, str)
+            or not default_workflow.strip()
+        ):
+            raise ValueError("default_workflow must be a non-empty string")
+        try:
+            installed = tuple(workflows) if workflows is not None else (
+                ChatWorkflow(),
+                TaskWorkflow(),
+                SerialRolesWorkflow(),
+                ArchitectWorkflow(),
+            )
+        except TypeError as error:
+            raise TypeError("workflows must be an iterable of Workflow objects") from error
         self._workflows: dict[str, Workflow] = {}
         for workflow in installed:
+            if not isinstance(workflow, Workflow):
+                raise TypeError("workflows must contain Workflow instances")
             workflow.validate()
             if workflow.name in self._workflows:
                 raise ValueError(f"Duplicate workflow name: {workflow.name!r}")
@@ -46,7 +53,7 @@ class WorkflowRegistry:
             raise ValueError("At least one workflow must be registered")
 
         configured_default = (
-            default_workflow
+            default_workflow.strip()
             if default_workflow is not None
             else self._load_default(config_path)
         ) or BUILTIN_DEFAULT_WORKFLOW
@@ -102,6 +109,8 @@ class WorkflowRegistry:
         return self._active
 
     def get(self, name: str) -> Workflow:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("workflow name must be a non-empty string")
         try:
             return self._workflows[name]
         except KeyError as error:
@@ -110,8 +119,10 @@ class WorkflowRegistry:
                 + ", ".join(self._workflows)
             ) from error
 
-    def select(self, selection: str | None = None) -> Workflow:
-        value = (selection or "").strip()
+    def select(self, selection: str = "") -> Workflow:
+        if not isinstance(selection, str):
+            raise TypeError("selection must be a string")
+        value = selection.strip()
         if not value:
             self._active = self._default
             return self._active
@@ -125,16 +136,6 @@ class WorkflowRegistry:
             )
         self._active = self.get(value)
         return self._active
-
-    def set_simple_mode(self, mode: Mode) -> Workflow:
-        """Replace the simple workflow's selected mode before provisioning."""
-        workflow = simple_workflow(mode)
-        self._workflows[workflow.name] = workflow
-        if self._default.name == workflow.name:
-            self._default = workflow
-        if self._active.name == workflow.name:
-            self._active = workflow
-        return workflow
 
 
 __all__ = [
