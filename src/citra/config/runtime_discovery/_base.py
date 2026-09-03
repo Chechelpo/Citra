@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._elf import elf_interpreter
 from ._roots import is_runtime_prefix
 
 logger = logging.getLogger(__name__)
@@ -894,6 +895,11 @@ class StandardDiscovery(RuntimeDiscovery):
     ) -> set[Path]:
         """Return each reported library path and its complete symlink chain."""
         result: set[Path] = set()
+
+        interpreter = elf_interpreter(executable)
+        if interpreter is not None and interpreter.exists():
+            result.update(cls._resolve_symlink_chain(interpreter))
+            result.add(interpreter.resolve())
 
         try:
             process = subprocess.run(

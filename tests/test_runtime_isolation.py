@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+import sys
 import unittest
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -16,6 +17,8 @@ from citra.config.runtime_discovery import (
     RuntimeDiscoveryResult,
     StandardDiscovery,
 )
+from citra.config.runtime_discovery._language import PythonRuntimeDiscovery
+from citra.config.runtime_discovery._elf import elf_interpreter
 from citra.context.available_tools import (
     default_runtime_assets,
     default_tool_definitions,
@@ -215,12 +218,18 @@ class RuntimeIsolationTests(unittest.TestCase):
             completed = subprocess.CompletedProcess(
                 args=("ldd", "fixture"),
                 returncode=0,
-                stdout=f"{loader_alias} (0x00000000)\n",
+                stdout="",
             )
 
-            with mock.patch(
-                "citra.config.runtime_discovery._base.subprocess.run",
-                return_value=completed,
+            with (
+                mock.patch(
+                    "citra.config.runtime_discovery._base.elf_interpreter",
+                    return_value=loader_alias,
+                ),
+                mock.patch(
+                    "citra.config.runtime_discovery._base.subprocess.run",
+                    return_value=completed,
+                ),
             ):
                 dependencies = StandardDiscovery._discover_shared_dependencies(
                     root / "fixture"
@@ -228,6 +237,170 @@ class RuntimeIsolationTests(unittest.TestCase):
 
             self.assertIn(loader_alias, dependencies)
             self.assertIn(loader, dependencies)
+
+    def test_elf_interpreter_is_read_without_external_commands(self) -> None:
+        """Read ``PT_INTERP`` directly when ldd omits the kernel loader."""
+        with TemporaryDirectory() as directory:
+            executable = Path(directory) / "python"
+            expected = Path("/lib64/ld-linux-x86-64.so.2")
+            header = bytearray(64)
+            header[:6] = b"\x7fELF\x02\x01"
+            header[32:40] = (64).to_bytes(8, "little")
+            header[54:56] = (56).to_bytes(2, "little")
+            header[56:58] = (1).to_bytes(2, "little")
+            program_header = bytearray(56)
+            program_header[:4] = (3).to_bytes(4, "little")
+            program_header[8:16] = (120).to_bytes(8, "little")
+            executable.write_bytes(
+                bytes(header) + bytes(program_header) + bytes(expected) + b"\0"
+            )
+
+            self.assertEqual(elf_interpreter(executable), expected)
+
+    def test_full_sandbox_mounts_symlink_alias_from_copied_referent(self) -> None:
+        """Preserve launcher semantics while mounting a copied loader referent."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            loader = root / "lib" / "loader-real"
+            loader.parent.mkdir()
+            loader.write_bytes(b"loader")
+            loader_alias = root / "lib64" / "loader"
+            loader_alias.parent.mkdir()
+            loader_alias.symlink_to(Path("../lib/loader-real"))
+            asset = RuntimeAsset(
+                id="loader-alias",
+                source=loader_alias,
+                destination=PurePosixPath("rootfs/lib64/loader"),
+                policy=CopyPolicy.COPY_REQUIRED,
+                bind_target=Path("/lib64/loader"),
+            )
+            referent_asset = RuntimeAsset(
+                id="loader-real",
+                source=loader,
+                destination=PurePosixPath("rootfs/lib/loader-real"),
+                policy=CopyPolicy.COPY_REQUIRED,
+                bind_target=Path("/lib/loader-real"),
+            )
+
+            provisioned = RuntimeProvisioner(
+                runtime_root=root / "runtime",
+                copy_budget_bytes=1024,
+                mode=SandboxMode.FULL_SANDBOX,
+            ).provision((), standalone_assets=(asset, referent_asset))
+            copied_alias = provisioned.assets[asset.id].runtime_path
+            copied_referent = provisioned.assets[referent_asset.id].runtime_path
+
+            self.assertIsNotNone(copied_alias)
+            self.assertIsNotNone(copied_referent)
+            assert copied_alias is not None
+            assert copied_referent is not None
+            self.assertTrue(copied_alias.is_symlink())
+            self.assertEqual(copied_alias.readlink(), Path("../lib/loader-real"))
+            self.assertIn(
+                (copied_referent, Path("/lib64/loader")),
+                provisioned.readonly_binds,
+            )
+            self.assertIn(
+                (copied_referent, Path("/lib/loader-real")),
+                provisioned.readonly_binds,
+            )
+
+    def test_python_launcher_preserves_absolute_runtime_symlink(self) -> None:
+        """Keep the uv target path used by Python to locate its standard library."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            interpreter = root / "uv" / "python" / "bin" / "python3.12"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"python")
+            interpreter.chmod(0o755)
+            alias = root / "project" / ".venv" / "bin" / "python"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(interpreter)
+            alias_asset = RuntimeAsset(
+                id="python-alias",
+                source=alias,
+                destination=PurePosixPath("rootfs/project/.venv/bin/python"),
+                policy=CopyPolicy.COPY_REQUIRED,
+                bind_target=alias,
+            )
+            interpreter_asset = RuntimeAsset(
+                id="python-interpreter",
+                source=interpreter,
+                destination=PurePosixPath("rootfs/uv/python/bin/python3.12"),
+                policy=CopyPolicy.COPY_REQUIRED,
+                bind_target=interpreter,
+            )
+            definition = ToolDefinition(
+                id="python",
+                commands=("python",),
+                assets=(alias_asset,),
+                command_assets={"python": alias_asset.id},
+                command_sources={"python": alias},
+            )
+
+            provisioned = RuntimeProvisioner(
+                runtime_root=root / "runtime",
+                copy_budget_bytes=1024,
+                mode=SandboxMode.FULL_SANDBOX,
+            ).provision((definition,), standalone_assets=(interpreter_asset,))
+            copied_alias = provisioned.assets[alias_asset.id].runtime_path
+            copied_interpreter = provisioned.assets[
+                interpreter_asset.id
+            ].runtime_path
+
+            self.assertIsNotNone(copied_alias)
+            self.assertIsNotNone(copied_interpreter)
+            assert copied_alias is not None
+            assert copied_interpreter is not None
+            self.assertTrue(copied_alias.is_symlink())
+            self.assertEqual(copied_alias.readlink(), interpreter)
+            self.assertEqual(
+                (root / "runtime" / "bin" / "python").readlink(),
+                Path("/runtime/rootfs/project/.venv/bin/python"),
+            )
+            self.assertIn(
+                (copied_interpreter, interpreter),
+                provisioned.readonly_binds,
+            )
+
+    def test_filesystem_python_uses_controller_interpreter(self) -> None:
+        """Keep the worker interpreter aligned with discovered stdlib roots."""
+        controller = Path(sys.executable).expanduser().absolute()
+        with mock.patch(
+            "citra.config.runtime_discovery._language.shutil.which",
+            return_value="/usr/bin/python3",
+        ):
+            self.assertEqual(
+                PythonRuntimeDiscovery._resolve_command(
+                    "citra-filesystem-python"
+                ),
+                controller,
+            )
+            self.assertEqual(
+                PythonRuntimeDiscovery._resolve_command("python3"),
+                Path("/usr/bin/python3"),
+            )
+
+    def test_filesystem_client_prefers_dedicated_python_launcher(self) -> None:
+        """Select the controller-compatible launcher before generic Python."""
+        sandbox = mock.Mock()
+        commands = {
+            "citra-filesystem-python": Path(
+                "/runtime/bin/citra-filesystem-python"
+            ),
+            "python": Path("/runtime/bin/python"),
+        }
+        sandbox.resolve_command.side_effect = commands.get
+
+        filesystem = SandboxedFilesystem(sandbox)
+
+        self.assertEqual(
+            filesystem._worker_python,
+            Path("/runtime/bin/citra-filesystem-python"),
+        )
+        sandbox.resolve_command.assert_called_once_with(
+            "citra-filesystem-python"
+        )
 
     def test_sandbox_forces_runtime_path_and_maps_mount_targets(self) -> None:
         """Keep caller overrides from reintroducing the controller PATH."""

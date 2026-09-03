@@ -24,7 +24,8 @@ class SandboxedFilesystem:
         """Bind the worker client to the process-lifetime sandbox."""
         self._sandbox = sandbox
         self._worker_python = (
-            sandbox.resolve_command("python")
+            sandbox.resolve_command("citra-filesystem-python")
+            or sandbox.resolve_command("python")
             or sandbox.resolve_command("python3")
         )
         if self._worker_python is None:

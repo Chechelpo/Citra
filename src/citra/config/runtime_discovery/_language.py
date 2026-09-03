@@ -61,6 +61,7 @@ class PythonRuntimeDiscovery(_ExtendedCommandDiscovery):
     """Discover Python interpreters, package tools, linters, and type checkers."""
 
     commands = (
+        "citra-filesystem-python",
         "python",
         "python3",
         "uv",
@@ -78,6 +79,24 @@ class PythonRuntimeDiscovery(_ExtendedCommandDiscovery):
         "poetry",
         "pdm",
     )
+
+    @staticmethod
+    def _resolve_command(command: str) -> Path | None:
+        """Resolve Citra's worker launcher to the controller interpreter.
+
+        The generic ``python`` and ``python3`` commands intentionally continue
+        to follow the caller's ``PATH``. The filesystem worker, however, must
+        use the interpreter whose ``sys.prefix`` and ``sysconfig`` roots are
+        added by :meth:`extra_roots`. Otherwise a different host Python can be
+        mounted without its standard library and fail before importing
+        ``encodings``.
+        """
+        if command == "citra-filesystem-python":
+            executable = Path(sys.executable).expanduser().absolute()
+            if executable.is_file():
+                return executable
+            return None
+        return StandardDiscovery._resolve_command(command)
 
     @classmethod
     def extra_roots(cls) -> tuple[Path, ...]:

@@ -288,7 +288,7 @@ class Glob(Tool):
     ) -> dict[str, Any]:
         """Handle normalize arguments."""
         pattern = arguments.get(
-            "pattern",
+            "pat",
             arguments.get("pattern"),
         )
 
@@ -335,7 +335,7 @@ class Glob(Tool):
         )
 
         pattern = normalized.get(
-            "pattern",
+            "pat",
             "",
         )
 
@@ -345,11 +345,11 @@ class Glob(Tool):
 
         if path is not None:
             return (
-                f"pattern={pattern} | "
+                f"pat={pattern} | "
                 f"path={path}"
             )
 
-        return f"pattern={pattern}"
+        return f"pat={pattern}"
 
     @override
     def format_result_log(

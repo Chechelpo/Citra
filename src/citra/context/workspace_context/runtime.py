@@ -15,11 +15,12 @@ import signal
 import stat
 import subprocess
 import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from threading import Lock
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from citra.sandbox.sandbox import WorkspaceSandbox
 from citra.sandbox.sandbox_mode import SandboxMode
@@ -289,7 +290,7 @@ class RuntimeProvisioning:
             if asset.mode == "ro-bind":
                 source = asset.source
             elif asset.mode == "copy" and asset.runtime_path is not None:
-                source = asset.runtime_path
+                source = self._copied_mount_source(asset)
             else:
                 continue
             key = (str(source), str(asset.bind_target))
@@ -298,6 +299,52 @@ class RuntimeProvisioning:
             seen.add(key)
             binds.append((source, asset.bind_target))
         return tuple(binds)
+
+    def _copied_mount_source(self, asset: AssetProvision) -> Path:
+        """Use a copied referent when a top-level copied asset is a symlink."""
+        assert asset.runtime_path is not None
+        if not asset.source.is_symlink():
+            return asset.runtime_path
+        try:
+            referent = asset.source.resolve(strict=True)
+        except OSError as error:
+            logger.warning(
+                "Could not resolve copied runtime symlink",
+                extra={
+                    "origin": __name__,
+                    "asset": asset.id,
+                    "source": str(asset.source),
+                    "error": str(error),
+                },
+            )
+            return asset.runtime_path
+        for candidate in self.assets.values():
+            if (
+                candidate.source == referent
+                and candidate.mode == "copy"
+                and candidate.runtime_path is not None
+            ):
+                logger.debug(
+                    "Using copied runtime symlink referent as mount source",
+                    extra={
+                        "origin": __name__,
+                        "asset": asset.id,
+                        "source": str(asset.source),
+                        "referent": str(referent),
+                        "runtime_path": str(candidate.runtime_path),
+                    },
+                )
+                return candidate.runtime_path
+        logger.warning(
+            "Copied runtime symlink has no independently copied referent",
+            extra={
+                "origin": __name__,
+                "asset": asset.id,
+                "source": str(asset.source),
+                "referent": str(referent),
+            },
+        )
+        return asset.runtime_path
 
     def health_check_tools(
         self,
@@ -336,7 +383,7 @@ class RuntimeProvisioning:
                     provisioned.health_detail = (
                         output[:500] or f"exit code {returncode}"
                     )
-            except Exception as error:
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
                 provisioned.health = "failed"
                 provisioned.health_detail = str(error)[:500]
 

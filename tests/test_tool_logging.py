@@ -142,6 +142,12 @@ class TestGlob:
         assert "pat=**/*.py" in log
         assert "path=" not in log
 
+    def test_call_log_accepts_citra_pattern_name(self) -> None:
+        log = Glob(_ctx()).format_call_log(
+            {"pattern": "src/**/*.py"}
+        )
+        assert log == "pat=src/**/*.py"
+
     def test_call_log_with_path(self) -> None:
         log = Glob(_ctx()).format_call_log(
             {"pat": "*.py", "path": "src"}

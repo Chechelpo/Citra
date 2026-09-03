@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from citra.context import ExecutionContext
 
 
-_SERIAL_SANDBOX = SandboxConfig(mode=SandboxMode.FULL_SANDBOX)
+_SERIAL_SANDBOX = SandboxConfig(mode=SandboxMode.PARTIAL_SANDBOX)
 
 
 class _RoleWorkflow(SingleModeWorkflow):
