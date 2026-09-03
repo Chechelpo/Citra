@@ -7,23 +7,22 @@ the host paths that must instead be exposed as read-only fallback binds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
 import json
 import logging
 import os
-from pathlib import Path, PurePosixPath
 import shutil
 import signal
 import stat
 import subprocess
-from threading import Lock
 import time
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path, PurePosixPath
+from threading import Lock
 from typing import Any, Callable, Mapping, Sequence
 
 from citra.sandbox.sandbox import WorkspaceSandbox
 from citra.sandbox.sandbox_mode import SandboxMode
-
 
 logger = logging.getLogger(__name__)
 SANDBOX_RUNTIME_ROOT = Path("/runtime")
@@ -548,10 +547,8 @@ class RuntimeProvisioner:
                     if asset.bind_target is not None
                     else None
                 ),
-                sandbox_path=(
-                    asset.bind_target.expanduser().absolute()
-                    if asset.bind_target is not None
-                    else SANDBOX_RUNTIME_ROOT.joinpath(*asset.destination.parts)
+                sandbox_path=SANDBOX_RUNTIME_ROOT.joinpath(
+                    *asset.destination.parts
                 ),
             )
 

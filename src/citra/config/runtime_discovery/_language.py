@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+import sysconfig
+from pathlib import Path
 
 from ._base import RuntimeDiscoveryResult, StandardDiscovery
-
+from ._roots import is_broad_install_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +81,30 @@ class PythonRuntimeDiscovery(_ExtendedCommandDiscovery):
 
     @classmethod
     def extra_roots(cls) -> tuple[Path, ...]:
-        """Return the active Python prefix and base prefix."""
-        return tuple(dict.fromkeys((Path(sys.prefix), Path(sys.base_prefix))))
+        """Return bounded interpreter prefixes and Python library roots."""
+        roots: list[Path] = []
+        for prefix in (Path(sys.prefix), Path(sys.base_prefix)):
+            if is_broad_install_prefix(prefix):
+                logger.debug(
+                    "Expanded broad Python prefix into library roots",
+                    extra={"origin": __name__, "prefix": str(prefix)},
+                )
+                continue
+            roots.append(prefix)
+
+        paths = sysconfig.get_paths()
+        for name in (
+            "stdlib",
+            "platstdlib",
+            "purelib",
+            "platlib",
+            "include",
+            "platinclude",
+        ):
+            value = paths.get(name)
+            if value:
+                roots.append(Path(value))
+        return tuple(dict.fromkeys(roots))
 
 
 class NodeRuntimeDiscovery(_ExtendedCommandDiscovery):
@@ -113,17 +136,45 @@ class NodeRuntimeDiscovery(_ExtendedCommandDiscovery):
                 continue
             executable = Path(raw).absolute()
             for candidate in (executable, executable.resolve()):
+                module_store = _node_module_store(candidate)
+                if module_store is not None:
+                    roots.append(module_store)
                 if candidate.parent.name == "bin":
                     prefix = candidate.parent.parent
                     if (prefix / "bin" / "node").exists() or (
                         prefix / "lib" / "node_modules"
                     ).is_dir():
-                        roots.append(prefix)
-                parts = candidate.parts
-                if "node_modules" in parts:
-                    index = parts.index("node_modules")
-                    roots.append(Path(candidate.anchor, *parts[1:index]))
+                        if is_broad_install_prefix(prefix):
+                            global_modules = prefix / "lib" / "node_modules"
+                            if global_modules.is_dir():
+                                roots.append(global_modules)
+                            logger.debug(
+                                "Expanded broad Node prefix into module roots",
+                                extra={
+                                    "origin": __name__,
+                                    "prefix": str(prefix),
+                                },
+                            )
+                        else:
+                            roots.append(prefix)
         return tuple(dict.fromkeys(roots))
+
+
+def _node_module_store(path: Path) -> Path | None:
+    """Return the bounded package store containing a Node command script."""
+    parts = path.expanduser().absolute().parts
+    for marker in ("node_modules", "nodejs"):
+        if marker not in parts:
+            continue
+        index = parts.index(marker)
+        store = Path(path.anchor, *parts[1 : index + 1])
+        if store.is_dir():
+            logger.debug(
+                "Discovered Node module store",
+                extra={"origin": __name__, "store": str(store)},
+            )
+            return store
+    return None
 
 
 class RustRuntimeDiscovery(_ExtendedCommandDiscovery):

@@ -20,10 +20,12 @@ from citra.config.runtime_discovery import (
     aggregate_results,
     get_ro_binds,
 )
+from citra.config.runtime_discovery._roots import (
+    is_unsafe_recursive_runtime_root,
+)
 from citra.sandbox.sandbox_mode import SandboxMode
 
 from .workspace_context.runtime import CopyPolicy, RuntimeAsset, ToolDefinition
-
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +181,7 @@ def _copy_policy(mode: SandboxMode) -> CopyPolicy:
 
 def _minimal_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
     """Deduplicate existing paths and remove descendants of directory roots."""
-    unique = tuple(
+    candidates = tuple(
         sorted(
             {
                 path.expanduser().absolute()
@@ -189,6 +191,15 @@ def _minimal_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
             key=lambda item: (len(item.parts), str(item)),
         )
     )
+    unique: list[Path] = []
+    for path in candidates:
+        if path.is_dir() and is_unsafe_recursive_runtime_root(path):
+            logger.warning(
+                "Rejected broad recursive runtime discovery root",
+                extra={"origin": __name__, "path": str(path)},
+            )
+            continue
+        unique.append(path)
     return tuple(
         path
         for path in unique

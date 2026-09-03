@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from dataclasses import dataclass
 import logging
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
-from typing import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from citra.sandbox.sandbox_mode import SandboxMode
 
@@ -336,9 +335,16 @@ class WorkspaceSandbox:
             if path.is_file()
         )
         readonly_mounts = _minimal_readonly_mounts(
-            mount
-            for mount in policy.readonly_mounts
-            if mount[0].exists()
+            (
+                mount
+                for mount in policy.readonly_mounts
+                if mount[0].exists()
+            ),
+            authoritative_targets=(
+                path
+                for path in policy.extra_ro_binds
+                if path.is_dir()
+            ),
         )
         writable_binds = tuple(
             path
@@ -785,18 +791,98 @@ def _minimal_readonly_binds(paths: Iterable[Path]) -> tuple[Path, ...]:
 
 def _minimal_readonly_mounts(
     mounts: Iterable[tuple[Path, Path]],
+    *,
+    authoritative_targets: Iterable[Path] = (),
 ) -> tuple[tuple[Path, Path], ...]:
-    """Deduplicate mounts and order parent targets before descendants."""
+    """Remove covered mounts and order read-only parents before consumers."""
     unique = dict.fromkeys(
         (source.absolute(), target.absolute())
         for source, target in mounts
     )
-    return tuple(
-        sorted(
-            unique,
-            key=lambda item: (len(item[1].parts), str(item[1]), str(item[0])),
-        )
+    authoritative = tuple(
+        path.expanduser().absolute()
+        for path in authoritative_targets
     )
+    ordered = sorted(
+        unique,
+        key=lambda item: (
+            0 if item[1] == Path("/runtime") else 1,
+            len(item[1].parts),
+            str(item[1]),
+            str(item[0]),
+        ),
+    )
+    result: list[tuple[Path, Path]] = []
+
+    for source, target in ordered:
+        authoritative_parent = next(
+            (
+                parent
+                for parent in authoritative
+                if source != target and _is_within(parent, target)
+            ),
+            None,
+        )
+        if authoritative_parent is not None:
+            logger.debug(
+                "Omitting runtime mount covered by an explicit read-only bind",
+                extra={
+                    "origin": __name__,
+                    "source": str(source),
+                    "target": str(target),
+                    "covering_target": str(authoritative_parent),
+                },
+            )
+            continue
+        covering_mount = next(
+            (
+                (parent_source, parent_target)
+                for parent_source, parent_target in result
+                if _mount_covers_child(
+                    parent_source,
+                    parent_target,
+                    source,
+                    target,
+                )
+            ),
+            None,
+        )
+        if covering_mount is not None:
+            logger.debug(
+                "Omitting redundant nested read-only mount",
+                extra={
+                    "origin": __name__,
+                    "source": str(source),
+                    "target": str(target),
+                    "covering_target": str(covering_mount[1]),
+                },
+            )
+            continue
+        result.append((source, target))
+
+    return tuple(result)
+
+
+def _mount_covers_child(
+    parent_source: Path,
+    parent_target: Path,
+    child_source: Path,
+    child_target: Path,
+) -> bool:
+    """Return whether a parent mount already exposes the same child subtree."""
+    if not parent_source.is_dir():
+        return False
+
+    try:
+        relative_target = child_target.relative_to(parent_target)
+    except ValueError:
+        return False
+
+    if not relative_target.parts:
+        return child_source == parent_source
+
+    return child_source == parent_source / relative_target
+
 
 def _parents_first(paths: Iterable[Path]) -> tuple[Path, ...]:
     """Return unique mount paths with parents ordered before descendants."""

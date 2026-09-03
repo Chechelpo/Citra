@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from pathlib import Path
 import logging
 import os
 import re
 import shutil
 import subprocess
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
 
+from ._roots import is_runtime_prefix
 
 logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
@@ -784,9 +785,7 @@ class StandardDiscovery(RuntimeDiscovery):
         if executable.parent.name == "bin":
             prefix = executable.parent.parent
 
-            if not cls._is_system_prefix(
-                prefix
-            ):
+            if is_runtime_prefix(prefix):
                 result.add(
                     prefix
                 )
@@ -888,32 +887,12 @@ class StandardDiscovery(RuntimeDiscovery):
             b"\xca\xfe\xba\xbe",
         }
 
-    @staticmethod
-    def _is_system_prefix(
-        path: Path,
-    ) -> bool:
-        """Handle is system prefix."""
-        for root in (
-            Path("/usr"),
-            Path("/bin"),
-            Path("/lib"),
-            Path("/lib64"),
-        ):
-            try:
-                path.resolve().relative_to(
-                    root
-                )
-                return True
-            except ValueError:
-                continue
-
-        return False
-
-    @staticmethod
+    @classmethod
     def _discover_shared_dependencies(
+        cls,
         executable: Path,
     ) -> set[Path]:
-        """Return shared libraries and the dynamic loader reported by ``ldd``."""
+        """Return each reported library path and its complete symlink chain."""
         result: set[Path] = set()
 
         try:
@@ -951,8 +930,8 @@ class StandardDiscovery(RuntimeDiscovery):
                 path is not None
                 and path.exists()
             ):
-                result.add(
-                    path.resolve()
+                result.update(
+                    cls._resolve_symlink_chain(path)
                 )
 
         return result

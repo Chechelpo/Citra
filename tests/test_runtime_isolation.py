@@ -4,25 +4,35 @@ from __future__ import annotations
 
 import ast
 import os
+import subprocess
+import unittest
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-import unittest
 from unittest import mock
 
 from citra.config import SandboxPolicy
-from citra.config.runtime_discovery import RuntimeDiscovery, RuntimeDiscoveryResult
+from citra.config.runtime_discovery import (
+    RuntimeDiscovery,
+    RuntimeDiscoveryResult,
+    StandardDiscovery,
+)
+from citra.context.available_tools import (
+    default_runtime_assets,
+    default_tool_definitions,
+)
 from citra.context.workspace_context.runtime import (
     CopyPolicy,
     RuntimeAsset,
-    RuntimeProvisionError,
     RuntimeProvisioner,
+    RuntimeProvisionError,
     ToolDefinition,
 )
-from citra.sandbox.filesystem_ops.read import ReadInput, execute as execute_read
+from citra.sandbox.filesystem_ops.read import ReadInput
+from citra.sandbox.filesystem_ops.read import execute as execute_read
 from citra.sandbox.filesystem_ops.scope import ScopedFilesystem
 from citra.sandbox.sandbox import WorkspaceSandbox
-from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 from citra.sandbox.sandbox_mode import SandboxMode
+from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 
 
 class _FixtureDiscovery(RuntimeDiscovery):
@@ -113,8 +123,20 @@ class RuntimeIsolationTests(unittest.TestCase):
                 Path("/runtime/bin/fixture"),
             )
             self.assertEqual(
+                (root / "runtime" / "bin" / "fixture").readlink(),
+                Path(
+                    "/runtime/rootfs",
+                    *definition.assets[0].source.parts[1:],
+                    "bin",
+                    "fixture",
+                ),
+            )
+            self.assertEqual(
                 provisioned.readonly_binds,
                 ((asset.runtime_path, root / "host" / "prefix"),),
+            )
+            self.assertTrue(
+                all(source.exists() for source, _target in provisioned.readonly_binds)
             )
             with self.assertRaises(RuntimeProvisionError):
                 RuntimeProvisioner(
@@ -156,6 +178,57 @@ class RuntimeIsolationTests(unittest.TestCase):
                 ((asset.source, asset.bind_target),),
             )
 
+    def test_broad_usr_discovery_is_reduced_to_exact_runtime_files(self) -> None:
+        """Never recursively copy or bind the complete system /usr tree."""
+        executable = Path("/usr/bin/env")
+        self.assertTrue(executable.is_file())
+        discovery = RuntimeDiscoveryResult(
+            readonly_binds=(Path("/usr"), executable),
+            available_commands=("env",),
+            command_paths=(("env", executable),),
+        )
+
+        assets = default_runtime_assets(
+            mode=SandboxMode.FULL_SANDBOX,
+            discovery=discovery,
+        )
+        definitions = default_tool_definitions(
+            mode=SandboxMode.FULL_SANDBOX,
+            discovery=discovery,
+        )
+
+        self.assertNotIn(Path("/usr"), {asset.source for asset in assets})
+        self.assertEqual(len(definitions), 1)
+        self.assertEqual(definitions[0].command_sources["env"], executable)
+        self.assertEqual(definitions[0].assets[0].source, executable)
+
+    def test_dynamic_loader_symlink_path_is_preserved(self) -> None:
+        """Retain the exact ELF interpreter pathname requested by the kernel."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            loader = root / "lib" / "loader-real"
+            loader.parent.mkdir()
+            loader.write_bytes(b"loader")
+            loader_alias = root / "lib64" / "loader"
+            loader_alias.parent.mkdir()
+            loader_alias.symlink_to(Path("../lib/loader-real"))
+            completed = subprocess.CompletedProcess(
+                args=("ldd", "fixture"),
+                returncode=0,
+                stdout=f"{loader_alias} (0x00000000)\n",
+            )
+
+            with mock.patch(
+                "citra.config.runtime_discovery._base.subprocess.run",
+                return_value=completed,
+            ):
+                dependencies = StandardDiscovery._discover_shared_dependencies(
+                    root / "fixture"
+                )
+
+            self.assertIn(loader_alias, dependencies)
+            self.assertIn(loader, dependencies)
+
     def test_sandbox_forces_runtime_path_and_maps_mount_targets(self) -> None:
         """Keep caller overrides from reintroducing the controller PATH."""
         with TemporaryDirectory() as directory:
@@ -167,6 +240,12 @@ class RuntimeIsolationTests(unittest.TestCase):
             runtime.mkdir()
             policy = SandboxPolicy(mode=SandboxMode.FULL_SANDBOX)
             policy.add_readonly_bind(runtime, Path("/runtime"))
+            copied_command = runtime / "rootfs" / "usr" / "bin" / "fixture"
+            copied_command.parent.mkdir(parents=True)
+            copied_command.write_text("fixture\n", encoding="utf-8")
+            policy.add_runtime_mounts(
+                ((copied_command, Path("/usr/bin/fixture")),)
+            )
             fixture = _WorkspaceFixture(workspace, Path("/runtime/bin/fixture"))
             sandbox = WorkspaceSandbox(
                 fixture,
@@ -191,12 +270,141 @@ class RuntimeIsolationTests(unittest.TestCase):
                 cwd=workspace,
                 network=False,
             )
-            triples = tuple(zip(arguments, arguments[1:], arguments[2:]))
-            self.assertIn(("--ro-bind", str(runtime), "/runtime"), triples)
+            triples = list(zip(arguments, arguments[1:], arguments[2:]))
+            runtime_mount = ("--ro-bind", str(runtime), "/runtime")
+            command_mount = (
+                "--ro-bind",
+                str(copied_command),
+                "/usr/bin/fixture",
+            )
+            self.assertIn(runtime_mount, triples)
+            self.assertIn(command_mount, triples)
+            self.assertLess(
+                triples.index(runtime_mount),
+                triples.index(command_mount),
+            )
             filesystem = SandboxedFilesystem(sandbox)
             self.assertEqual(
                 filesystem._worker_python,
                 Path("/runtime/bin/python"),
+            )
+
+    def test_sandbox_collapses_redundant_nested_runtime_mounts(self) -> None:
+        """Avoid mounting a copied uv Python child below its read-only prefix."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            runtime = root / "runtime"
+            runtime.mkdir()
+            python_target = Path(
+                "/home/felipey/.local/share/uv/python/"
+                "cpython-3.12-linux-x86_64-gnu"
+            )
+            python_source = runtime / "rootfs" / python_target.relative_to("/")
+            include_source = python_source / "include" / "python3.12"
+            include_source.mkdir(parents=True)
+            override_source = root / "python-lib-override"
+            override_source.mkdir()
+
+            policy = SandboxPolicy(mode=SandboxMode.FULL_SANDBOX)
+            policy.add_readonly_bind(runtime, Path("/runtime"))
+            policy.add_runtime_mounts(
+                (
+                    (python_source, python_target),
+                    (include_source, python_target / "include" / "python3.12"),
+                    (override_source, python_target / "lib"),
+                )
+            )
+            sandbox = WorkspaceSandbox(
+                _WorkspaceFixture(workspace, Path("/runtime/bin/fixture")),
+                policy,
+                base_environment={"PATH": "/runtime/bin"},
+            )
+
+            arguments = sandbox.build_bwrap_arguments(
+                command=("/runtime/bin/fixture",),
+                cwd=workspace,
+                network=False,
+            )
+            triples = list(zip(arguments, arguments[1:], arguments[2:]))
+
+            self.assertIn(
+                ("--ro-bind", str(python_source), str(python_target)),
+                triples,
+            )
+            self.assertNotIn(
+                (
+                    "--ro-bind",
+                    str(include_source),
+                    str(python_target / "include" / "python3.12"),
+                ),
+                triples,
+            )
+            self.assertIn(
+                (
+                    "--ro-bind",
+                    str(override_source),
+                    str(python_target / "lib"),
+                ),
+                triples,
+            )
+
+    def test_explicit_readonly_bind_overrides_generated_runtime_children(self) -> None:
+        """Make an operator bind authoritative over generated child mounts."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            runtime = root / "runtime"
+            runtime.mkdir()
+            host_uv = root / "home" / "felipey" / ".local" / "share" / "uv"
+            include_target = (
+                host_uv
+                / "python"
+                / "cpython-3.12-linux-x86_64-gnu"
+                / "include"
+                / "python3.12"
+            )
+            include_target.mkdir(parents=True)
+            copied_include = runtime / "rootfs" / include_target.relative_to("/")
+            copied_include.mkdir(parents=True)
+            unrelated_source = runtime / "rootfs" / "usr" / "bin" / "fixture"
+            unrelated_source.parent.mkdir(parents=True)
+            unrelated_source.write_text("fixture\n", encoding="utf-8")
+
+            policy = SandboxPolicy(
+                mode=SandboxMode.FULL_SANDBOX,
+                extra_ro_binds=[host_uv],
+            )
+            policy.add_readonly_bind(runtime, Path("/runtime"))
+            policy.add_runtime_mounts(
+                (
+                    (copied_include, include_target),
+                    (unrelated_source, Path("/usr/bin/fixture")),
+                )
+            )
+            sandbox = WorkspaceSandbox(
+                _WorkspaceFixture(workspace, Path("/runtime/bin/fixture")),
+                policy,
+                base_environment={"PATH": "/runtime/bin"},
+            )
+
+            arguments = sandbox.build_bwrap_arguments(
+                command=("/runtime/bin/fixture",),
+                cwd=workspace,
+                network=False,
+            )
+            triples = list(zip(arguments, arguments[1:], arguments[2:]))
+
+            self.assertIn(("--ro-bind", str(host_uv), str(host_uv)), triples)
+            self.assertNotIn(
+                ("--ro-bind", str(copied_include), str(include_target)),
+                triples,
+            )
+            self.assertIn(
+                ("--ro-bind", str(unrelated_source), "/usr/bin/fixture"),
+                triples,
             )
 
     def test_read_operation_parses_and_executes_literal_requests(self) -> None:
