@@ -16,6 +16,7 @@ from citra.tools.session_memory import CheckpointTool, RequirementTool
 from citra.tools.subagent.supervisor import _paths_overlap
 from citra.tools.tool_registry import ToolRegistry
 from citra.workflows import (
+    AssuredSerialRolesWorkflow,
     SerialRolesWorkflow,
     SandboxConfig,
     UserWorkflow,
@@ -81,6 +82,7 @@ def test_workflow_registry_contains_all_selectable_workflows(tmp_path: Path) -> 
         "chat",
         "task",
         "serial_roles",
+        "serial_roles_assured",
         "architect",
     )
     assert registry.select().name == "chat"
@@ -115,27 +117,50 @@ def test_serial_run_validates_and_applies_loop_transitions() -> None:
         run.submit_handoff(summary="Invalid jump.", next_step="complete")
 
 
-def test_serial_roles_use_standard_memory_tools_for_handoff() -> None:
-    workflow = SerialRolesWorkflow()
-    run = workflow.create_run("Implement the feature")
+def test_serial_variants_cover_every_memory_channel_across_roles() -> None:
+    """Expose each durable handoff channel in both serial variants."""
     expected_memory_ids = {tool.TOOL_ID for tool in memory_tools()}
 
-    for phase, next_step in (
-        ("explore", "plan"),
-        ("plan", "implement"),
-        ("implement", "test"),
-        ("test", "review"),
-        ("review", "complete"),
-    ):
-        assert run.current_step.step_id == phase
-        tool_ids = run.current_step.workflow.tool_set.core_tool_ids
-        assert expected_memory_ids <= tool_ids
-        assert "workflow_handoff" not in tool_ids
-        run.submit_handoff(
-            summary=f"Assistant message from {phase}",
-            next_step=next_step,
-        )
+    for workflow in (SerialRolesWorkflow(), AssuredSerialRolesWorkflow()):
+        run = workflow.create_run("Implement the feature")
+        exposed_memory_ids: set[str] = set()
+
+        for phase, next_step in (
+            ("explore", "plan"),
+            ("plan", "implement"),
+            ("implement", "test"),
+            ("test", "review"),
+            ("review", "complete"),
+        ):
+            assert run.current_step.step_id == phase
+            tool_ids = run.current_step.workflow.tool_set.core_tool_ids
+            exposed_memory_ids.update(tool_ids & expected_memory_ids)
+            assert "checkpoint" in tool_ids
+            assert "issue" in tool_ids
+            assert "workflow_handoff" not in tool_ids
+            run.submit_handoff(
+                summary=f"Assistant message from {phase}",
+                next_step=next_step,
+            )
+            run.advance()
+
+        assert expected_memory_ids <= exposed_memory_ids
+
+
+def test_serial_feedback_graph_routes_to_earliest_responsible_role() -> None:
+    """Allow late roles to return directly to exploration or planning."""
+    workflow = SerialRolesWorkflow()
+    run = workflow.create_run("Implement the feature")
+    for next_step in ("plan", "implement", "test"):
+        run.begin_step()
+        run.submit_handoff(summary=f"advance to {next_step}", next_step=next_step)
         run.advance()
+
+    assert run.current_step.step_id == "test"
+    run.begin_step()
+    run.submit_handoff(summary="requirement gap", next_step="explore")
+    run.advance()
+    assert run.current_step.step_id == "explore"
 
 
 def test_serial_role_sessions_reuse_memory_but_not_conversation() -> None:

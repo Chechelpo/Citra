@@ -12,6 +12,7 @@ from citra.utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import ToolDefinition
 
 from .memory_tool import MemoryTool
@@ -32,6 +33,7 @@ class ConstraintTool(MemoryTool[ConstraintExtract]):
     """Manage durable constraints, optionally promoted from working state."""
 
     TOOL_ID = "constraint"
+    CAPABILITIES = ToolCapabilities(actions=("add", "promote", "remove"))
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

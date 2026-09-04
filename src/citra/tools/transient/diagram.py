@@ -4,6 +4,7 @@ from typing import Any, override
 from ...context import ExecutionContext
 from ...utils.json_schema import ChatCompletionTool, FunctionDefinition, JsonProperty, JsonSchema
 from ...utils.mermaid import Mermaid, MermaidTheme
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 class Diagram(Tool):
@@ -37,6 +38,10 @@ class Diagram(Tool):
     TOOL_ID = 'diagram'
     DEFINITION = ChatCompletionTool(function=FunctionDefinition(name='diagram', description="Create, inspect, read, update, validate, render, list, and remove Mermaid diagrams associated with Citra documents. Diagrams are stored as editable Mermaid '.mmd' source and rendered SVG assets beneath '<document>.citra.assets/diagrams/' beside the owning document. Use 'location' to target either the active current project or Citra's persistent document library. Use simple Mermaid diagrams for architecture, flows, sequences, states, classes, ER models, timelines, Gantt charts, mindmaps, Git graphs, charts, and similar documentation. The returned Markdown reference can be inserted into a Citra document section.", parameters=JsonSchema.object(properties=(JsonProperty(name='operation', schema=JsonSchema.string(description="Operation to perform. Supported operations: 'create', 'update', 'read', 'inspect', 'list', 'validate', 'render', and 'remove'.")), JsonProperty(name='document', schema=JsonSchema.string(description="Logical Citra document name without the '.citra.xml' suffix. For example, 'architecture' refers to 'architecture.citra.xml'.")), JsonProperty(name='location', schema=JsonSchema.string(description="Location containing the owning Citra document. Defaults to '.'. Use '@library' or '@library/<folder>' for persistent library documents. A project-relative folder such as 'docs' is also supported."), required=False), JsonProperty(name='name', schema=JsonSchema.string(description="Diagram identifier such as 'runtime-flow'. Do not include '.mmd' or '.svg'."), required=False), JsonProperty(name='source', schema=JsonSchema.string(description="Mermaid source. Required for 'create' and 'update'. A surrounding ```mermaid Markdown fence is accepted but unnecessary."), required=False), JsonProperty(name='alt', schema=JsonSchema.string(description='Concise human-readable alternative text for the diagram. Used when returning the Markdown image reference.'), required=False), JsonProperty(name='render', schema=JsonSchema.boolean(description="For 'create' and 'update', whether to render the SVG immediately. Defaults to true."), required=False), JsonProperty(name='theme', schema=JsonSchema.string(description="Optional Mermaid rendering theme. Supported values are 'default', 'forest', 'dark', and 'neutral'."), required=False), JsonProperty(name='timeout', schema=JsonSchema.integer(description='Maximum Mermaid rendering time in seconds. Defaults to 30.'), required=False)), additional_properties=False)))
     _SUPPORTED_OPERATIONS = {'create', 'update', 'read', 'inspect', 'list', 'validate', 'render', 'remove'}
+    CAPABILITIES = ToolCapabilities(
+        actions=('create', 'update', 'read', 'inspect', 'list', 'validate', 'render', 'remove'),
+        action_arguments=('operation',),
+    )
     _ALLOWED_FIELDS = {'create': {'name', 'source', 'alt', 'render', 'theme', 'timeout'}, 'update': {'name', 'source', 'alt', 'render', 'theme', 'timeout'}, 'read': {'name'}, 'inspect': {'name', 'alt'}, 'list': set(), 'validate': {'name', 'timeout'}, 'render': {'name', 'alt', 'theme', 'timeout'}, 'remove': {'name'}}
     _REQUIRED_FIELDS = {'create': {'name', 'source'}, 'update': {'name', 'source'}, 'read': {'name'}, 'inspect': {'name'}, 'list': set(), 'validate': {'name'}, 'render': {'name'}, 'remove': {'name'}}
 

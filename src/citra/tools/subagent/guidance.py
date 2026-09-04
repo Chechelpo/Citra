@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, override
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -63,6 +64,7 @@ class RequestGuidanceTool(Tool):
     """
 
     TOOL_ID = "request_guidance"
+    CAPABILITIES = ToolCapabilities()
 
     INVALIDATES_TOOL_CACHE = False
 

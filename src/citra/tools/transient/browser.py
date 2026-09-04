@@ -7,6 +7,7 @@ from typing import Any, override
 from urllib.parse import urlparse
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -50,6 +51,10 @@ class Browser(Tool):
             "evaluate",
             "upload",
         }
+    )
+
+    CAPABILITIES = ToolCapabilities(
+        actions=tuple(sorted(SAFE_ACTIONS | SUPPORTED_UNSAFE_ACTIONS)),
     )
 
     DEFINITION = ChatCompletionTool(

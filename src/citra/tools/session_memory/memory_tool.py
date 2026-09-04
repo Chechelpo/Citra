@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from weakref import WeakKeyDictionary
 
+from citra.logging import Logger
 
+from ..capabilities import ToolCapabilities
 from ..session_tool import SessionTool
 
 if TYPE_CHECKING:
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 
 TExtract = TypeVar("TExtract")
+_logger = Logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class ConversationMemoryState:
         """Initialize the instance."""
         self._working_states: dict[int, _WorkingStateRecord] = {}
         self._next_working_state_id = 1
+        _logger.trace("Initialized conversation memory state")
 
     def create_working_state(
         self,
@@ -61,6 +63,7 @@ class ConversationMemoryState:
         content = content.strip()
 
         if not content:
+            _logger.warning("Rejected empty working state")
             raise ValueError(
                 "Working-state content cannot be empty."
             )
@@ -79,6 +82,11 @@ class ConversationMemoryState:
         ] = _WorkingStateRecord(
             extract=working_state,
         )
+        _logger.debug(
+            "Created working state",
+            working_state_id=working_state.id,
+            turn=turn,
+        )
 
         return working_state
 
@@ -94,6 +102,10 @@ class ConversationMemoryState:
         )
 
         if record is None:
+            _logger.warning(
+                "Working state lookup failed",
+                working_state_id=working_state_id,
+            )
             raise ValueError(
                 f"Working state [W{working_state_id}] does not exist."
             )
@@ -102,6 +114,11 @@ class ConversationMemoryState:
             require_active
             and record.status != "active"
         ):
+            _logger.warning(
+                "Rejected inactive working state",
+                working_state_id=working_state_id,
+                status=record.status,
+            )
             raise ValueError(
                 f"Working state [W{working_state_id}] is "
                 f"{record.status} and cannot be promoted or modified."
@@ -147,6 +164,11 @@ class ConversationMemoryState:
         self._working_states[
             working_state_id
         ].extract = updated
+        _logger.debug(
+            "Updated working state",
+            working_state_id=working_state_id,
+            turn=turn,
+        )
 
         return updated
 
@@ -168,6 +190,12 @@ class ConversationMemoryState:
         )
 
         if ref in current.promotions:
+            _logger.warning(
+                "Rejected duplicate working-state promotion",
+                working_state_id=working_state_id,
+                kind=kind,
+                memory_id=memory_id,
+            )
             raise ValueError(
                 f"Working state [W{working_state_id}] already records "
                 f"{kind.upper()} [{memory_id}]."
@@ -184,6 +212,12 @@ class ConversationMemoryState:
         self._working_states[
             working_state_id
         ].extract = updated
+        _logger.debug(
+            "Registered working-state promotion",
+            working_state_id=working_state_id,
+            kind=kind,
+            memory_id=memory_id,
+        )
 
     def unregister_promotion(
         self,
@@ -198,6 +232,12 @@ class ConversationMemoryState:
         )
 
         if record is None:
+            _logger.trace(
+                "Skipped promotion removal for missing working state",
+                working_state_id=working_state_id,
+                kind=kind,
+                memory_id=memory_id,
+            )
             return
 
         ref = PromotionRef(
@@ -214,6 +254,12 @@ class ConversationMemoryState:
                 if existing != ref
             ),
         )
+        _logger.debug(
+            "Unregistered working-state promotion",
+            working_state_id=working_state_id,
+            kind=kind,
+            memory_id=memory_id,
+        )
 
     def resolve_working_state(
         self,
@@ -225,6 +271,10 @@ class ConversationMemoryState:
         )
 
         if not current.promotions:
+            _logger.warning(
+                "Rejected unresolved working state without promotions",
+                working_state_id=working_state_id,
+            )
             raise ValueError(
                 f"Working state [W{working_state_id}] has no promotions. "
                 "Promote any durable consequences first, or discard it "
@@ -234,6 +284,10 @@ class ConversationMemoryState:
         self._working_states[
             working_state_id
         ].status = "resolved"
+        _logger.debug(
+            "Resolved working state",
+            working_state_id=working_state_id,
+        )
 
         return current
 
@@ -252,6 +306,11 @@ class ConversationMemoryState:
                 for ref in current.promotions
             )
 
+            _logger.warning(
+                "Rejected discard of promoted working state",
+                working_state_id=working_state_id,
+                promotions=rendered,
+            )
             raise ValueError(
                 f"Working state [W{working_state_id}] has durable "
                 f"promotions ({rendered}) and cannot be discarded. "
@@ -261,6 +320,10 @@ class ConversationMemoryState:
         self._working_states[
             working_state_id
         ].status = "discarded"
+        _logger.debug(
+            "Discarded working state",
+            working_state_id=working_state_id,
+        )
 
         return current
 
@@ -295,6 +358,7 @@ def conversation_memory_state(
 
     else:
         if state is not None:
+            _logger.trace("Reused weak-key conversation memory state")
             return state
 
         try:
@@ -303,6 +367,7 @@ def conversation_memory_state(
             _SESSION_STATES[
                 session
             ] = state
+            _logger.debug("Created weak-key conversation memory state")
 
             return state
 
@@ -321,6 +386,7 @@ def conversation_memory_state(
         existing is not None
         and existing[0] is session
     ):
+        _logger.trace("Reused fallback conversation memory state")
         return existing[1]
 
     state = ConversationMemoryState()
@@ -331,6 +397,7 @@ def conversation_memory_state(
         session,
         state,
     )
+    _logger.debug("Created fallback conversation memory state")
 
     return state
 
@@ -348,6 +415,7 @@ class MemoryTool(
     """
 
     INVALIDATES_TOOL_CACHE = False
+    CAPABILITIES = ToolCapabilities()
 
     def __init__(
         self,
@@ -434,6 +502,84 @@ class MemoryTool(
             working_state_id,
             kind=kind,
             memory_id=memory_id,
+        )
+
+    @staticmethod
+    def normalize_reference_ids(
+        values: object,
+        *,
+        field: str,
+    ) -> tuple[int, ...]:
+        """Normalize optional cross-memory identifiers without reflection."""
+        if values is None:
+            return ()
+        if not isinstance(values, list):
+            raise ValueError(f"'{field}' must be an array of integers.")
+
+        normalized: list[int] = []
+        for index, value in enumerate(values):
+            if type(value) is not int or value < 1:
+                raise ValueError(
+                    f"{field}[{index}] must be a positive integer."
+                )
+            normalized.append(value)
+
+        if len(normalized) != len(set(normalized)):
+            raise ValueError(f"'{field}' cannot contain duplicate IDs.")
+        return tuple(normalized)
+
+    def require_memory_ids(
+        self,
+        tool_type: type[MemoryTool[Any]],
+        ids: tuple[int, ...],
+        *,
+        field: str,
+    ) -> None:
+        """Require every typed cross-memory reference to resolve."""
+        if not ids:
+            return
+
+        service = self.session.memory.get(tool_type.TOOL_ID)
+        if not isinstance(service, tool_type):
+            self._logger().warning(
+                "Linked memory service is unavailable",
+                extra={
+                    "origin": type(self).__module__,
+                    "source_tool": self.TOOL_ID,
+                    "linked_tool": tool_type.TOOL_ID,
+                },
+            )
+            raise ValueError(
+                f"Cannot validate '{field}': memory tool "
+                f"'{tool_type.TOOL_ID}' is not initialized."
+            )
+
+        known_ids = {extract.id for extract in service.get_extracts()}
+        missing = tuple(item for item in ids if item not in known_ids)
+        if missing:
+            rendered = ", ".join(str(item) for item in missing)
+            self._logger().warning(
+                "Rejected dangling cross-memory references",
+                extra={
+                    "origin": type(self).__module__,
+                    "source_tool": self.TOOL_ID,
+                    "linked_tool": tool_type.TOOL_ID,
+                    "missing_ids": missing,
+                },
+            )
+            raise ValueError(
+                f"'{field}' references missing {tool_type.TOOL_ID} IDs: "
+                f"{rendered}."
+            )
+
+        self._logger().debug(
+            "Validated cross-memory references",
+            extra={
+                "origin": type(self).__module__,
+                "source_tool": self.TOOL_ID,
+                "linked_tool": tool_type.TOOL_ID,
+                "ids": ids,
+            },
         )
 
     def format_for_llm(

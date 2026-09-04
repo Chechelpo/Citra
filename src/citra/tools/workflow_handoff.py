@@ -12,6 +12,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from .capabilities import ToolCapabilities
 from .tool import Tool, ToolDefinition
 
 
@@ -19,6 +20,7 @@ class WorkflowHandoffTool(Tool):
     """Submit one validated phase summary and transition request."""
 
     TOOL_ID = "workflow_handoff"
+    CAPABILITIES = ToolCapabilities()
     INVALIDATES_TOOL_CACHE = False
     MAX_OUTPUT_TOKENS = 512
 

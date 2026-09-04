@@ -26,6 +26,7 @@ class ProcessLoggingTests(unittest.TestCase):
             self.assertNotIn("stale process", contents)
             self.assertIn("Citra process started", contents)
             self.assertIn("diagnostic marker", contents)
+            self.assertIn("[citra.test:", contents)
             self.assertNotIn("excluded marker", contents)
             self.assertIn("Citra process stopped normally", contents)
             self.assertEqual(stat.S_IMODE(log_directory.stat().st_mode), 0o700)

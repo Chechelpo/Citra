@@ -10,6 +10,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..capabilities import ToolCapabilities
 from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
@@ -36,6 +37,7 @@ class ScopeTool(MemoryTool[ScopeExtract]):
     """
 
     TOOL_ID = "scope"
+    CAPABILITIES = ToolCapabilities(actions=("add", "update", "remove"))
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

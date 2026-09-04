@@ -4,12 +4,16 @@ from collections.abc import Iterable
 from typing import Protocol, cast
 
 from citra.agent import AgentSession
+from citra.logging import Logger
 
 from ..context import ExecutionContext
 from .default_registry import ToolSet
 from .session_memory import MemoryTool
 from .session_tool import SessionTool
 from .tool import Tool
+
+
+_logger = Logger(__name__)
 
 
 class _ToolFactory(Protocol):
@@ -55,6 +59,10 @@ class ToolRegistry:
     def __init__(self, toolset: ToolSet):
         """Initialize the instance."""
         self.__tools = toolset
+        _logger.debug(
+            "Initialized tool registry",
+            tools=len(toolset.allowed_configurations()),
+        )
 
     @property
     def tools(self) -> ToolSet:
@@ -75,9 +83,14 @@ class ToolRegistry:
         """Return stable enablement IDs and context-selected descriptions."""
 
         catalog: dict[str, str] = {}
-        for tool_type in self.__tools.deferred_tools:
-            definition = tool_type.resolve_definition_for_context(context)
+        for configuration in self.__tools.deferred_tools:
+            tool_type = configuration.type
+            definition = tool_type.resolve_definition_for_context(
+                context,
+                configuration.capabilities,
+            )
             catalog[tool_type.TOOL_ID] = definition.function.description
+        _logger.debug("Built deferred tool catalog", tools=len(catalog))
         return catalog
 
     def instantiate(
@@ -91,7 +104,8 @@ class ToolRegistry:
 
         result: dict[str, Tool] = {}
 
-        for tool_type in self.__tools.allowed_tools():
+        for configuration in self.__tools.allowed_configurations():
+            tool_type = configuration.type
             tool_id = tool_type.TOOL_ID
             if tool_ids is not None and tool_id not in tool_ids:
                 continue
@@ -119,8 +133,13 @@ class ToolRegistry:
             else:
                 tool = cast(_ToolFactory, tool_type)(context=context)
 
+            tool.rebind_capabilities(configuration.capabilities)
             result[tool_id] = tool
 
+        _logger.info(
+            "Instantiated workflow tools",
+            tools=tuple(result),
+        )
         return result
 
     @staticmethod
@@ -131,12 +150,19 @@ class ToolRegistry:
         for tool in tools:
             previous = result.get(tool.model_name)
             if previous is not None:
+                _logger.error(
+                    "Model-facing tool name collision",
+                    model_name=tool.model_name,
+                    first_tool_id=previous.id,
+                    second_tool_id=tool.id,
+                )
                 raise ValueError(
                     "Model-facing tool name collision "
                     f"{tool.model_name!r}: internal IDs "
                     f"{previous.id!r} and {tool.id!r}"
                 )
             result[tool.model_name] = tool
+        _logger.trace("Indexed tools by model-facing name", tools=len(result))
         return result
 
     def _get_memory_tool(
@@ -157,13 +183,17 @@ class ToolRegistry:
         )
         tool.rebind_context(context)
         tool.rebind_session(session)
+        _logger.debug("Rebound durable memory tool", tool_id=tool_id)
         return tool
 
     def release_session(self, session: AgentSession) -> None:
         """Compatibility no-op; ``AgentSession`` owns durable memory."""
 
         del session
+        _logger.trace("Released registry session compatibility hook")
 
     def contains(self, tool_id: str) -> bool:
         """Handle contains."""
-        return self.__tools.get_tool_with_id(tool_id) is not None
+        present = self.__tools.get_configuration_with_id(tool_id) is not None
+        _logger.trace("Checked tool registry membership", tool_id=tool_id)
+        return present

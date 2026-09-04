@@ -21,8 +21,16 @@ class _CitraLogFilter(logging.Filter):
     """Keep dependency debug chatter out of the project diagnostic log."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Handle filter."""
-        return record.name == "citra" or record.name.startswith("citra.")
+        """Keep Citra records and attach a module-and-line origin."""
+        if record.name != "citra" and not record.name.startswith("citra."):
+            return False
+        record_fields = vars(record)
+        declared_origin = record_fields.setdefault(
+            "_citra_declared_origin",
+            record_fields.get("origin", record.name),
+        )
+        record.origin = f"{declared_origin}:{record.lineno}"
+        return True
 
 
 class _UtcFormatter(logging.Formatter):
@@ -64,7 +72,8 @@ def process_log(project_root: str | Path) -> Iterator[Path]:
     handler.addFilter(_CitraLogFilter())
     handler.setFormatter(
         _UtcFormatter(
-            "%(asctime)sZ %(levelname)s %(name)s [%(threadName)s] %(message)s",
+            "%(asctime)sZ %(levelname)s %(name)s [%(threadName)s] "
+            "[%(origin)s] %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
     )

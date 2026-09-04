@@ -6,13 +6,23 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
+from citra.logging import Logger
+
 from .builtins import ArchitectWorkflow, ChatWorkflow, TaskWorkflow
-from .serial_roles import SerialRolesWorkflow
+from .serial_roles import AssuredSerialRolesWorkflow, SerialRolesWorkflow
 from .workflow import Workflow
 
 
 WORKFLOW_CONFIG_FILE = "workflow.toml"
 BUILTIN_DEFAULT_WORKFLOW = "chat"
+BUILTIN_WORKFLOW_TYPES: tuple[type[Workflow], ...] = (
+    ChatWorkflow,
+    TaskWorkflow,
+    SerialRolesWorkflow,
+    AssuredSerialRolesWorkflow,
+    ArchitectWorkflow,
+)
+_logger = Logger(__name__)
 
 
 class WorkflowRegistry:
@@ -34,11 +44,10 @@ class WorkflowRegistry:
         ):
             raise ValueError("default_workflow must be a non-empty string")
         try:
-            installed = tuple(workflows) if workflows is not None else (
-                ChatWorkflow(),
-                TaskWorkflow(),
-                SerialRolesWorkflow(),
-                ArchitectWorkflow(),
+            installed = (
+                tuple(workflows)
+                if workflows is not None
+                else tuple(workflow_type() for workflow_type in BUILTIN_WORKFLOW_TYPES)
             )
         except TypeError as error:
             raise TypeError("workflows must be an iterable of Workflow objects") from error
@@ -48,6 +57,7 @@ class WorkflowRegistry:
                 raise TypeError("workflows must contain Workflow instances")
             workflow.validate()
             if workflow.name in self._workflows:
+                _logger.error("Duplicate workflow name", workflow=workflow.name)
                 raise ValueError(f"Duplicate workflow name: {workflow.name!r}")
             self._workflows[workflow.name] = workflow
         if not self._workflows:
@@ -65,6 +75,11 @@ class WorkflowRegistry:
             )
         self._default = self._workflows[configured_default]
         self._active = self._default
+        _logger.info(
+            "Initialized workflow registry",
+            workflows=tuple(self._workflows),
+            default=configured_default,
+        )
 
     @staticmethod
     def _config_path(config_path: str | Path | None) -> Path | None:
@@ -133,21 +148,25 @@ class WorkflowRegistry:
         value = selection.strip()
         if not value:
             self._active = self._default
+            _logger.debug("Selected default workflow", workflow=self._active.name)
             return self._active
         if value.isdecimal():
             index = int(value)
             if 1 <= index <= len(self._workflows):
                 self._active = self.workflows[index - 1]
+                _logger.info("Selected workflow by index", workflow=self._active.name)
                 return self._active
             raise ValueError(
                 f"Workflow number must be between 1 and {len(self._workflows)}"
             )
         self._active = self.get(value)
+        _logger.info("Selected workflow by name", workflow=self._active.name)
         return self._active
 
 
 __all__ = [
     "BUILTIN_DEFAULT_WORKFLOW",
+    "BUILTIN_WORKFLOW_TYPES",
     "WORKFLOW_CONFIG_FILE",
     "WorkflowRegistry",
 ]

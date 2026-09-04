@@ -13,8 +13,11 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..capabilities import ToolCapabilities
 from ..tool import ToolDefinition
+from .acceptance_criteria_tool import AcceptanceCriteriaTool
 from .memory_tool import MemoryTool
+from .requirement_tool import RequirementTool
 
 
 if TYPE_CHECKING:
@@ -23,18 +26,23 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TodoExtract:
-    """Represent TodoExtract."""
+    """Represent one executable task and the outcomes it covers."""
     id: int
     content: str
     working_state_id: int | None = None
     completed: bool = False
     parent_id: int | None = None
+    requirement_ids: tuple[int, ...] = ()
+    acceptance_criterion_ids: tuple[int, ...] = ()
 
 
 class TodoTool(MemoryTool[TodoExtract]):
     """Manage hierarchical TODOs with optional working-state provenance."""
 
     TOOL_ID = "todo"
+    CAPABILITIES = ToolCapabilities(
+        actions=("add", "insert", "promote", "check", "remove"),
+    )
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
@@ -45,7 +53,9 @@ class TodoTool(MemoryTool[TodoExtract]):
                 "when an active working state produced the TODO and provenance is "
                 "useful. Use 'check' only after the work and all descendants are "
                 "complete, and 'remove' only when work is stale, invalid, "
-                "irrelevant, or based on an incorrect premise."
+                "irrelevant, or based on an incorrect premise. Requirement "
+                "and acceptance-criterion links are optional traceability, "
+                "not a reason to inflate a small plan."
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -138,6 +148,24 @@ class TodoTool(MemoryTool[TodoExtract]):
                         ),
                         required=False,
                     ),
+                    JsonProperty(
+                        name="requirement_ids",
+                        schema=JsonSchema.array(
+                            items=JsonSchema.integer(),
+                            description="Requirement IDs covered by this TODO.",
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="acceptance_criterion_ids",
+                        schema=JsonSchema.array(
+                            items=JsonSchema.integer(),
+                            description=(
+                                "Acceptance-criterion IDs covered by this TODO."
+                            ),
+                        ),
+                        required=False,
+                    ),
                 ),
                 additional_properties=False,
             ),
@@ -193,6 +221,9 @@ class TodoTool(MemoryTool[TodoExtract]):
         text = f"{indent}- [{mark}] [ID {extract.id}] {extract.content}"
         if extract.working_state_id is not None:
             text += f" (from W{extract.working_state_id})"
+        coverage = self._format_coverage(extract)
+        if coverage:
+            text += f" | covers: {coverage}"
         return text
 
     @override
@@ -230,6 +261,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         parent_id = arguments.get("parent_id")
         self._validate_parent(parent_id)
         contents = self._get_contents(arguments)
+        requirement_ids, criterion_ids = self._coverage(arguments)
         insertion_index = self._append_index(parent_id)
 
         added: list[TodoExtract] = []
@@ -238,6 +270,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                 content,
                 parent_id=parent_id,
                 working_state_id=None,
+                requirement_ids=requirement_ids,
+                acceptance_criterion_ids=criterion_ids,
             )
             self.__extracts.insert(insertion_index + offset, todo)
             added.append(todo)
@@ -273,6 +307,7 @@ class TodoTool(MemoryTool[TodoExtract]):
 
         parent_id = arguments.get("parent_id")
         self._validate_parent(parent_id)
+        requirement_ids, criterion_ids = self._coverage(arguments)
         siblings = self._siblings(parent_id)
         if not 0 <= sibling_index <= len(siblings):
             raise ValueError(
@@ -288,6 +323,8 @@ class TodoTool(MemoryTool[TodoExtract]):
             content,
             parent_id=parent_id,
             working_state_id=None,
+            requirement_ids=requirement_ids,
+            acceptance_criterion_ids=criterion_ids,
         )
         self.__extracts.insert(insertion_index, todo)
         reopened = self._reopen_ancestors(parent_id)
@@ -306,6 +343,7 @@ class TodoTool(MemoryTool[TodoExtract]):
         working_ids = self._working_ids(arguments)
         content_override = arguments.get("content")
         sibling_index = arguments.get("index")
+        requirement_ids, criterion_ids = self._coverage(arguments)
 
         if len(working_ids) != 1 and content_override is not None:
             raise ValueError("'content' is only valid for a single promotion.")
@@ -345,6 +383,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                 content,
                 parent_id=parent_id,
                 working_state_id=working_id,
+                requirement_ids=requirement_ids,
+                acceptance_criterion_ids=criterion_ids,
             )
             self.__extracts.insert(insertion_index + offset, todo)
             self.register_promotion(
@@ -385,6 +425,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                 "contents",
                 "parent_id",
                 "index",
+                "requirement_ids",
+                "acceptance_criterion_ids",
             ),
             action="check",
         )
@@ -443,6 +485,8 @@ class TodoTool(MemoryTool[TodoExtract]):
                 "contents",
                 "parent_id",
                 "index",
+                "requirement_ids",
+                "acceptance_criterion_ids",
             ),
             action="remove",
         )
@@ -487,13 +531,17 @@ class TodoTool(MemoryTool[TodoExtract]):
         *,
         parent_id: int | None,
         working_state_id: int | None,
+        requirement_ids: tuple[int, ...],
+        acceptance_criterion_ids: tuple[int, ...],
     ) -> TodoExtract:
-        """Handle new todo."""
+        """Create one immutable TODO with optional outcome traceability."""
         todo = TodoExtract(
             id=self.__next_id,
             content=content,
             working_state_id=working_state_id,
             parent_id=parent_id,
+            requirement_ids=requirement_ids,
+            acceptance_criterion_ids=acceptance_criterion_ids,
         )
         self.__next_id += 1
         return todo
@@ -536,6 +584,31 @@ class TodoTool(MemoryTool[TodoExtract]):
                 raise ValueError(f"contents[{index}] cannot be empty.")
             normalized.append(text)
         return normalized
+
+    def _coverage(
+        self,
+        arguments: dict[str, Any],
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Normalize and validate optional requirement and criterion links."""
+        requirement_ids = self.normalize_reference_ids(
+            arguments.get("requirement_ids"),
+            field="requirement_ids",
+        )
+        criterion_ids = self.normalize_reference_ids(
+            arguments.get("acceptance_criterion_ids"),
+            field="acceptance_criterion_ids",
+        )
+        self.require_memory_ids(
+            RequirementTool,
+            requirement_ids,
+            field="requirement_ids",
+        )
+        self.require_memory_ids(
+            AcceptanceCriteriaTool,
+            criterion_ids,
+            field="acceptance_criterion_ids",
+        )
+        return requirement_ids, criterion_ids
 
     @staticmethod
     def _working_ids(arguments: dict[str, Any]) -> list[int]:
@@ -697,6 +770,13 @@ class TodoTool(MemoryTool[TodoExtract]):
     def _format_ids(ids: list[int]) -> str:
         """Handle format ids."""
         return "[" + ", ".join(str(todo_id) for todo_id in ids) + "]"
+
+    @staticmethod
+    def _format_coverage(extract: TodoExtract) -> str:
+        """Format requirement and acceptance links for memory injection."""
+        refs = [f"R{item}" for item in extract.requirement_ids]
+        refs.extend(f"A{item}" for item in extract.acceptance_criterion_ids)
+        return ", ".join(refs)
 
     @staticmethod
     def _truncate(value: str) -> str:

@@ -14,17 +14,21 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
+from citra.logging import Logger
 from citra.sandbox.sandbox import WorkspaceSandbox
 from citra.sandbox.sandbox_mode import SandboxMode
 from citra.config._sandbox_policy import SandboxPolicy
 from citra.context.workspace_context import WorkspaceContext
-from citra.tools.default_registry import ToolSet
+from citra.tools.default_registry import ToolConfiguration, ToolSet, ToolSetInput
 from citra.tools.skills.skill import Skill
 from citra.tools.tool import Tool
 
 if TYPE_CHECKING:
     from citra.agent import ConversationMemory
     from citra.context import ExecutionContext
+
+
+_logger = Logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -300,16 +304,19 @@ class SingleModeWorkflow(Workflow):
     @staticmethod
     def _validate_tool_tuple(
         name: str,
-        tools: tuple[type[Tool], ...],
+        tools: tuple[ToolSetInput, ...],
     ) -> None:
         """Handle validate tool tuple."""
         if not isinstance(tools, tuple):
             raise TypeError(f"{name} must be a tuple")
         if any(
-            not isinstance(tool, type) or not issubclass(tool, Tool)
+            not isinstance(tool, ToolConfiguration)
+            and (not isinstance(tool, type) or not issubclass(tool, Tool))
             for tool in tools
         ):
-            raise TypeError(f"{name} must contain Tool subclasses")
+            raise TypeError(
+                f"{name} must contain Tool subclasses or ToolConfiguration entries"
+            )
 
     @staticmethod
     def _validate_skill_tuple(
@@ -405,8 +412,8 @@ class UserWorkflow(SingleModeWorkflow):
         name: str,
         system_prompt: str,
         description: str = "",
-        core_tools: tuple[type[Tool], ...] = (),
-        allowed_tools: tuple[type[Tool], ...] = (),
+        core_tools: tuple[ToolSetInput, ...] = (),
+        allowed_tools: tuple[ToolSetInput, ...] = (),
         available_skills: tuple[Skill, ...] = (),
         sandbox_config: SandboxConfig = SandboxConfig(),
         task_steering: TaskSteeringConfig = TaskSteeringConfig(),
@@ -609,6 +616,12 @@ class WorkflowRun:
 
         self._memory = ConversationMemory()
         self._lock = RLock()
+        _logger.info(
+            "Initialized workflow run",
+            workflow=workflow.name,
+            initial_step=self._current_step,
+            max_executions=max_executions,
+        )
 
     @property
     def memory(self) -> ConversationMemory:
@@ -642,12 +655,24 @@ class WorkflowRun:
                 raise RuntimeError("Workflow run is already terminal")
             if self._execution_count >= self.max_executions:
                 self._cancelled = True
+                _logger.error(
+                    "Workflow execution bound exceeded",
+                    workflow=self.workflow.name,
+                    step=self._current_step,
+                    executions=self._execution_count,
+                )
                 raise RuntimeError(
                     "Workflow exceeded its maximum serial step executions "
                     f"({self.max_executions})"
                 )
             self._execution_count += 1
             self._pending_handoff = None
+            _logger.info(
+                "Began workflow step",
+                workflow=self.workflow.name,
+                step=self._current_step,
+                execution=self._execution_count,
+            )
             return self._steps[self._current_step]
 
     def submit_handoff(self, *, summary: str, next_step: str) -> WorkflowHandoff:
@@ -664,6 +689,12 @@ class WorkflowRun:
             step = self._steps[self._current_step]
             if next_step not in step.allowed_next:
                 allowed = ", ".join(step.allowed_next)
+                _logger.warning(
+                    "Rejected disallowed workflow transition",
+                    workflow=self.workflow.name,
+                    step=step.step_id,
+                    next_step=next_step,
+                )
                 raise ValueError(
                     f"Step {step.step_id!r} cannot transition to "
                     f"{next_step!r}; allowed: {allowed}"
@@ -678,6 +709,12 @@ class WorkflowRun:
                 next_step=next_step,
             )
             self._pending_handoff = handoff
+            _logger.debug(
+                "Queued workflow handoff",
+                workflow=self.workflow.name,
+                step=step.step_id,
+                next_step=next_step,
+            )
             return handoff
 
     def advance(self) -> WorkflowHandoff:
@@ -695,6 +732,13 @@ class WorkflowRun:
                 self._completed = True
             else:
                 self._current_step = handoff.next_step
+            _logger.info(
+                "Advanced workflow run",
+                workflow=self.workflow.name,
+                from_step=handoff.step_id,
+                next_step=handoff.next_step,
+                completed=self._completed,
+            )
             return handoff
 
     def cancel(self) -> bool:
@@ -703,6 +747,11 @@ class WorkflowRun:
             if self._completed or self._cancelled:
                 return False
             self._cancelled = True
+            _logger.warning(
+                "Cancelled workflow run",
+                workflow=self.workflow.name,
+                step=self._current_step,
+            )
             return True
 
     def phase_input(self) -> str:
@@ -785,6 +834,11 @@ class WorkflowRuntime:
             )
         self._active_run: WorkflowRun | None = None
         self._lock = RLock()
+        _logger.info(
+            "Initialized workflow runtime",
+            workflow=workflow.name,
+            sandbox_mode=self._sandbox_config.mode.value,
+        )
 
     @classmethod
     def provision(
@@ -842,14 +896,22 @@ class WorkflowRuntime:
                 raise RuntimeError("A workflow run is already active")
             run = self.workflow.create_run(task)
             self._active_run = run
+            _logger.info("Started workflow run", workflow=self.workflow.name)
             return run
 
     def cancel_run(self) -> bool:
         """Handle cancel run."""
         with self._lock:
             if self._active_run is None:
+                _logger.trace("Skipped workflow cancellation without active run")
                 return False
-            return self._active_run.cancel()
+            cancelled = self._active_run.cancel()
+            _logger.info(
+                "Processed workflow cancellation",
+                workflow=self.workflow.name,
+                cancelled=cancelled,
+            )
+            return cancelled
 
 
 __all__ = [

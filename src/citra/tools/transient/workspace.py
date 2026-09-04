@@ -13,6 +13,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 
@@ -24,6 +25,10 @@ class Workspace(Tool):
 
     TOOL_ID = "workspace"
     MAX_PATHS = 50
+    CAPABILITIES = ToolCapabilities(
+        actions=("rollback",),
+        action_arguments=("operation",),
+    )
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

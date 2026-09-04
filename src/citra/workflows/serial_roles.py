@@ -1,20 +1,44 @@
+"""General serial-role workflows with durable, typed handoff state."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, override
 
+from citra.logging import Logger
 from citra.sandbox import SandboxMode
-from citra.tools.default_registry import ToolSet, memory_tools
-from citra.tools.session_memory import CheckpointTool
-from citra.tools.subagent import SubagentTool
-from citra.tools.transient import *
-from citra.tools.transient import SkillTool
+from citra.tools.capabilities import ToolCapabilities
+from citra.tools.default_registry import ToolConfiguration, ToolSet
+from citra.tools.session_memory import (
+    AcceptanceCriteriaTool,
+    ChangeTool,
+    CheckpointTool,
+    ConstraintTool,
+    DecisionTool,
+    FactTool,
+    IssueTool,
+    RequirementTool,
+    ScopeTool,
+    TodoTool,
+    VerificationTool,
+    WorkingStateTool,
+)
 from citra.tools.skills.skill import Skill
-from citra.utils.prompt import format_skills
-from citra.utils.prompt import collect_environment
-from citra.utils.prompt import EnvironmentInfo
-from citra.tools.transient import Subprocess
-from citra.tools.transient import Browser
-from citra.tools.session_memory import *
+from citra.tools.subagent.tool import SubagentTool
+from citra.tools.transient import (
+    Bash,
+    Browser,
+    Edit,
+    Glob,
+    Lsp,
+    PromptUser,
+    Read,
+    SkillTool,
+    Subprocess,
+    Tree,
+    Workspace,
+    Write,
+)
+from citra.utils.prompt import EnvironmentInfo, collect_environment, format_skills
 
 from .workflow import (
     SandboxConfig,
@@ -27,59 +51,106 @@ from .workflow import (
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
+    from citra.tools.tool import Tool
 
 
+_logger = Logger(__name__)
 _SERIAL_SANDBOX = SandboxConfig(mode=SandboxMode.PARTIAL_SANDBOX)
 
 
+def _restricted(
+    tool_type: type[Tool],
+    *actions: str,
+) -> ToolConfiguration:
+    """Create one action-restricted tool entry for a role boundary."""
+    return ToolConfiguration(
+        type=tool_type,
+        capabilities=ToolCapabilities(include=tuple(actions)),
+    )
+
+
+_MEMORY_PROTOCOL = """
+# Shared workflow memory
+
+The filesystem and structured memory survive role changes; conversation and
+hidden reasoning do not. Use only the smallest applicable record type:
+
+- `requirement` (R): user-visible need. Exploration owns wording; review owns
+  satisfaction.
+- `acceptance_criteria` (A): observable proof of one or more requirements.
+  Link it to R IDs when known; review owns satisfaction.
+- `scope`, `constraint`, `fact`: boundaries, mandatory invariants, and verified
+  repository evidence. Do not interchange them.
+- `todo`: the executable plan. R/A links are useful but must not inflate a
+  small plan.
+- `change` (CH): what implementation actually changed, including exact paths.
+- `verification` (V): reproducible pass/fail/blocked evidence linked to the CH
+  revision it exercised. It does not adjudicate acceptance.
+- `issue` (I): a risk, defect, requirement gap, plan gap, or test gap routed
+  to the earliest phase able to correct it. Resolve it only with evidence.
+- `decision`: a consequential choice another role must respect. Ordinary code
+  details do not need a decision entry.
+- `working_state`: provisional reasoning only; promote useful consequences and
+  resolve it, or discard it.
+- `checkpoint`: the sole controller route for the current role.
+
+Never copy a transcript into memory. Keep identifiers and evidence stable so a
+later isolated role can follow R -> A -> TODO -> CH -> V/I without guessing.
+If new evidence invalidates an accepted item, reopen it where your capabilities
+permit and route to the earliest responsible phase.
+""".strip()
+
+
 class _RoleWorkflow(SingleModeWorkflow):
-    """A stateless role used for exactly one isolated workflow phase."""
+    """Provide one stateless role in a controller-managed serial workflow."""
 
     ROLE: ClassVar[str]
     DESCRIPTION: ClassVar[str]
     INSTRUCTIONS: ClassVar[str]
     TOOLS: ClassVar[ToolSet]
     TASK_STEERING: ClassVar[TaskSteeringConfig]
+    WORKFLOW_PREFIX: ClassVar[str] = "serial"
+    ASSURANCE_INSTRUCTIONS: ClassVar[str] = ""
     _AVAILABLE_SKILLS: ClassVar[tuple[Skill, ...]] = ()
 
     @property
     def name(self) -> str:
-        """Handle name."""
-        return f"serial:{self.ROLE}"
+        """Return the stable role workflow name."""
+        return f"{self.WORKFLOW_PREFIX}:{self.ROLE}"
 
     @property
     def description(self) -> str:
-        """Handle description."""
+        """Return the role's selection description."""
         return self.DESCRIPTION
 
     @property
     def tool_set(self) -> ToolSet:
-        """Handle tool set."""
+        """Return tools and action capabilities owned by this role."""
         return self.TOOLS
 
     @property
     def skills(self) -> tuple[Skill, ...]:
-        """Handle skills."""
+        """Return skills available to this isolated role."""
         return self._AVAILABLE_SKILLS
 
     @property
     def sandbox_config(self) -> SandboxConfig:
-        """Handle sandbox config."""
+        """Return the sandbox policy shared by every serial phase."""
         return _SERIAL_SANDBOX
 
     @property
     def task_steering(self) -> TaskSteeringConfig:
-        """Handle task steering."""
+        """Return periodic role-specific self-review guidance."""
         return self.TASK_STEERING
 
     @property
     def initial_working_states(self) -> tuple[str, ...]:
-        """Handle initial working states."""
+        """Return no speculative state for a fresh isolated role."""
         return ()
 
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
-        """Return get system prompt."""
+        """Build the role prompt with route, environment, and memory contracts."""
         run = context.workflow_runtime.require_active_run()
         step = run.current_step
         checkpoint_name = CheckpointTool.resolve_definition_for_context(
@@ -87,403 +158,185 @@ class _RoleWorkflow(SingleModeWorkflow):
         ).function.name
         allowed = ", ".join(f"`{item}`" for item in step.allowed_next)
         environment: EnvironmentInfo = collect_environment(context)
-        
+        assurance = (
+            f"\n\n# Additional assurance discipline\n\n{self.ASSURANCE_INSTRUCTIONS}"
+            if self.ASSURANCE_INSTRUCTIONS
+            else ""
+        )
+        _logger.debug(
+            "Built serial role prompt",
+            workflow=self.WORKFLOW_PREFIX,
+            role=self.ROLE,
+            allowed_next=step.allowed_next,
+        )
+
         return f"""
 # Serial workflow role: {self.ROLE}
 
-You are the {self.ROLE} role in a controller-managed software workflow. Work
-only on this phase. You share the same sandbox and filesystem with the other
-roles, but you have a fresh conversation. Structured memory tools persist
-across roles; use them as the primary source of durable workflow state. Treat
-the previous role's message and retained memory as evidence to verify, not as
-hidden reasoning or unquestionable truth.
+Work only on this phase. You share the sandbox, filesystem, and structured
+memory with other roles, but this conversation is fresh. Treat the previous
+role's message and retained memory as evidence to verify, not hidden reasoning.
 
 {self.INSTRUCTIONS}
+
+{_MEMORY_PROTOCOL}{assurance}
 
 # Environment
 
 {environment.as_prompt_section()}
 
-Treat this environment as the current execution target. Avoid unnecessary
-environment-specific coupling when a reasonable abstraction can keep the
-implementation portable.
-
-You operate inside a permissive sandbox. Use the available development,
-inspection, planning, documentation, diagramming, web, and execution tools
-when they materially improve the result.
+Use the available inspection, editing, execution, and documentation tools only
+when they materially help this phase. Avoid environment-specific coupling when
+a reasonable portable implementation is available.
 
 # Available skills
 
 {format_skills(self._AVAILABLE_SKILLS)}
 
-Call them if relevant.
+Call a skill only when relevant.
 
-# Memory
-
-Use facts, constraints, requirements, todo and working state appropiately. Do not, for example, register constraints in facts. Use each for its scoped purpose.
-
-# Memory and message handoff
-
-Keep requirements, facts, decisions, constraints, TODOs, working state, and
-the checkpoint concise and synchronized with the shared filesystem. Do not
-copy a transcript into memory; retain only state that another isolated role
-must survive with.
+# Required handoff
 
 Before ending this phase:
 
-1. Reconcile the durable memory tools with the work performed.
-2. Call `{checkpoint_name}` with `action="set"`, a compact current-state
+1. Reconcile every memory record your role owns with the current filesystem.
+2. Ensure provisional working states are resolved or discarded.
+3. Call `{checkpoint_name}` with `action="set"`, a compact delta-oriented
    `content`, and `next_step` equal to one of {allowed}.
-3. After the checkpoint call completes, return a self-contained final
-   assistant message containing the next steps (avoid parroting information of the rest of the memory system)
+4. Return a self-contained final message for the next role: state the outcome,
+   material evidence, blockers, and immediate next action. Refer to durable
+   record IDs instead of repeating all stored content.
 
-The controller validates the checkpoint transition and sends that final
-assistant text to a new isolated role as its user-message handoff. Do not
-simulate the next role in this turn.
+The controller validates the checkpoint and starts a new isolated role. Do not
+simulate that role in this turn.
 """.strip()
 
 
 class ExplorerWorkflow(_RoleWorkflow):
-    """Represent ExplorerWorkflow."""
+    """Ground the request, boundaries, and observable success conditions."""
+
     ROLE = "explore"
-    DESCRIPTION = "Inspect the repository and establish grounded constraints."
-    
+    DESCRIPTION = "Clarify the task and inspect relevant repository evidence."
     INSTRUCTIONS = """
-Your responsibility is to transform the user's request into a grounded,
-implementation-ready problem definition.
+Understand the user's goal before designing a solution. You are the only role
+allowed to ask the user questions; ask only when repository evidence cannot
+resolve a material ambiguity.
 
-You are the only workflow role allowed to communicate directly with the user.
-Use that ability to remove ambiguity before handing work to the next phase.
+Record confirmed needs immediately as requirements. Define concise observable
+acceptance criteria and link them to the requirements they prove. Record scope,
+constraints, and verified facts in their own memory types. Inspect relevant
+code, tests, configuration, entry points, dependencies, and current behavior,
+but do not modify project files.
 
-## Phase 1: Understand the request
-
-Start by using the prompt user tool when relevant. Clarify:
-
-- What the user wants changed or achieved.
-- Why they need it.
-- What success looks like.
-- What is explicitly included.
-- What is explicitly excluded.
-- Any constraints, preferences, or expectations.
-
-Do not ask unnecessary questions. If the repository already provides the answer,
-use evidence instead of asking the user.
-
-Immediately register confirmed user requirements with the requirements tool.
-This is mandatory.
-
-Register:
-- functional needs as requirements;
-- hard limitations as constraints;
-- observable facts as facts.
-
-Do not put all information into requirements. Keep each memory category scoped
-correctly.
-
-## Phase 2: Establish request boundaries
-
-Create a precise scope boundary.
-
-Use the scope tool to record:
-
-- what belongs to this change;
-- what does not belong to this change.
-
-A request without scope is considered incomplete because later roles may expand
-the task beyond the user's intent.
-
-## Phase 3: Define success
-
-Identify acceptance criteria.
-
-Use the acceptance criteria tool to record conditions that prove the request
-is satisfied.
-
-Acceptance criteria must describe observable outcomes, not implementation
-details.
-
-Good:
-"The user can export a report containing all transactions."
-
-Bad:
-"Create a ReportExporterService class."
-
-## Phase 4: Inspect the environment
-
-After understanding the request, inspect the repository.
-
-Investigate:
-
-- relevant source code;
-- tests;
-- configuration;
-- entry points;
-- dependencies;
-- existing behavior;
-- documentation.
-
-Do not modify project files.
-
-Separate findings into:
-
-Facts:
-- directly verified repository information.
-
-Requirements:
-- what must happen.
-
-Constraints:
-- what cannot change.
-
-Hypotheses:
-- possible explanations requiring validation.
-
-Unknowns:
-- missing information blocking confidence.
-
-## Phase 5: Capture the current state
-
-Document the current behavior before changes.
-
-Capture:
-
-- how the system currently works;
-- existing workflows;
-- relevant architecture;
-- current limitations;
-- existing dependencies.
-
-The next roles should understand what they are changing and why.
-
-## Phase 6: Identify quality expectations
-
-Determine whether the request has important quality expectations.
-
-Capture relevant concerns such as:
-
-- performance;
-- availability;
-- security;
-- scalability;
-- maintainability;
-- compatibility.
-
-Only register them when they materially affect the solution.
-
-## Phase 7: Prepare handoff
-
-Before advancing:
-
-Verify that another isolated agent could understand the request without
-conversation history.
-
-The handoff must contain:
-
-- user goal;
-- requirements;
-- scope;
-- constraints;
-- acceptance criteria;
-- current state;
-- relevant facts;
-- risks;
-- unresolved questions.
-
-Do not provide a solution design. Your role is understanding the problem,
-not solving it.
-
-Advance to plan only when the request is sufficiently grounded.
-Return to explore when important information is missing.
+Use issues for material risks or gaps, not for ordinary unknowns you can inspect
+now. Do not propose a solution design. Advance to plan when a fresh planner can
+act without conversation history; repeat explore when important ambiguity
+remains.
 """.strip()
-
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=4,
-        content="""
-    Re-ground the exploration before continuing.
-
-    Check that:
-
-    1. The user's actual goal is captured, not only the requested implementation.
-    2. Requirements, constraints, facts, scope, and acceptance criteria are stored
-    in their correct memory categories.
-    3. Scope boundaries are explicit.
-    4. Acceptance criteria describe observable success.
-    5. Current behavior is understood before proposing changes.
-    6. Repository conclusions are backed by evidence.
-    7. Unknowns and assumptions are clearly separated.
-    8. The next role could understand the task without access to this conversation.
-
-    If important ambiguity remains, ask the user or continue exploring.
-    If the request is sufficiently understood, prepare the handoff to plan.
-    """,
+        content=(
+            "Recheck the user goal, R/A links, scope boundary, constraints, "
+            "verified current behavior, and unresolved gaps. Ask only if a "
+            "material ambiguity remains; otherwise hand off to plan."
+        ),
     )
-
     TOOLS = ToolSet(
-        core_tools=(PromptUser, SkillTool, Read, Glob, Tree, *memory_tools()),
+        core_tools=(
+            PromptUser,
+            SkillTool,
+            Read,
+            Glob,
+            Tree,
+            _restricted(RequirementTool, "add", "update", "remove"),
+            _restricted(AcceptanceCriteriaTool, "add", "update", "remove"),
+            ScopeTool,
+            ConstraintTool,
+            FactTool,
+            _restricted(IssueTool, "add", "update", "resolve", "remove"),
+            WorkingStateTool,
+            _restricted(CheckpointTool, "set"),
+        ),
         deferred_tools=(Lsp,),
     )
 
 
 class PlannerWorkflow(_RoleWorkflow):
-    """Represent PlannerWorkflow."""
+    """Produce the smallest executable plan supported by repository evidence."""
+
     ROLE = "plan"
-    DESCRIPTION = "Create an implementation plan from verified evidence."
-
+    DESCRIPTION = "Create a concise executable implementation plan."
     INSTRUCTIONS = """
-Your responsibility is to transform the explored problem into an executable
-solution plan.
+Validate the explored state against the repository, then choose the smallest
+coherent implementation approach. Planning effort must scale with the task: a
+localized change may need one TODO; a refactor may need a short ordered tree.
 
-The exploration phase provides the problem definition. Validate it against the
-repository before planning. Do not blindly accept assumptions.
+Each TODO should say what changes, where, and how it will be verified. Attach
+R/A IDs while creating it when that information already exists; do not create a
+separate mapping exercise. Record a decision only when a consequential choice
+must survive the handoff. Compare alternatives only when they could materially
+change correctness, compatibility, risk, or effort.
 
-Determine the smallest coherent solution that satisfies the request.
-
-For every task, decide the appropriate level of change:
-
-- local code modification;
-- refactoring existing structure;
-- extracting or modifying components;
-- changing interfaces;
-- introducing new architectural elements;
-- modifying deployment or configuration.
-
-Do not introduce architectural complexity unless the requirements,
-constraints, or quality expectations justify it.
-
-## Solution design
-
-Define:
-
-- affected files and modules;
-- affected components or boundaries when relevant;
-- responsibilities of changed elements;
-- dependencies and interactions;
-- important interfaces or contracts;
-- data/control flow changes;
-- required design decisions.
-
-When changing structure, consider:
-
-- cohesion;
-- coupling;
-- maintainability;
-- compatibility;
-- existing repository conventions.
-
-## Architectural reasoning
-
-For non-trivial decisions:
-
-- identify alternatives considered;
-- explain why the chosen option fits the context;
-- record relevant trade-offs.
-
-Remember that architectural decisions are decisions that affect the structure
-or quality attributes of the system. Do not elevate ordinary implementation
-details into architecture.
-
-## Implementation plan
-
-Create ordered TODOs for the implementer.
-
-Each TODO should include:
-
-- concrete action;
-- affected location;
-- reason;
-- acceptance criteria covered;
-- verification approach.
-
-The implementer should be able to execute the plan without rediscovering the
-design.
-
-Do not modify project files.
-
-Return to explore if:
-- requirements are unclear;
-- important constraints are unknown;
-- repository evidence contradicts the request.
-
-Stay in plan while the solution design is incomplete.
-Advance to implement only when the plan is executable.
+Do not edit project files and do not perform system-architecture design. Route
+to explore for an unclear goal or boundary, remain in plan for a flawed or
+incomplete approach, and advance to implement as soon as the TODOs are safely
+executable.
 """.strip()
-
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=4,
-        content="""
-Review the implementation plan before doing more planning.
-
-Check that:
-
-1. Every important plan item is supported by verified repository evidence.
-2. The plan is ordered and executable rather than a list of vague intentions.
-3. Affected paths, important invariants, dependencies, and compatibility
-   concerns are explicit.
-4. Acceptance criteria and concrete verification commands are defined.
-5. Assumptions that materially affect implementation have either been verified
-   or identified as reasons to return to explore.
-6. Decisions, constraints, and implementation TODOs are synchronized with
-   durable memory.
-
-Ask whether a fresh implementer could execute the plan without having to
-rediscover a design decision you already made.
-
-Return to explore for missing evidence. Stay in plan only while the plan itself
-needs work. Advance to implement once it is genuinely executable.
-""".strip(),
+        content=(
+            "Keep the plan proportional. Verify paths and invariants, ensure "
+            "TODO order and checks are executable, record only consequential "
+            "decisions, then advance without extra ceremony."
+        ),
     )
-
     TOOLS = ToolSet(
-        core_tools=(SkillTool, Read, Glob, Tree, *memory_tools()),
+        core_tools=(
+            SkillTool,
+            Read,
+            Glob,
+            Tree,
+            _restricted(TodoTool, "add", "insert", "promote", "remove"),
+            DecisionTool,
+            FactTool,
+            _restricted(IssueTool, "add", "update", "resolve", "remove"),
+            WorkingStateTool,
+            _restricted(CheckpointTool, "set"),
+        ),
         deferred_tools=(Lsp,),
     )
 
 
 class ImplementerWorkflow(_RoleWorkflow):
-    """Represent ImplementerWorkflow."""
+    """Implement planned work and record the actual change set."""
+
     ROLE = "implement"
-    DESCRIPTION = "Implement the approved plan in the current project."
-
+    DESCRIPTION = "Implement the approved TODOs and record changed behavior."
     INSTRUCTIONS = """
-Implement the smallest coherent change that satisfies the plan. Inspect files
-before editing, preserve unrelated work, and run focused checks during the
-change. Use the workspace tool to roll back exact tracked files when needed.
-Do not create Git commits; the user owns repository history. Advance to test
-when implementation is ready, return to plan when the design is invalid, or
-repeat implement when another implementation pass is required.
-""".strip()
+Execute the active TODOs with the smallest coherent change. Inspect files before
+editing, preserve unrelated work, follow repository conventions, and run useful
+focused checks while implementing. Do not create Git commits.
 
+Check TODOs only after their outcomes are complete. Record each coherent change
+with exact paths and relevant TODO/R/A links; update an existing CH record when
+the same change evolves. Resolve an issue only after applying its correction
+and cite the concrete result.
+
+Route to explore if implementation exposes a goal or scope ambiguity, to plan
+if the approach is invalid, repeat implement if code work remains, and advance
+to test when the recorded change set is ready for independent verification.
+""".strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=5,
-        content="""
-Reconcile the implementation with the approved plan before continuing.
-
-Check that:
-
-1. The current changes still solve the stated task and respect the established
-   constraints and invariants.
-2. You are making the smallest coherent change rather than accumulating
-   speculative cleanup or unrelated refactoring.
-3. Files were inspected before being changed and unrelated existing work has
-   been preserved.
-4. Any implementation discovery that invalidates the plan has been recorded
-   instead of silently designing around it.
-5. Focused executable checks are being run as useful during implementation.
-6. Decisions, changed paths, remaining TODOs, and known risks are synchronized
-   with durable memory.
-
-Inspect the actual project when answering these questions; do not rely only
-on what you remember editing.
-
-If the design is no longer sound, route back to plan. If implementation work
-remains, stay in implement. If the coherent change is ready for independent
-verification, prepare the handoff to test.
-""".strip(),
+        content=(
+            "Reconcile files with TODOs and CH records, preserve scope and "
+            "constraints, classify discoveries instead of silently redesigning, "
+            "and route to independent test when implementation is coherent."
+        ),
     )
-
     TOOLS = ToolSet(
         core_tools=(
             SkillTool,
@@ -495,192 +348,294 @@ verification, prepare the handoff to test.
             Bash,
             Workspace,
             Lsp,
-            *memory_tools(),
+            _restricted(TodoTool, "check"),
+            ChangeTool,
+            FactTool,
+            _restricted(IssueTool, "add", "update", "resolve", "reopen"),
+            WorkingStateTool,
+            _restricted(CheckpointTool, "set"),
         ),
         deferred_tools=(SubagentTool,),
     )
 
 
 class TesterWorkflow(_RoleWorkflow):
-    """Represent TesterWorkflow."""
+    """Collect independent executable evidence without repairing defects."""
+
     ROLE = "test"
-    DESCRIPTION = "Verify the implementation without repairing it implicitly."
-
+    DESCRIPTION = "Verify the implementation and report reproducible failures."
     INSTRUCTIONS = """
-Run the strongest relevant automated and executable verification available.
-Record exact commands, outcomes, failures, and coverage gaps. Do not modify
-project files to make checks pass. Advance to review only when the evidence is
-sufficient; return to implement for code defects, to plan for a flawed design,
-or repeat test when verification itself was incomplete or flaky.
-""".strip()
+Derive checks from requirements, acceptance criteria, recorded changes, open
+issues, and likely regressions. Run the strongest relevant focused and broader
+verification available. Record meaningful results as V entries with exact
+commands and relevant CH IDs when applicable; supersede stale results after a
+retest.
 
+For every failure or blockage, create or update an issue with reproduction
+evidence, affected R/A/CH IDs, severity, and the earliest correction phase. Do
+not modify project files to make checks pass and do not mark requirements or
+criteria satisfied.
+
+Route requirement/scope gaps to explore, approach flaws to plan, code defects to
+implement, incomplete or flaky verification to test, and advance to review only
+when current evidence is sufficient for independent adjudication.
+""".strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=3,
-        content="""
-Pause the verification loop and assess the quality of the evidence collected.
-
-Check that:
-
-1. You are testing the requested behavior and relevant regressions, not merely
-   running whatever command is convenient.
-2. Exact commands and their outcomes are recorded.
-3. Failures are classified rather than repaired in the test phase:
-   - implementation defect -> implement;
-   - design or requirement flaw -> plan;
-   - missing/flaky verification -> test.
-4. Important validation layers such as focused tests, broader tests, typing,
-   linting, builds, or runtime checks have been considered where applicable.
-5. Coverage gaps and environmental limitations are explicit.
-6. Durable memory accurately reflects verification results and unresolved
-   failures.
-
-Do not edit project files to obtain a passing result.
-
-Advance to review only when the available evidence is strong enough for a
-fresh reviewer to judge the completed change.
-""".strip(),
+        content=(
+            "Check that V records cover requested behavior and regressions, "
+            "commands and outcomes are exact, failures have routed I records, "
+            "and no project file was edited during verification."
+        ),
     )
-
     TOOLS = ToolSet(
-        core_tools=(SkillTool, Read, Glob, Tree, Bash, Lsp, *memory_tools()),
+        core_tools=(
+            SkillTool,
+            Read,
+            Glob,
+            Tree,
+            Bash,
+            Lsp,
+            VerificationTool,
+            _restricted(IssueTool, "add", "update", "resolve", "reopen"),
+            WorkingStateTool,
+            _restricted(CheckpointTool, "set"),
+        ),
         deferred_tools=(Browser, Subprocess),
     )
 
 
 class ReviewerWorkflow(_RoleWorkflow):
-    """Represent ReviewerWorkflow."""
+    """Adjudicate task completion from repository state and current evidence."""
+
     ROLE = "review"
-    DESCRIPTION = "Review the complete change with fresh reasoning."
-
+    DESCRIPTION = "Review scope, correctness, evidence, and task satisfaction."
     INSTRUCTIONS = """
-Review the diff, implementation, tests, failure handling, compatibility, and
-task coverage independently. Do not repair defects in the review phase. If
-the result is correct, transition to complete. Repository commits are owned
-by the user, not by this workflow.
-Otherwise route to the earliest phase that can correct the problem and give a
-specific revision handoff.
-""".strip()
+Review the repository state independently: diff, behavior, error handling,
+compatibility, tests, scope, constraints, TODOs, CH records, V evidence, and
+open issues. Do not trust a handoff claim without checking its evidence and do
+not repair defects in review.
 
+You are the only role that marks requirements and acceptance criteria satisfied
+or reopens them. Cite active verification or precise inspection evidence for
+each satisfaction action. If anything fails, add or reopen a routed issue and
+send the workflow to the earliest phase capable of correction.
+
+Complete only when every valid R and A is satisfied, every valid TODO is
+checked, no active failed/blocked/stale-change V remains, no blocking I remains
+open, and no working state remains provisional.
+""".strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=3,
-        content="""
-Reassert reviewer independence before continuing.
-
-Judge the repository state itself rather than trusting the implementation or
-test handoffs.
-
-Check that:
-
-1. The diff implements the original task completely and does not contain
-   unintended changes.
-2. The implementation respects established invariants, compatibility
-   requirements, and repository conventions.
-3. Tests actually exercise the behavior they are claimed to verify.
-4. Error handling, edge cases, regressions, and important integration effects
-   have been considered.
-5. Known failures or coverage gaps have not been rationalized away.
-6. Any defect is routed to the earliest phase capable of correcting it rather
-   than being repaired during review.
-7. Durable memory and the eventual handoff describe the final reviewed state,
-   not an obsolete implementation plan.
-
-Complete only when the review evidence supports the result. Otherwise produce
-a concrete revision handoff and select the appropriate earlier phase.
-""".strip(),
+        content=(
+            "Reassert independence: inspect actual state, validate V coverage, "
+            "adjudicate every R/A with evidence, route each defect to its "
+            "earliest owner, and complete only when all gates are clear."
+        ),
     )
-
     TOOLS = ToolSet(
-        core_tools=(SkillTool, Read, Glob, Tree, Bash, Lsp, *memory_tools()),
+        core_tools=(
+            SkillTool,
+            Read,
+            Glob,
+            Tree,
+            Bash,
+            Lsp,
+            _restricted(RequirementTool, "satisfy", "reopen"),
+            _restricted(AcceptanceCriteriaTool, "satisfy", "reopen"),
+            _restricted(VerificationTool, "record", "invalidate"),
+            _restricted(IssueTool, "add", "update", "reopen"),
+            WorkingStateTool,
+            _restricted(CheckpointTool, "set"),
+        ),
         deferred_tools=(),
     )
 
-class SerialRolesWorkflow(Workflow):
-    """A loop-capable serial workflow with fresh reasoning per role."""
 
-    _steps = (
-        WorkflowStep(
-            "explore",
-            ExplorerWorkflow(),
-            ("explore", "plan"),
-        ),
-        WorkflowStep(
-            "plan",
-            PlannerWorkflow(),
-            ("explore", "plan", "implement"),
-        ),
+class AssuredExplorerWorkflow(ExplorerWorkflow):
+    """Apply stricter traceability while grounding higher-risk work."""
+
+    WORKFLOW_PREFIX = "serial_assured"
+    ASSURANCE_INSTRUCTIONS = (
+        "Link each acceptance criterion to its requirement IDs. Capture every "
+        "material boundary or risk explicitly; do not manufacture records for "
+        "irrelevant categories."
+    )
+
+
+class AssuredPlannerWorkflow(PlannerWorkflow):
+    """Apply stricter coverage discipline to a still-proportional plan."""
+
+    WORKFLOW_PREFIX = "serial_assured"
+    ASSURANCE_INSTRUCTIONS = (
+        "Ensure every requirement and criterion is covered by at least one "
+        "TODO, using links on the TODO itself. This is a coverage check, not a "
+        "request for extra planning documents or speculative design."
+    )
+
+
+class AssuredImplementerWorkflow(ImplementerWorkflow):
+    """Require explicit change records for higher-assurance implementation."""
+
+    WORKFLOW_PREFIX = "serial_assured"
+    ASSURANCE_INSTRUCTIONS = (
+        "Before test, every checked TODO must be represented by a current CH "
+        "record with exact paths and applicable R/A links."
+    )
+
+
+class AssuredTesterWorkflow(TesterWorkflow):
+    """Require explicit evidence coverage for higher-assurance verification."""
+
+    WORKFLOW_PREFIX = "serial_assured"
+    ASSURANCE_INSTRUCTIONS = (
+        "Give every acceptance criterion active V evidence or an open I record "
+        "that explains the coverage gap and routes correction."
+    )
+
+
+class AssuredReviewerWorkflow(ReviewerWorkflow):
+    """Require end-to-end evidence links before higher-assurance completion."""
+
+    WORKFLOW_PREFIX = "serial_assured"
+    ASSURANCE_INSTRUCTIONS = (
+        "Trace every satisfaction judgment through current TODO, CH, and V/I "
+        "records. The identifiers are the audit trail; do not duplicate them in "
+        "a separate report."
+    )
+
+
+def _steps(
+    explorer: _RoleWorkflow,
+    planner: _RoleWorkflow,
+    implementer: _RoleWorkflow,
+    tester: _RoleWorkflow,
+    reviewer: _RoleWorkflow,
+) -> tuple[WorkflowStep, ...]:
+    """Build the shared feedback graph for one serial-role variant."""
+    return (
+        WorkflowStep("explore", explorer, ("explore", "plan")),
+        WorkflowStep("plan", planner, ("explore", "plan", "implement")),
         WorkflowStep(
             "implement",
-            ImplementerWorkflow(),
-            ("plan", "implement", "test"),
+            implementer,
+            ("explore", "plan", "implement", "test"),
         ),
         WorkflowStep(
             "test",
-            TesterWorkflow(),
-            ("plan", "implement", "test", "review"),
+            tester,
+            ("explore", "plan", "implement", "test", "review"),
         ),
         WorkflowStep(
             "review",
-            ReviewerWorkflow(),
-            (
-                "explore",
-                "plan",
-                "implement",
-                "test",
-                "review",
-                "complete",
-            ),
+            reviewer,
+            ("explore", "plan", "implement", "test", "review", "complete"),
         ),
     )
 
+
+class _SerialRolesWorkflowBase(Workflow):
+    """Share lifecycle behavior between serial-role workflow variants."""
+
+    _NAME: ClassVar[str]
+    _DESCRIPTION: ClassVar[str]
+    _STEPS: ClassVar[tuple[WorkflowStep, ...]]
+    _MAX_EXECUTIONS: ClassVar[int] = 32
+
     def __init__(self) -> None:
-        """Initialize the instance."""
+        """Validate phase definitions and their shared sandbox policy."""
         self.validate()
-        for step in self._steps:
+        for step in self._STEPS:
             if step.workflow.sandbox_config != self.sandbox_config:
+                _logger.error(
+                    "Serial phase sandbox mismatch",
+                    workflow=self._NAME,
+                    step=step.step_id,
+                )
                 raise ValueError(
                     "Serial workflow phases must share the root workflow's "
                     "sandbox configuration"
                 )
-
-    @property
-    def name(self) -> str:
-        """Handle name."""
-        return "serial_roles"
-
-    @property
-    def description(self) -> str:
-        """Handle description."""
-        return (
-            "Isolated explore, plan, implement, test, and review role turns."
+        _logger.info(
+            "Initialized serial-role workflow",
+            workflow=self._NAME,
+            steps=tuple(step.step_id for step in self._STEPS),
         )
 
     @property
+    def name(self) -> str:
+        """Return the selectable workflow name."""
+        return self._NAME
+
+    @property
+    def description(self) -> str:
+        """Return the selectable workflow description."""
+        return self._DESCRIPTION
+
+    @property
     def sandbox_config(self) -> SandboxConfig:
-        """Handle sandbox config."""
+        """Return the sandbox policy shared by all phases."""
         return _SERIAL_SANDBOX
 
     @property
     def initial_workflow(self) -> SingleModeWorkflow:
-        """Handle initial workflow."""
-        return self._steps[0].workflow
+        """Return the exploration role that starts each task."""
+        return self._STEPS[0].workflow
 
     @property
     def is_serial(self) -> bool:
-        """Return whether is serial."""
+        """Declare isolated sequential role execution."""
         return True
 
     @property
     def requires_memory(self) -> bool:
-        """Handle requires memory."""
+        """Require structured memory even when global memory is disabled."""
         return True
 
     def create_run(self, task: str) -> WorkflowRun:
-        """Handle create run."""
+        """Create one bounded run over this workflow's feedback graph."""
+        _logger.info("Created serial workflow run", workflow=self._NAME)
         return WorkflowRun(
             workflow=self,
             task=task,
-            steps=self._steps,
-            max_executions=32,
+            steps=self._STEPS,
+            max_executions=self._MAX_EXECUTIONS,
         )
+
+
+class SerialRolesWorkflow(_SerialRolesWorkflowBase):
+    """Run the balanced general-purpose five-role workflow."""
+
+    _NAME = "serial_roles"
+    _DESCRIPTION = (
+        "Balanced isolated explore, plan, implement, test, and review roles."
+    )
+    _STEPS = _steps(
+        ExplorerWorkflow(),
+        PlannerWorkflow(),
+        ImplementerWorkflow(),
+        TesterWorkflow(),
+        ReviewerWorkflow(),
+    )
+
+
+class AssuredSerialRolesWorkflow(_SerialRolesWorkflowBase):
+    """Run the general five-role workflow with stronger evidence traceability."""
+
+    _NAME = "serial_roles_assured"
+    _DESCRIPTION = (
+        "Higher-assurance serial roles with explicit coverage and evidence."
+    )
+    _MAX_EXECUTIONS = 48
+    _STEPS = _steps(
+        AssuredExplorerWorkflow(),
+        AssuredPlannerWorkflow(),
+        AssuredImplementerWorkflow(),
+        AssuredTesterWorkflow(),
+        AssuredReviewerWorkflow(),
+    )
+
+
+__all__ = ["AssuredSerialRolesWorkflow", "SerialRolesWorkflow"]

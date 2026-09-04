@@ -7,6 +7,7 @@ import time
 from typing import Any, override
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -31,6 +32,8 @@ class Subprocess(Tool):
             "list",
         }
     )
+
+    CAPABILITIES = ToolCapabilities(actions=tuple(sorted(ACTIONS)))
 
     MAX_SLEEP_AFTER_SECONDS = 60
 

@@ -13,9 +13,8 @@ from jsonschema import Draft202012Validator
 
 from ..context import ExecutionContext
 from ..utils.json_schema import ChatCompletionTool
+from .capabilities import InvalidToolCapabilities, ToolCapabilities
 
-
-logger = logging.getLogger(__name__)
 
 _MAX_LOG_RESULT_LENGTH = 1000
 
@@ -113,13 +112,16 @@ class ToolDefinition:
 
 
 class Tool(ABC):
-    """Represent Tool."""
+    """Base for schema-selected, capability-aware, lifecycle-logged tools."""
     HISTORY_ARGUMENT_COMPACT_THRESHOLD_TOKENS : ClassVar[int] = 128
     HISTORY_ARGUMENT_DIGEST_LENGTH: ClassVar[int] = 12
 
     # Stable Citra-internal identity.
     # This does NOT change when the model-facing function name changes.
     TOOL_ID: ClassVar[str]
+
+    # Concrete action-dispatching tools override this immutable declaration.
+    CAPABILITIES: ClassVar[ToolCapabilities] = ToolCapabilities()
 
     _DESCRIPTION : ClassVar[str] = ""
 
@@ -134,8 +136,15 @@ class Tool(ABC):
     ) -> None:
         """Initialize the instance."""
         self.__context = context
+        self.__capabilities = self._resolve_capabilities(None)
         self.__definition = self._resolve_definition(
             context
+        )
+        self._logger().debug(
+            "Initialized tool '%s' with %d enabled capabilities",
+            self.id,
+            len(self.__capabilities.enabled_actions),
+            extra={"origin": type(self).__module__},
         )
 
     # -------------------------------------------------------------------------
@@ -179,23 +188,51 @@ class Tool(ABC):
             context
         )
 
-        return self._select_definition(
+        definition = self._select_definition(
             context,
             definitions,
         )
+        return self.__capabilities.apply_to_definition(definition)
 
     @classmethod
     @final
     def resolve_definition_for_context(
         cls,
         context: ExecutionContext,
+        capabilities: ToolCapabilities | None = None,
     ) -> ChatCompletionTool:
-        """Resolve the public definition without constructing a tool."""
+        """Resolve the public definition under an optional action restriction."""
 
-        return cls._select_definition(
+        definition = cls._select_definition(
             context,
             cls.definitions_for_context(context),
         )
+        return cls._resolve_capabilities(capabilities).apply_to_definition(
+            definition
+        )
+
+    @classmethod
+    def _resolve_capabilities(
+        cls,
+        capabilities: ToolCapabilities | None,
+    ) -> ToolCapabilities:
+        """Bind a caller restriction to the class capability declaration."""
+        declaration = cls.CAPABILITIES
+        if not isinstance(declaration, ToolCapabilities):
+            raise TypeError(
+                f"Tool '{cls.TOOL_ID}' CAPABILITIES must be ToolCapabilities."
+            )
+        option = declaration if capabilities is None else capabilities
+        return option.bind(declaration)
+
+    @classmethod
+    @final
+    def configure_capabilities(
+        cls,
+        capabilities: ToolCapabilities | None = None,
+    ) -> ToolCapabilities:
+        """Return class capabilities with an optional restriction applied."""
+        return cls._resolve_capabilities(capabilities)
 
     @classmethod
     def _select_definition(
@@ -278,12 +315,18 @@ class Tool(ABC):
             f"Tool '{cls.TOOL_ID}' has ambiguous definitions "
             f"for model '{model_id}': {names}"
         )
+
     @property
     def definition(self) -> ChatCompletionTool:
         """
         Exact definition exposed to the currently bound model.
         """
         return self.__definition
+
+    @property
+    def capabilities(self) -> ToolCapabilities:
+        """Return the supported and enabled actions bound to this instance."""
+        return self.__capabilities
 
     @property
     def id(self) -> str:
@@ -346,6 +389,35 @@ class Tool(ABC):
 
         self.__context = context
         self.__definition = definition
+        self._logger().debug(
+            "Rebound tool '%s' to execution context",
+            self.id,
+            extra={"origin": type(self).__module__},
+        )
+
+    @final
+    def rebind_capabilities(
+        self,
+        capabilities: ToolCapabilities | None,
+    ) -> None:
+        """Apply a ToolSet action restriction without reconstructing the tool."""
+        resolved = self._resolve_capabilities(capabilities)
+        previous = self.__capabilities
+        self.__capabilities = resolved
+        try:
+            definition = self._resolve_definition(self.__context)
+        except Exception:
+            self.__capabilities = previous
+            raise
+        self.__definition = definition
+        self._logger().debug(
+            "Rebound tool '%s' capabilities",
+            self.id,
+            extra={
+                "origin": type(self).__module__,
+                "enabled_actions": resolved.enabled_actions,
+            },
+        )
 
     # -------------------------------------------------------------------------
     # Cache policy
@@ -479,6 +551,19 @@ class Tool(ABC):
         arguments: dict[str, Any],
     ) -> None:
         """Handle validate arguments."""
+        try:
+            self.__capabilities.validate_arguments(arguments)
+        except InvalidToolCapabilities as error:
+            self._logger().warning(
+                "Rejected disabled action for tool '%s': %s",
+                self.id,
+                error,
+                extra={"origin": type(self).__module__},
+            )
+            raise InvalidToolArguments(
+                f"Invalid arguments for tool '{self.model_name}': {error}"
+            ) from error
+
         validator = Draft202012Validator(
             self.definition.function.parameters.to_dict()
         )
@@ -511,6 +596,12 @@ class Tool(ABC):
                     error.message
                 )
 
+        self._logger().warning(
+            "Rejected invalid arguments for tool '%s': %s",
+            self.id,
+            "; ".join(messages),
+            extra={"origin": type(self).__module__},
+        )
         raise InvalidToolArguments(
             f"Invalid arguments for tool "
             f"'{self.model_name}': "
@@ -535,10 +626,12 @@ class Tool(ABC):
             arguments
         )
 
-        logger.info(
+        operation_logger = self._logger()
+        operation_logger.info(
             "[%s] START %s",
             self.id,
             call_log,
+            extra={"origin": type(self).__module__},
         )
 
         started = perf_counter()
@@ -553,12 +646,13 @@ class Tool(ABC):
                 - started
             )
 
-            logger.exception(
+            operation_logger.exception(
                 "[%s] ERROR after %.3fs | %s | %s",
                 self.id,
                 elapsed,
                 call_log,
                 error,
+                extra={"origin": type(self).__module__},
             )
 
             raise
@@ -572,13 +666,14 @@ class Tool(ABC):
             result
         )
 
-        logger.info(
+        operation_logger.info(
             "[%s] DONE in %.3fs | %s",
             self.id,
             elapsed,
             self._truncate_log_value(
                 result_log
             ),
+            extra={"origin": type(self).__module__},
         )
 
         return result
@@ -648,6 +743,16 @@ class Tool(ABC):
     ) -> str:
         """Handle format call log."""
         return str(arguments)
+
+    def _logger(self) -> logging.Logger:
+        """Return a logger named for the concrete tool's source module."""
+        module = type(self).__module__
+        logger_name = (
+            module
+            if module == "citra" or module.startswith("citra.")
+            else f"citra.tools.external.{module}"
+        )
+        return logging.getLogger(logger_name)
 
     def format_result_log(
         self,

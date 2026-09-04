@@ -2,6 +2,7 @@ from citra.sandbox.filesystem_ops import EditInput
 from typing import Any, override
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -136,6 +137,7 @@ class Edit(Tool):
     """
 
     TOOL_ID = "edit"
+    CAPABILITIES = ToolCapabilities()
 
     # ------------------------------------------------------------------
     # Citra-native fallback

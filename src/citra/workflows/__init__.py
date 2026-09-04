@@ -7,10 +7,11 @@ from .builtins import (
 from .chat import ChatWorkflow
 from .registry import (
     BUILTIN_DEFAULT_WORKFLOW,
+    BUILTIN_WORKFLOW_TYPES,
     WORKFLOW_CONFIG_FILE,
     WorkflowRegistry,
 )
-from .serial_roles import SerialRolesWorkflow
+from .serial_roles import AssuredSerialRolesWorkflow, SerialRolesWorkflow
 from .workflow import (
     SandboxConfig,
     SingleModeWorkflow,
@@ -29,7 +30,9 @@ from .task import TaskWorkflow
 __all__ = [
     "ArchitectMode",
     "ArchitectWorkflow",
+    "AssuredSerialRolesWorkflow",
     "BUILTIN_DEFAULT_WORKFLOW",
+    "BUILTIN_WORKFLOW_TYPES",
     "ChatWorkflow",
     "SandboxConfig",
     "SerialRolesWorkflow",

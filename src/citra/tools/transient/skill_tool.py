@@ -1,6 +1,7 @@
 from typing import Any, override
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -61,6 +62,7 @@ class SkillTool(Tool):
     """
 
     TOOL_ID = "skill"
+    CAPABILITIES = ToolCapabilities()
 
     INVALIDATES_TOOL_CACHE = False
 

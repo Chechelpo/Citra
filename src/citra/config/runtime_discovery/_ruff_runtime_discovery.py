@@ -26,18 +26,25 @@ class RuffRuntimeDiscovery(RuntimeDiscovery):
 
     @classmethod
     def discover(cls) -> RuntimeDiscoveryResult:
+        """Discover Ruff and return the host paths required to execute it."""
         executable_raw = shutil.which(_COMMAND)
         if executable_raw is None:
             logger.warning(
                 "Runtime discovery could not find %r on the host PATH; "
                 "Ruff will not receive automatic read-only sandbox binds.",
                 _COMMAND,
+                extra={"origin": __name__},
             )
             return RuntimeDiscoveryResult()
 
-        return RuntimeDiscoveryResult(
+        result = RuntimeDiscoveryResult(
             readonly_binds=_runtime_binds(Path(executable_raw)),
         )
+        logger.debug(
+            "Discovered Ruff runtime",
+            extra={"origin": __name__, "executable": executable_raw},
+        )
+        return result
 
 
 def _runtime_binds(executable: Path) -> tuple[Path, ...]:
@@ -151,6 +158,7 @@ def _minimal_existing_paths(candidates: list[Path]) -> tuple[Path, ...]:
 
 
 def _is_inside(path: Path, parent: Path) -> bool:
+    """Return whether a path is contained by a candidate parent path."""
     try:
         path.absolute().relative_to(parent.absolute())
         return True

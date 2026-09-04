@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import ChatCompletionTool, FunctionDefinition, JsonProperty, JsonSchema
 
@@ -17,6 +18,7 @@ class WebSearch(Tool):
     """Represent WebSearch."""
     INVALIDATES_TOOL_CACHE = False
     TOOL_ID = 'web-search'
+    CAPABILITIES = ToolCapabilities()
     "\n    Search the public web through the OpenSERP instance configured in the\n    current ExecutionContext.\n\n    A call may contain either one ``query`` or a batch of ``queries``. Batch\n    queries share the same search options and are executed concurrently against\n    OpenSERP's ``/mega/search`` endpoint. Successful and failed batch items are\n    kept separate so one failed query does not discard the other results.\n\n    Citra intentionally exposes a smaller API than OpenSERP itself. Provider-\n    specific proxy, aggregation, and transport controls remain implementation\n    details rather than model-facing search semantics.\n\n    Result formats\n    --------------\n\n    text:\n        Default. OpenSERP's compact plain-text representation optimized for\n        model context.\n\n    markdown:\n        OpenSERP's rendered Markdown representation.\n\n    json:\n        Citra-normalized structured search results.\n\n    ndjson:\n        OpenSERP's newline-delimited JSON. For batch calls, each output line is\n        wrapped with the originating query and batch index so provenance is not\n        lost.\n\n    Batch behavior\n    --------------\n\n    ``query`` and ``queries`` are mutually exclusive.\n\n    Batch calls may contain up to ``MAX_BATCH_QUERIES`` non-empty queries.\n    Duplicate queries are rejected because they would perform redundant network\n    work.\n\n    Batch searches run with bounded concurrency. A failed query is represented\n    as an error for that query while successful queries are retained. If every\n    query fails, the tool raises ``WebSearchError``.\n\n    All search parameters other than ``query`` / ``queries`` are shared by the\n    entire batch. ``timeout_seconds`` applies independently to each OpenSERP\n    request rather than to the batch as a whole.\n    "
     DEFAULT_ENGINES = ('duckduckgo', 'google')
     SUPPORTED_ENGINES = ('google', 'bing', 'duckduckgo', 'ecosia', 'yandex', 'baidu')

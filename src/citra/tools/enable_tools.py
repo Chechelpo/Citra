@@ -11,6 +11,7 @@ from ..utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from .capabilities import ToolCapabilities
 from .tool import Tool, ToolDefinition
 
 
@@ -18,6 +19,7 @@ class EnableTools(Tool):
     """Enable deferred tools for the remainder of the current agent turn."""
 
     TOOL_ID = "enable_tools"
+    CAPABILITIES = ToolCapabilities()
 
     INVALIDATES_TOOL_CACHE = False
     MAX_OUTPUT_TOKENS = 500

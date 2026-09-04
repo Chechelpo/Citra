@@ -25,6 +25,7 @@ from citra.utils.lsp.language import detect_language
 from citra.utils.lsp.manager import LspManager
 from citra.utils.lsp.positions import SourcePosition
 from citra.utils.lsp.protocol import uri_to_path
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 
@@ -92,6 +93,12 @@ class Lsp(Tool):
         "findReferences": "references",
         "documentSymbol": "document_symbols",
     }
+
+    CAPABILITIES = ToolCapabilities(
+        actions=ACTIONS,
+        action_arguments=("action", "operation"),
+        aliases=tuple(NATIVE_ACTION_MAP.items()),
+    )
 
     # ------------------------------------------------------------------
     # Citra-native fallback

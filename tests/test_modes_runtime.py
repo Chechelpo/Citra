@@ -88,6 +88,7 @@ def test_registry_treats_ordinary_modes_as_single_mode_workflows() -> None:
         "chat",
         "task",
         "serial_roles",
+        "serial_roles_assured",
         "architect",
     )
     assert isinstance(workflows[0], SingleModeWorkflow)
@@ -255,6 +256,66 @@ def test_runner_injects_workflow_steering_before_first_request(monkeypatch) -> N
         "role": "user",
         "content": "workflow steering",
     }
+
+
+def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> None:
+    """Keep read-only prior-role memory visible beside active role tools."""
+    workflow = _workflow("custom")
+    model = SimpleNamespace(
+        id="test-model",
+        max_input_tokens=10_000,
+        reasoning_effort=None,
+    )
+    context = SimpleNamespace(
+        workflow=workflow,
+        workspace=SimpleNamespace(is_closing=False, disabled_tool_ids=()),
+        config=SimpleNamespace(
+            memory=SimpleNamespace(enabled=True),
+            model=lambda: model,
+        ),
+        ensure_active=lambda: None,
+    )
+    session = AgentSession(memory_enabled=True)
+    session.add_user_message("original request")
+    retained = object()
+    session.memory.get_or_create("prior-role-record", lambda: retained)
+    requests: list[dict] = []
+
+    class _Registry:
+        """Provide an empty active tool set for request-boundary testing."""
+
+        def __init__(self, **_kwargs) -> None:
+            """Accept the production registry constructor shape."""
+
+        core_tool_ids: tuple[str, ...] = ()
+
+        @staticmethod
+        def deferred_catalog(_context) -> dict[str, str]:
+            """Return no deferred tools."""
+            return {}
+
+        @staticmethod
+        def instantiate(*_args, **_kwargs) -> dict:
+            """Return no active tools."""
+            return {}
+
+        @staticmethod
+        def index_by_model_name(_tools) -> dict:
+            """Return no model-facing tools."""
+            return {}
+
+    def built_in_api(**kwargs) -> dict:
+        """Capture the request prepared for the built-in API boundary."""
+        requests.append(kwargs)
+        return {"choices": [{"message": {"role": "assistant", "content": None}}]}
+
+    monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
+    monkeypatch.setattr(runner_module, "call_api", built_in_api)
+    monkeypatch.setattr("citra.agent.session.tokenize", lambda *_args, **_kwargs: 1)
+
+    AgentRunner(context, session, api_call=built_in_api).run_turn()
+
+    assert requests[0]["memory_services"] == (retained,)
 
 
 def test_builtin_single_mode_workflows_use_full_sandbox() -> None:

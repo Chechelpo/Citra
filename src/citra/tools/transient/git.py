@@ -7,6 +7,7 @@ from typing import Any, override
 from urllib.parse import urlparse
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -52,6 +53,8 @@ class Git(Tool):
     ACTION_SET = frozenset(
         ACTIONS
     )
+
+    CAPABILITIES = ToolCapabilities(actions=ACTIONS)
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

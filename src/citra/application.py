@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from threading import Event, Lock
 
+from citra.logging import Logger
+
 from .agent import AgentSession, UserInteractionBroker
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
@@ -20,15 +22,21 @@ from .workflows import (
 )
 from citra.utils.lsp import LspConfig, LspManager
 from .tools.session_memory import (
+    AcceptanceCriteriaTool,
     CheckpointTool,
+    IssueTool,
     RequirementTool,
     TodoTool,
+    VerificationTool,
     WorkingStateTool,
 )
 from .tools.skills.skill_registry import SkillRegistry
 from .tools.subagent import SubagentSupervisor
 from .utils.chat_completions_api import call_api
 from .utils.terminal import RESET, YELLOW
+
+
+_logger = Logger(__name__)
 
 
 class CitraApplication:
@@ -184,9 +192,11 @@ class CitraApplication:
             raise ValueError("User task cannot be empty")
         if not self.workflow.is_serial:
             self.session.add_user_message(content)
+            _logger.debug("Prepared persistent user turn")
             return
 
         self.workflow_runtime.start_run(content)
+        _logger.info("Started serial user turn", workflow=self.workflow.name)
         try:
             self._activate_serial_step()
         except Exception:
@@ -260,7 +270,7 @@ class CitraApplication:
                     raise
 
     def _activate_serial_step(self) -> None:
-        """Handle activate serial step."""
+        """Activate one fresh role session over the run's shared memory."""
         run = self.workflow_runtime.active_run
         if run is None or run.is_terminal:
             raise RuntimeError("Cannot activate a terminal workflow run")
@@ -289,6 +299,11 @@ class CitraApplication:
             session,
             api_call=self._api_call,
         )
+        _logger.info(
+            "Activated serial workflow role",
+            workflow=run.workflow.name,
+            step=run.current_step.step_id,
+        )
 
     def _checkpoint_revision(self) -> int:
         """Handle checkpoint revision."""
@@ -303,7 +318,7 @@ class CitraApplication:
         *,
         checkpoint_revision: int,
     ) -> str | None:
-        """Handle submit serial handoff."""
+        """Validate memory gates and submit one controller-owned handoff."""
         checkpoint_tool = self.session.memory.get(CheckpointTool.TOOL_ID)
         if not isinstance(checkpoint_tool, CheckpointTool):
             return "the checkpoint memory tool was not used"
@@ -336,22 +351,63 @@ class CitraApplication:
         try:
             run.submit_handoff(summary=message, next_step=next_step)
         except (RuntimeError, ValueError) as error:
+            _logger.warning(
+                "Rejected serial handoff",
+                step=step.step_id,
+                next_step=next_step,
+                error=str(error),
+            )
             return str(error)
+        _logger.info(
+            "Submitted serial handoff",
+            step=step.step_id,
+            next_step=next_step,
+        )
         return None
 
     def _memory_completion_error(self) -> str | None:
-        """Handle memory completion error."""
+        """Return the first structured-memory condition blocking completion."""
         requirement = self.session.memory.get(RequirementTool.TOOL_ID)
         if (
             isinstance(requirement, RequirementTool)
             and requirement.has_unsatisfied_requirements()
         ):
+            _logger.warning("Completion blocked by unsatisfied requirements")
             return "workflow completion requires all valid requirements satisfied"
+        acceptance = self.session.memory.get(AcceptanceCriteriaTool.TOOL_ID)
+        if (
+            isinstance(acceptance, AcceptanceCriteriaTool)
+            and acceptance.has_unsatisfied_criteria()
+        ):
+            _logger.warning("Completion blocked by unsatisfied acceptance criteria")
+            return (
+                "workflow completion requires all valid acceptance criteria "
+                "satisfied"
+            )
         todo = self.session.memory.get(TodoTool.TOOL_ID)
         if isinstance(todo, TodoTool) and todo.has_outstanding_todos():
+            _logger.warning("Completion blocked by outstanding TODOs")
             return "workflow completion requires all valid TODOs to be complete"
+        verification = self.session.memory.get(VerificationTool.TOOL_ID)
+        if (
+            isinstance(verification, VerificationTool)
+            and verification.has_blocking_results()
+        ):
+            _logger.warning("Completion blocked by invalid verification evidence")
+            return (
+                "workflow completion requires failed, blocked, or stale-change "
+                "verification results to be superseded or invalidated"
+            )
+        issue = self.session.memory.get(IssueTool.TOOL_ID)
+        if isinstance(issue, IssueTool) and issue.has_blocking_issues():
+            _logger.warning(
+                "Completion blocked by unresolved issues",
+                required_route=issue.required_route(),
+            )
+            return "workflow completion requires all blocking issues resolved"
         working = self.session.memory.get(WorkingStateTool.TOOL_ID)
         if isinstance(working, WorkingStateTool) and working.get_extracts():
+            _logger.warning("Completion blocked by provisional working states")
             return (
                 "workflow completion requires working states to be resolved "
                 "or discarded"

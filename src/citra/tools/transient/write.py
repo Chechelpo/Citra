@@ -2,6 +2,7 @@ from citra.sandbox.filesystem_ops import WriteInput
 from typing import Any, override
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -88,6 +89,7 @@ class Write(Tool):
     """
 
     TOOL_ID = "write"
+    CAPABILITIES = ToolCapabilities()
 
     # ------------------------------------------------------------------
     # Citra-native fallback

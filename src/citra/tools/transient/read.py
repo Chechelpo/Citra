@@ -18,6 +18,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 _TRUNCATE_LENGTH = 120
@@ -26,6 +27,7 @@ _TRUNCATE_LENGTH = 120
 class Read(Tool):
     """Represent Read."""
     TOOL_ID = "read"
+    CAPABILITIES = ToolCapabilities()
 
     CACHEABLE = True
     INVALIDATES_TOOL_CACHE = False

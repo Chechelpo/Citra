@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, override
 
 from citra.tools.default_registry import ToolSet, all_tools
-from citra.tools.subagent import SubagentTool
+from citra.tools.subagent.tool import SubagentTool
 from citra.utils.directory_tree import render_tree
 
 from .chat import ChatWorkflow

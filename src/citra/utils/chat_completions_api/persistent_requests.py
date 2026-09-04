@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
@@ -610,7 +611,21 @@ def _resolve_model_snapshot(context: ExecutionContext, model_config: ModelConfig
         raise TypeError('model_config must be a ModelConfig')
     return model
 
-def call_api(context: ExecutionContext, messages: list[ChatMessage], tools: dict[str, Tool], reasoning_effort: str | None=None, *, model_config: ModelConfig | None=None, request_timeout: float | None=None, max_attempts: int | None=None, initial_backoff: float | None=None, max_backoff: float | None=None, retry_interrupt: Callable[[], bool] | None=None, sys_prompt: str | None=None) -> dict[str, Any]:
+def call_api(
+    context: ExecutionContext,
+    messages: list[ChatMessage],
+    tools: dict[str, Tool],
+    reasoning_effort: str | None = None,
+    *,
+    model_config: ModelConfig | None = None,
+    request_timeout: float | None = None,
+    max_attempts: int | None = None,
+    initial_backoff: float | None = None,
+    max_backoff: float | None = None,
+    retry_interrupt: Callable[[], bool] | None = None,
+    sys_prompt: str | None = None,
+    memory_services: Iterable[object] | None = None,
+) -> dict[str, Any]:
     """
     Perform one OpenAI-compatible Chat Completions request.
 
@@ -696,8 +711,12 @@ def call_api(context: ExecutionContext, messages: list[ChatMessage], tools: dict
             context.
 
         tools:
-            Tools exposed to the model. Memory tools may additionally
-            contribute transient system context.
+            Tools exposed to the model.
+
+        memory_services:
+            Optional complete retained-memory collection. When supplied, all
+            memory services contribute context even when this role cannot
+            mutate them through ``tools``.
 
         reasoning_effort:
             Optional model-specific reasoning effort setting.
@@ -757,7 +776,9 @@ def call_api(context: ExecutionContext, messages: list[ChatMessage], tools: dict
     if initial_backoff > max_backoff:
         raise ValueError('initial_backoff cannot exceed max_backoff.')
     system_messages: list[ChatCompletionSystemMessageParam] = [{'role': 'system', 'content': sys_prompt}]
-    memory_context = build_memory_context(tools)
+    memory_context = build_memory_context(
+        tools if memory_services is None else memory_services
+    )
     messages_to_merge: list[ChatMessage] = [*system_messages, *messages]
     request_messages = merge_consecutive_roles(messages_to_merge)
     request_messages = insert_memory_context(request_messages, memory_context)
@@ -862,7 +883,9 @@ def call_api(context: ExecutionContext, messages: list[ChatMessage], tools: dict
             continue
     raise RuntimeError('Model API request failed unexpectedly.')
 
-def build_memory_context(tools: dict[str, Tool]) -> str | None:
+def build_memory_context(
+    tools: Mapping[str, Tool] | Iterable[object],
+) -> str | None:
     """
     Build durable conversation-memory context for the next model request.
 
@@ -870,14 +893,24 @@ def build_memory_context(tools: dict[str, Tool]) -> str | None:
     representation through ``format_for_llm``.
     """
     sections: list[str] = []
-    for tool in tools.values():
+    services = tools.values() if isinstance(tools, Mapping) else tools
+    for tool in services:
         if not isinstance(tool, MemoryTool):
             continue
         section = tool.format_for_llm().strip()
         if section:
             sections.append(section)
     if not sections:
+        logger.debug(
+            'No retained memory context to inject.',
+            extra={'origin': __name__},
+        )
         return None
+    logger.debug(
+        'Built retained memory context with %d section(s).',
+        len(sections),
+        extra={'origin': __name__},
+    )
     return '\n\n'.join(('# Conversation Memory', 'The following state is owned by this conversation and survives agent turns and dropped older messages. Treat it as active working memory. Update it through the corresponding memory tools when it becomes completed, stale, invalid, or otherwise changes.', *sections))
 
 def insert_memory_context(messages: list[ChatMessage], memory_context: str | None) -> list[ChatMessage]:

@@ -6,6 +6,7 @@ import json
 from typing import Any, override
 from ...agent.interactions import UserInteractionBroker
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import ChatCompletionTool, FunctionDefinition, JsonProperty, JsonSchema
 from ...utils.terminal import BLUE, BOLD, CYAN, DIM, RESET, YELLOW, terminal_bell
@@ -23,6 +24,7 @@ ZCODE_QUESTION_SCHEMA = JsonSchema.object(properties=(JsonProperty(name='questio
 class PromptUser(Tool):
     """Represent PromptUser."""
     TOOL_ID = 'prompt_user'
+    CAPABILITIES = ToolCapabilities()
     INVALIDATES_TOOL_CACHE = False
     DEFAULT_TIMEOUT_SECONDS = 30
     CITRA_DEFINITION = ChatCompletionTool(function=FunctionDefinition(name='prompt_user', description='Prompt the user for clarification, a decision, or permission. Provide options for a choice question or omit them for free-form input. If the user is unavailable, continue using your best judgment.', parameters=JsonSchema.object(properties=(JsonProperty(name='question', schema=JsonSchema.string(description='Question to present to the user.')), JsonProperty(name='options', schema=JsonSchema.array(JsonSchema.string(), description='Optional predefined choices.'), required=False), JsonProperty(name='timeout', schema=JsonSchema.integer(description='User inactivity timeout in seconds. Defaults to 30.'), required=False)), additional_properties=False)))

@@ -7,6 +7,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 
@@ -24,6 +25,8 @@ class Commit(Tool):
         "unstage",
         "apply",
     )
+
+    CAPABILITIES = ToolCapabilities(actions=ACTIONS)
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

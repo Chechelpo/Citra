@@ -3,6 +3,7 @@ from abc import ABC
 from citra.agent import AgentSession
 from citra.context import ExecutionContext
 
+from .capabilities import ToolCapabilities
 from .tool import Tool
 
 
@@ -13,6 +14,8 @@ class SessionTool(Tool, ABC):
     Model-facing tool definitions are resolved by Tool through
     definitions_for_context(); SessionTool only adds session state.
     """
+
+    CAPABILITIES = ToolCapabilities()
 
     def __init__(
         self,

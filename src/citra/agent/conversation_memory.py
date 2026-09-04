@@ -5,8 +5,11 @@ from __future__ import annotations
 from threading import RLock
 from typing import Callable, TypeVar, cast
 
+from citra.logging import Logger
+
 
 T = TypeVar("T")
+_logger = Logger(__name__)
 
 
 class ConversationMemory:
@@ -22,6 +25,7 @@ class ConversationMemory:
         """Initialize the instance."""
         self._services: dict[str, object] = {}
         self._lock = RLock()
+        _logger.trace("Initialized conversation memory")
 
     def get_or_create(
         self,
@@ -34,19 +38,31 @@ class ConversationMemory:
             if existing is None:
                 existing = factory()
                 self._services[name] = existing
+                _logger.debug("Created memory service", service=name)
+            else:
+                _logger.trace("Reused memory service", service=name)
             return cast(T, existing)
 
     def values(self) -> tuple[object, ...]:
-        """Handle values."""
+        """Return retained memory services in insertion order."""
         with self._lock:
+            _logger.trace("Listed memory services", count=len(self._services))
             return tuple(self._services.values())
 
     def get(self, name: str) -> object | None:
         """Return one existing memory service without creating it."""
         with self._lock:
-            return self._services.get(name)
+            service = self._services.get(name)
+            _logger.trace(
+                "Looked up memory service",
+                service=name,
+                found=service is not None,
+            )
+            return service
 
     def clear(self) -> None:
-        """Handle clear."""
+        """Clear every retained service for the conversation."""
         with self._lock:
+            count = len(self._services)
             self._services.clear()
+            _logger.info("Cleared conversation memory", services=count)

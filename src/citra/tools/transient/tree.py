@@ -12,6 +12,7 @@ from ...utils.repo_map import (
     DEFAULT_MAP_TOKENS,
     MAX_MAP_TOKENS,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 
@@ -24,6 +25,7 @@ class Tree(Tool):
     """
 
     TOOL_ID = "tree"
+    CAPABILITIES = ToolCapabilities()
 
     CACHEABLE = True
     INVALIDATES_TOOL_CACHE = False

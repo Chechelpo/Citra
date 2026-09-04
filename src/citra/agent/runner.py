@@ -184,6 +184,7 @@ class AgentRunner:
                 api_arguments["retry_interrupt"] = (
                     self.session.steering.has_pending
                 )
+                api_arguments["memory_services"] = self.session.memory.values()
 
             if prompt:
                 api_arguments["sys_prompt"] = prompt

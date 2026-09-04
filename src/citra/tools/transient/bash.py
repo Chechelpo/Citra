@@ -4,6 +4,7 @@ import shlex
 from typing import Any, override
 from ...context import ExecutionContext
 from ...utils.json_schema import ChatCompletionTool, FunctionDefinition, JsonProperty, JsonSchema
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from .prompt_user import PromptUser
 _SHELL_SEPARATORS = re.compile('[\\n;&|]+')
@@ -49,6 +50,7 @@ class Bash(Tool):
     Execute one or more foreground shell commands inside Citra's sandbox.
     """
     TOOL_ID = 'bash'
+    CAPABILITIES = ToolCapabilities()
     DEFAULT_TIMEOUT_SECONDS = 30
     MAX_BATCH_SIZE = 20
     CITRA_DEFINITION = _bash_definition(name='bash', command_name='cmd', cwd_name='cwd', timeout_name='timeout', timeout_milliseconds=False, include_description=False, description='Execute one or more Bash commands inside the local sandbox. For a single command use cmd. For multiple independent commands use requests. Prefer specialized tools when available.')

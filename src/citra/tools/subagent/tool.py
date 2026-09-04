@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, override
 
 from ...context import ExecutionContext
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
@@ -221,6 +222,10 @@ class SubagentTool(Tool):
     """Model-facing tool for delegating work to subagents."""
 
     TOOL_ID = "subagent"
+
+    CAPABILITIES = ToolCapabilities(
+        actions=("create", "poll", "steer", "cancel", "sleep"),
+    )
 
     INVALIDATES_TOOL_CACHE = True
     MAX_OUTPUT_TOKENS = 4_000

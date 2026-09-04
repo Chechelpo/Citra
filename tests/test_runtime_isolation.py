@@ -16,6 +16,7 @@ from citra.config.runtime_discovery import (
     RuntimeDiscovery,
     RuntimeDiscoveryResult,
     StandardDiscovery,
+    get_ro_binds,
 )
 from citra.config.runtime_discovery._language import PythonRuntimeDiscovery
 from citra.config.runtime_discovery._elf import elf_interpreter
@@ -74,6 +75,14 @@ class _WorkspaceFixture:
 
 class RuntimeIsolationTests(unittest.TestCase):
     """Verify mode-specific provisioning and canonical command execution."""
+
+    def test_runtime_registry_accepts_discovery_objects(self) -> None:
+        """Allow modular discovery by extending an object tuple."""
+        results = get_ro_binds((_FixtureDiscovery(),))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].available_commands, ("fixture",))
+        self.assertEqual(results[0].readonly_binds, (Path("/fixture/bin"),))
 
     def _definition(self, prefix: Path) -> ToolDefinition:
         """Create a definition whose executable lives under one prefix."""

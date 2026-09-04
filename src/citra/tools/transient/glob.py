@@ -8,6 +8,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 
@@ -64,6 +65,7 @@ class Glob(Tool):
     """
 
     TOOL_ID = "glob"
+    CAPABILITIES = ToolCapabilities()
 
     # ------------------------------------------------------------------
     # Citra-native fallback

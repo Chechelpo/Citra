@@ -10,6 +10,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..capabilities import ToolCapabilities
 from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
@@ -31,6 +32,7 @@ class CheckpointTool(MemoryTool[CheckpointExtract]):
     """
 
     TOOL_ID = "checkpoint"
+    CAPABILITIES = ToolCapabilities(actions=("set", "clear"))
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

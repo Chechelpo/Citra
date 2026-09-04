@@ -11,6 +11,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..capabilities import ToolCapabilities
 from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 
@@ -42,6 +43,7 @@ class FactTool(MemoryTool[FactExtract]):
     """Manage verified facts, optionally promoted from working state."""
 
     TOOL_ID = "fact"
+    CAPABILITIES = ToolCapabilities(actions=("add", "promote", "remove"))
 
     CITATION_SCHEMA = JsonSchema.object(
         properties=(

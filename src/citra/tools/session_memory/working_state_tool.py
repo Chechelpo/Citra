@@ -10,6 +10,7 @@ from citra.utils.json_schema import (
     JsonSchema,
 )
 
+from ..capabilities import ToolCapabilities
 from ..tool import ToolDefinition
 from .memory_tool import MemoryTool, WorkingStateExtract
 
@@ -22,6 +23,9 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
     """Manage active hypotheses and provisional interpretations."""
 
     TOOL_ID = "working_state"
+    CAPABILITIES = ToolCapabilities(
+        actions=("create", "update", "resolve", "discard"),
+    )
 
     DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(

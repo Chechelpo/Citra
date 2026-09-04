@@ -28,6 +28,7 @@ from ...utils.json_schema import (
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
 
 
@@ -94,6 +95,7 @@ class ReadImage(Tool):
     """Read a local image and return an OpenAI ``image_url`` payload."""
 
     TOOL_ID = "read_image"
+    CAPABILITIES = ToolCapabilities()
 
     # Vision payloads are large. Disable the result cache: a re-read with
     # identical arguments should still hand the model a fresh, up-to-date
