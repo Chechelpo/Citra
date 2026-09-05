@@ -12,6 +12,7 @@ from citra.logging import Logger
 from citra.sandbox import SandboxResult, SandboxedFilesystem
 from citra.sandbox.filesystem_ops import (
     EditInput,
+    FindInput,
     GlobInput,
     ReadBinaryInput,
     ReadInput,
@@ -43,6 +44,11 @@ class _FilesystemSandbox:
             "files": 0,
             "skipped": 0,
             "directories_only": False,
+        },
+        "find": {
+            "mode": "files",
+            "paths": [],
+            "truncated": False,
         },
     }
 
@@ -136,6 +142,7 @@ class ProcessLoggingTests(unittest.TestCase):
             EditInput.parse({"path": "a.txt", "old": "x", "new": "y"}),
             GlobInput.parse({"pat": "*.txt"}),
             TreeInput.parse({"path": "."}),
+            FindInput.parse({"paths": ["src"]}),
         )
 
         with tempfile.TemporaryDirectory() as temporary:

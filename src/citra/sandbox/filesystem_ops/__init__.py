@@ -1,5 +1,11 @@
 from .base import FilesystemInput, FilesystemOutput
 from .edit import EditInput, EditOutput
+from .find import (
+    FindFileMatches,
+    FindInput,
+    FindMatch,
+    FindOutput,
+)
 from .glob import GlobInput, GlobOutput
 from .grep import GrepInput, GrepMatch, GrepOutput
 from .read import ReadInput, ReadOutput, ReadSlice
@@ -29,4 +35,8 @@ __all__ = [
     "GrepOutput",
     "TreeInput",
     "TreeOutput",
+    "FindInput",
+    "FindOutput",
+    "FindMatch",
+    "FindFileMatches",
 ]

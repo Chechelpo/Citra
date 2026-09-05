@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from .base import FilesystemInput, FilesystemOutput
 from .edit import EditInput, execute as execute_edit
+from .find import FindInput, execute as execute_find
 from .glob import GlobInput, execute as execute_glob
 from .grep import GrepInput, execute as execute_grep
 from .read import ReadInput, execute as execute_read
@@ -34,4 +35,5 @@ OPERATIONS: dict[str, OperationSpec] = {
     GlobInput.operation: OperationSpec(GlobInput, execute_glob),
     GrepInput.operation: OperationSpec(GrepInput, execute_grep),
     TreeInput.operation: OperationSpec(TreeInput, execute_tree),
+    FindInput.operation: OperationSpec(FindInput, execute_find),
 }

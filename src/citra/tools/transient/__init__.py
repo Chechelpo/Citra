@@ -1,8 +1,10 @@
 from .bash import Bash
 from .browser import Browser
+from .commit import Commit
 from .diagram import Diagram
 from .document import Document
 from .edit import Edit
+from .find import Find
 from .git import Git
 from .glob import Glob
 from .grep import Grep
@@ -20,9 +22,11 @@ from .write import Write
 __all__ = [
     "Bash",
     "Browser",
+    "Commit",
     "Diagram",
     "Document",
     "Edit",
+    "Find",
     "Git",
     "Glob",
     "Grep",

@@ -614,6 +614,63 @@ class LspManager:
                 self._shutdown_client(failed_client)
             raise
 
+    def _sandbox_node_module_roots(self) -> tuple[Path, ...]:
+        """Return sandbox-visible ``node_modules`` directories.
+
+        The runtime COPIES the host ``node_modules`` tree at startup, so
+        installs performed after provisioning are invisible to a parent
+        walk of the resolved ``vue-language-server`` symlink. This helper
+        enumerates ``node_modules`` directories that remain reachable
+        from inside the sandbox after startup, regardless of when the
+        package was installed:
+
+        1. Every target in ``workspace.runtime_readonly_binds`` that is
+           itself a ``node_modules`` directory or contains one as a
+           path component. Host bind targets produced by
+           ``LanguageServerRuntimeDiscovery._node_module_store`` point
+           at the *live* host directory, so a post-startup
+           ``npm install -g @vue/typescript-plugin`` (on the host or via
+           the sandbox shell at ``<env>/npm/lib/node_modules``) is
+           visible at the corresponding in-sandbox path.
+        2. ``<workspace.env>/npm/lib/node_modules`` — the
+           sandbox-writable dependency environment prefix set up by
+           ``npm_config_prefix`` in :meth:`environment`. ``env`` is in
+           :attr:`allowed_roots`, so this path is always readable.
+
+        Candidate enumeration is bounded to discovered roots; the
+        filesystem root and arbitrary prefixes are never added.
+        """
+        roots: list[Path] = []
+        seen: set[str] = set()
+
+        def _add(path: Path | None) -> None:
+            if path is None:
+                return
+            try:
+                resolved = path.resolve()
+            except OSError:
+                return
+            key = str(resolved)
+            if key in seen:
+                return
+            seen.add(key)
+            roots.append(resolved)
+
+        for _, target in self.workspace.runtime_readonly_binds:
+            try:
+                target_path = Path(target)
+            except (TypeError, ValueError):
+                continue
+            if target_path.name != "node_modules" and "node_modules" not in target_path.parts:
+                continue
+            _add(target_path)
+
+        env = getattr(self.workspace, "env", None)
+        if env is not None:
+            _add(Path(env) / "npm" / "lib" / "node_modules")
+
+        return tuple(roots)
+
     def _vue_plugin_location(self, root: Path | None) -> Path | None:
         """Handle vue plugin location."""
         candidates: list[Path] = []
@@ -648,6 +705,19 @@ class LspManager:
                             base / "@vue" / "language-server",
                         ]
                     )
+        # Sandbox-visible post-startup installs. The runtime snapshots the
+        # host ``node_modules`` tree at provisioning, so installs performed
+        # afterwards land in the live host bind or in the sandbox-writable
+        # ``<env>/npm/lib/node_modules`` — neither is reachable through the
+        # branches above. Append these last so existing detection order is
+        # preserved.
+        for node_modules_root in self._sandbox_node_module_roots():
+            candidates.extend(
+                [
+                    node_modules_root / "@vue" / "typescript-plugin",
+                    node_modules_root / "@vue" / "language-server",
+                ]
+            )
         for candidate in candidates:
             if candidate.is_dir():
                 return candidate.resolve()

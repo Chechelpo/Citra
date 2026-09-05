@@ -14,15 +14,14 @@ from citra.tools.session_memory import (
 from citra.tools.transient import (
     Browser,
     Commit,
-    Curl,
     Edit,
+    Find,
     Git,
     Glob,
     Grep,
     Lsp,
     PromptUser,
     Read,
-    RepoLibrary,
     SkillTool,
     Subprocess,
     Tree,
@@ -35,9 +34,16 @@ from citra.tools.transient import (
 # ---------------------------------------------------------------------------
 
 def _ctx() -> SimpleNamespace:
-    """Minimal stand-in for ExecutionContext."""
+    """Minimal stand-in for ``ExecutionContext``.
 
-    return SimpleNamespace()
+    The transient tool base class resolves the model-facing definition
+    eagerly in ``__init__``; a stub ``config.model().id`` keeps the
+    schema/validator path happy without spinning up a real model.
+    """
+
+    model = SimpleNamespace(id="test-model")
+    config = SimpleNamespace(model=lambda: model)
+    return SimpleNamespace(config=config)
 
 
 def _session_ctx() -> SimpleNamespace:
@@ -216,6 +222,77 @@ class TestTree:
 
 
 # ---------------------------------------------------------------------------
+# Find
+# ---------------------------------------------------------------------------
+
+
+class TestFind:
+    def test_call_log_paths_and_extensions(self) -> None:
+        log = Find(_ctx()).format_call_log(
+            {
+                "paths": ["src", "tests"],
+                "extensions": ["ts", "tsx"],
+            }
+        )
+        assert "paths=2" in log
+        assert "ext=ts,tsx" in log
+
+    def test_call_log_content_and_mode(self) -> None:
+        log = Find(_ctx()).format_call_log(
+            {
+                "paths": ["src"],
+                "content": "useEffect",
+                "mode": "matches",
+            }
+        )
+        assert "content=useEffect" in log
+        assert "mode=matches" in log
+
+    def test_call_log_exclude_and_limit(self) -> None:
+        log = Find(_ctx()).format_call_log(
+            {
+                "paths": ["."],
+                "exclude": ["node_modules/**", ".git/**"],
+                "limit": 25,
+            }
+        )
+        assert "exclude=2" in log
+        assert "limit=25" in log
+
+    def test_call_log_truncates_long_content(self) -> None:
+        long_content = "x" * 200
+        log = Find(_ctx()).format_call_log(
+            {"paths": ["src"], "content": long_content}
+        )
+        assert "..." in log
+
+    def test_call_log_single_path(self) -> None:
+        log = Find(_ctx()).format_call_log({"paths": ["src"]})
+        assert "paths=src" in log
+
+    def test_result_log_with_matches(self) -> None:
+        text = (
+            "===== src/a.ts =====\n"
+            "src/a.ts:1: foo\n"
+            "src/a.ts:3: bar\n"
+        )
+        log = Find(_ctx()).format_result_log(text)
+        assert "3 match(es)" in log
+
+    def test_result_log_no_matches(self) -> None:
+        assert "no matches" in Find(_ctx()).format_result_log("no matches")
+
+    def test_result_log_truncation_marker(self) -> None:
+        text = (
+            "===== src/a.ts =====\n"
+            "src/a.ts:1: foo\n"
+            "\n... <truncated: showing first results>"
+        )
+        log = Find(_ctx()).format_result_log(text)
+        assert "2 match(es)" in log
+
+
+# ---------------------------------------------------------------------------
 # Git
 # ---------------------------------------------------------------------------
 
@@ -292,52 +369,6 @@ class TestCommit:
 
     def test_result_log(self) -> None:
         log = Commit(_ctx()).format_result_log("staged 3 files\n")
-        assert "lines" in log
-
-
-# ---------------------------------------------------------------------------
-# Curl
-# ---------------------------------------------------------------------------
-
-class TestCurl:
-    def test_call_log_get(self) -> None:
-        log = Curl(_ctx()).format_call_log(
-            {"url": "https://example.com/api", "method": "GET"}
-        )
-        assert "GET" in log
-        assert "https://example.com/api" in log
-
-    def test_call_log_post_with_body(self) -> None:
-        log = Curl(_ctx()).format_call_log(
-            {"url": "https://example.com", "method": "POST", "data": "body"}
-        )
-        assert "POST" in log
-        assert "body=" in log
-
-    def test_call_log_with_headers(self) -> None:
-        log = Curl(_ctx()).format_call_log(
-            {
-                "url": "https://example.com",
-                "method": "GET",
-                "headers": ["Accept: json", "Auth: token"],
-            }
-        )
-        assert "headers=2" in log
-
-    def test_result_log_download(self) -> None:
-        log = Curl(_ctx()).format_result_log(
-            "Downloaded to @tmp/file.bin"
-        )
-        assert "Downloaded to" in log
-
-    def test_result_log_permission_denied(self) -> None:
-        log = Curl(_ctx()).format_result_log(
-            "permission-denied: curl request was not executed."
-        )
-        assert "permission-denied" in log
-
-    def test_result_log_normal(self) -> None:
-        log = Curl(_ctx()).format_result_log("response body\n")
         assert "lines" in log
 
 
@@ -513,38 +544,6 @@ class TestBrowser:
         assert Browser(_ctx()).format_result_log(
             "Browser session closed."
         ) == "closed"
-
-
-# ---------------------------------------------------------------------------
-# RepoLibrary
-# ---------------------------------------------------------------------------
-
-class TestRepoLibrary:
-    def test_call_log_list(self) -> None:
-        log = RepoLibrary(_ctx()).format_call_log({"action": "list"})
-        assert "action=list" in log
-
-    def test_call_log_search(self) -> None:
-        log = RepoLibrary(_ctx()).format_call_log(
-            {"action": "search", "repo_url": "https://github.com/a/b", "query": "error"}
-        )
-        assert "action=search" in log
-        assert "repo=https://github.com/a/b" in log
-        assert "query=error" in log
-
-    def test_call_log_add_documents(self) -> None:
-        log = RepoLibrary(_ctx()).format_call_log(
-            {
-                "action": "add",
-                "repo_url": "https://github.com/a/b",
-                "documents": [{"path": "a.md", "content": "x"}],
-            }
-        )
-        assert "documents=1" in log
-
-    def test_result_log(self) -> None:
-        log = RepoLibrary(_ctx()).format_result_log("some output\nline2")
-        assert "lines" in log
 
 
 # ---------------------------------------------------------------------------
