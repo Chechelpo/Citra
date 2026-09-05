@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from .agent.response import (
     execute_tool_call,
     get_assistant_message,
@@ -22,7 +20,6 @@ from .cli.repl import is_command
 from .cli.repl import main as _repl_main
 from .context import ExecutionContext, WorkspaceContext
 from .utils.chat_completions_api import call_api
-from .utils.process_logging import process_log
 from .utils.terminal_input import terminal_input
 
 
@@ -33,11 +30,10 @@ def main() -> None:
     seam for embedders and tests while orchestration remains outside this
     module.
     """
-    with process_log(Path.cwd()):
-        _repl_main(
-            api_call=call_api,
-            input_service=terminal_input,
-        )
+    _repl_main(
+        api_call=call_api,
+        input_service=terminal_input,
+    )
 
 
 __all__ = [

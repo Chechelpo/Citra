@@ -12,6 +12,7 @@ from citra.cli import repl as repl_module
 from citra.cli.repl import select_startup_workflow
 from citra.config import SandboxPolicy
 from citra.sandbox import SandboxMode, WorkspaceSandbox
+from citra.tools.session_memory import RequirementTool
 from citra.utils.prompt import build_system_prompt
 from citra.workflows import (
     ChatWorkflow,
@@ -316,6 +317,72 @@ def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> 
     AgentRunner(context, session, api_call=built_in_api).run_turn()
 
     assert requests[0]["memory_services"] == (retained,)
+
+
+def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -> None:
+    """Expose prior-role records even when the current role lacks their tool."""
+    workflow = _workflow("custom")
+    model = SimpleNamespace(
+        id="test-model",
+        max_input_tokens=10_000,
+        reasoning_effort=None,
+    )
+    context = SimpleNamespace(
+        workflow=workflow,
+        workspace=SimpleNamespace(is_closing=False, disabled_tool_ids=()),
+        config=SimpleNamespace(
+            memory=SimpleNamespace(enabled=True),
+            model=lambda: model,
+        ),
+        ensure_active=lambda: None,
+    )
+    session = AgentSession(memory_enabled=True)
+    session.add_user_message("continue the serial workflow")
+    retained = RequirementTool(
+        context=context,
+        session=session,
+    )
+    session.memory.get_or_create(RequirementTool.TOOL_ID, lambda: retained)
+    retained.execute(
+        {"action": "add", "content": "Preserve recorded state"}
+    )
+    requests: list[dict] = []
+
+    class _Registry:
+        """Expose no tools to emulate a read-only downstream role."""
+
+        def __init__(self, **_kwargs) -> None:
+            """Accept the production registry constructor shape."""
+
+        core_tool_ids: tuple[str, ...] = ()
+
+        @staticmethod
+        def deferred_catalog(_context) -> dict[str, str]:
+            """Return no deferred tools."""
+            return {}
+
+        @staticmethod
+        def instantiate(*_args, **_kwargs) -> dict:
+            """Return no active tools."""
+            return {}
+
+        @staticmethod
+        def index_by_model_name(_tools) -> dict:
+            """Return no model-facing tools."""
+            return {}
+
+    def custom_api(**kwargs) -> dict:
+        """Capture the custom request without accepting memory services."""
+        requests.append(kwargs)
+        return {"choices": [{"message": {"role": "assistant", "content": None}}]}
+
+    monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
+    monkeypatch.setattr("citra.agent.session.tokenize", lambda *_args, **_kwargs: 1)
+
+    AgentRunner(context, session, api_call=custom_api).run_turn()
+
+    assert "memory_services" not in requests[0]
+    assert "[R1] Preserve recorded state" in requests[0]["sys_prompt"]
 
 
 def test_builtin_single_mode_workflows_use_full_sandbox() -> None:

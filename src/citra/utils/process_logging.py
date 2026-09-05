@@ -12,9 +12,11 @@ import time
 from types import TracebackType
 from typing import Iterator
 
+from citra.logging import LATEST_LOG_NAME, LOG_DIRECTORY_NAME
 
-LOG_DIRECTORY_NAME = ".citra.logs"
-LAST_PROCESS_LOG_NAME = "last.log"
+
+# Compatibility alias for callers that imported the previous constant name.
+LAST_PROCESS_LOG_NAME = LATEST_LOG_NAME
 
 
 class _CitraLogFilter(logging.Filter):
@@ -39,29 +41,24 @@ class _UtcFormatter(logging.Formatter):
 
 
 @contextmanager
-def process_log(project_root: str | Path) -> Iterator[Path]:
-    """Capture Citra logs in ``.citra.logs/last.log`` for this process.
+def process_log(log_directory: str | Path) -> Iterator[Path]:
+    """Capture Citra logs in one process runtime's ``logs/latest.log``.
 
     The file is truncated at process start, uses owner-only permissions, and
     is flushed after every record so a crash still leaves useful diagnostics.
-    Existing application logging handlers are preserved and restored.
+    Existing application logging handlers are preserved and restored. Log
+    configuration remains controller-owned under ``CITRA_ROOT/logs``; this
+    function writes only to the supplied lifecycle directory.
     """
 
-    root = Path(project_root).expanduser().resolve()
-    log_directory = root / LOG_DIRECTORY_NAME
+    log_directory = Path(log_directory).expanduser().resolve()
     log_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_directory.chmod(0o700)
-
-    # Keep process diagnostics out of ordinary Git status without modifying
-    # the project's root ignore policy.
-    ignore_file = log_directory / ".gitignore"
-    ignore_file.write_text("*\n", encoding="utf-8")
-    ignore_file.chmod(0o600)
 
     log_path = log_directory / LAST_PROCESS_LOG_NAME
     descriptor = os.open(
         log_path,
-        os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+        os.O_APPEND | os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
         0o600,
     )
     os.chmod(log_path, 0o600)
@@ -86,10 +83,10 @@ def process_log(project_root: str | Path) -> Iterator[Path]:
 
     process_logger = logging.getLogger("citra.process")
     process_logger.info(
-        "Citra process started | pid=%d | project=%s | python=%s | "
+        "Citra process started | pid=%d | runtime=%s | python=%s | "
         "platform=%s | time=%s",
         os.getpid(),
-        root,
+        log_directory.parent,
         platform.python_version(),
         platform.platform(),
         datetime.now(timezone.utc).isoformat(),
@@ -118,6 +115,7 @@ def process_log(project_root: str | Path) -> Iterator[Path]:
 
 
 __all__ = [
+    "LATEST_LOG_NAME",
     "LAST_PROCESS_LOG_NAME",
     "LOG_DIRECTORY_NAME",
     "process_log",

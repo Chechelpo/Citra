@@ -19,6 +19,7 @@ from citra.config.runtime_discovery import (
     get_ro_binds,
 )
 from citra.config.runtime_discovery._language import PythonRuntimeDiscovery
+from citra.config.runtime_discovery._lsp import LanguageServerRuntimeDiscovery
 from citra.config.runtime_discovery._elf import elf_interpreter
 from citra.context.available_tools import (
     default_runtime_assets,
@@ -83,6 +84,31 @@ class RuntimeIsolationTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].available_commands, ("fixture",))
         self.assertEqual(results[0].readonly_binds, (Path("/fixture/bin"),))
+
+    def test_language_server_discovery_includes_node_package_store(self) -> None:
+        """Provision an installed Node language server and its package data."""
+        with TemporaryDirectory() as directory:
+            prefix = Path(directory) / "node-runtime"
+            module_store = prefix / "lib" / "node_modules"
+            server = module_store / "pyright" / "index.js"
+            server.parent.mkdir(parents=True)
+            server.write_text("// fixture\n", encoding="utf-8")
+            launcher = prefix / "bin" / "pyright-langserver"
+            launcher.parent.mkdir(parents=True)
+            launcher.symlink_to(server)
+
+            def resolve(command: str) -> str | None:
+                """Resolve only the fixture language-server command."""
+                return str(launcher) if command == "pyright-langserver" else None
+
+            with mock.patch(
+                "citra.config.runtime_discovery._base.shutil.which",
+                side_effect=resolve,
+            ):
+                result = LanguageServerRuntimeDiscovery.discover()
+
+            self.assertIn("pyright-langserver", result.available_commands)
+            self.assertIn(module_store, result.readonly_binds)
 
     def _definition(self, prefix: Path) -> ToolDefinition:
         """Create a definition whose executable lives under one prefix."""

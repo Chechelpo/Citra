@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from citra.logging import Logger
 from citra.sandbox.sandbox import WorkspaceSandbox
 
 from .servers.base import InstallCandidate, ServerDefinition
@@ -17,6 +18,7 @@ _MANAGER_PRIORITY = (
     "go",
     "cargo",
 )
+_logger = Logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -32,16 +34,27 @@ class InstallResult:
     @property
     def success(self) -> bool:
         """Handle success."""
-        if self.dry_run:
-            return True
-        return self.returncode == 0 and self.executable_found is not None
+        succeeded = self.dry_run or (
+            self.returncode == 0 and self.executable_found is not None
+        )
+        _logger.trace(
+            "Evaluated language-server install result",
+            server=self.server_id,
+            dry_run=self.dry_run,
+            success=succeeded,
+        )
+        return succeeded
 
 
 def available_managers(
     resolver: Callable[[str], str | None],
 ) -> tuple[str, ...]:
     """Handle available managers."""
-    return tuple(manager for manager in _MANAGER_PRIORITY if resolver(manager) is not None)
+    managers = tuple(
+        manager for manager in _MANAGER_PRIORITY if resolver(manager) is not None
+    )
+    _logger.debug("Resolved sandbox package managers", managers=managers)
+    return managers
 
 
 def candidate_for(
@@ -53,7 +66,18 @@ def candidate_for(
     candidates = {candidate.manager: candidate for candidate in definition.install_candidates}
     for manager in _MANAGER_PRIORITY:
         if manager in available and manager in candidates:
-            return candidates[manager]
+            candidate = candidates[manager]
+            _logger.debug(
+                "Selected language-server installer",
+                server=definition.id,
+                manager=manager,
+            )
+            return candidate
+    _logger.trace(
+        "No supported language-server installer is available",
+        server=definition.id,
+        managers=tuple(sorted(available)),
+    )
     return None
 
 
@@ -71,6 +95,11 @@ def execute_install(
     """Execute the execute install operation."""
     command = candidate.command
     if dry_run:
+        _logger.info(
+            "Prepared language-server installation dry run",
+            server=definition.id,
+            manager=candidate.manager,
+        )
         return InstallResult(
             server_id=definition.id,
             command=command,
@@ -86,6 +115,11 @@ def execute_install(
         )
 
     print("$ " + " ".join(command), flush=True)
+    _logger.info(
+        "Starting sandboxed language-server installation",
+        server=definition.id,
+        manager=candidate.manager,
+    )
     try:
         completed = sandbox.run(
             command,
@@ -99,9 +133,15 @@ def execute_install(
     except Exception as error:
         returncode = 127
         output = str(error)
+        _logger.error(
+            "Sandboxed language-server installation failed",
+            server=definition.id,
+            manager=candidate.manager,
+            error=str(error),
+        )
 
     executable = resolver(definition.executable)
-    return InstallResult(
+    result = InstallResult(
         server_id=definition.id,
         command=command,
         dry_run=False,
@@ -109,3 +149,18 @@ def execute_install(
         output=output.strip(),
         executable_found=executable,
     )
+    if result.success:
+        _logger.info(
+            "Sandboxed language-server installation completed",
+            server=definition.id,
+            manager=candidate.manager,
+            executable=executable,
+        )
+    else:
+        _logger.warning(
+            "Language-server installer did not expose its executable",
+            server=definition.id,
+            manager=candidate.manager,
+            returncode=returncode,
+        )
+    return result

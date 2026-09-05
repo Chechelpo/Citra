@@ -53,7 +53,8 @@ class SandboxedFilesystem:
             ensure_ascii=False,
         )
         logger.debug(
-            "Starting sandboxed filesystem worker",
+            "Starting sandboxed filesystem operation '%s'",
+            operation.operation,
             extra={"origin": __name__, "operation": operation.operation},
         )
         result: SandboxResult = self._sandbox.run(
@@ -68,13 +69,21 @@ class SandboxedFilesystem:
             }
         )
         if result.timed_out:
+            logger.error(
+                "Sandboxed filesystem operation '%s' timed out after %ss",
+                operation.operation,
+                timeout,
+                extra={"origin": __name__, "operation": operation.operation},
+            )
             raise TimeoutError(
                 f"Sandboxed filesystem operation timed out after {timeout}s."
             )
         if result.returncode != 0:
             detail = result.output.strip() or "worker exited without output"
             logger.error(
-                "Sandboxed filesystem worker failed",
+                "Sandboxed filesystem operation '%s' failed with exit code %d",
+                operation.operation,
+                result.returncode,
                 extra={
                     "origin": __name__,
                     "operation": operation.operation,
@@ -89,21 +98,38 @@ class SandboxedFilesystem:
         try:
             response = json.loads(result.output)
         except json.JSONDecodeError as error:
+            logger.error(
+                "Sandboxed filesystem operation '%s' returned invalid JSON",
+                operation.operation,
+                extra={"origin": __name__, "operation": operation.operation},
+            )
             raise RuntimeError(
                 "Sandboxed filesystem worker returned invalid JSON: "
                 f"{result.output[:500]}"
             ) from error
         if not isinstance(response, dict):
+            logger.error(
+                "Sandboxed filesystem operation '%s' returned an invalid response",
+                operation.operation,
+                extra={"origin": __name__, "operation": operation.operation},
+            )
             raise RuntimeError(
                 "Sandboxed filesystem worker returned an invalid response."
             )
         if not response.get("ok"):
+            logger.error(
+                "Sandboxed filesystem operation '%s' reported an error: %s",
+                operation.operation,
+                str(response.get("error") or "filesystem operation failed"),
+                extra={"origin": __name__, "operation": operation.operation},
+            )
             raise RuntimeError(
                 str(response.get("error") or "filesystem operation failed")
             )
         output = operation.parse_output(response.get("result"))
         logger.info(
-            "Sandboxed filesystem worker completed",
+            "Sandboxed filesystem operation '%s' completed",
+            operation.operation,
             extra={"origin": __name__, "operation": operation.operation},
         )
         return output

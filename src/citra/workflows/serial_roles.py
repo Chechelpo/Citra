@@ -38,7 +38,7 @@ from citra.tools.transient import (
     Workspace,
     Write,
 )
-from citra.utils.prompt import EnvironmentInfo, collect_environment, format_skills
+from citra.utils.prompt import EnvironmentInfo, collect_environment, format_skills, basic_coding_conventions
 
 from .workflow import (
     SandboxConfig,
@@ -70,34 +70,73 @@ def _restricted(
 
 
 _MEMORY_PROTOCOL = """
-# Shared workflow memory
+# Shared workflow memory protocol
 
-The filesystem and structured memory survive role changes; conversation and
-hidden reasoning do not. Use only the smallest applicable record type:
+Structured memory is the durable handoff between isolated roles. Use it as the
+single source of truth for workflow state.
 
-- `requirement` (R): user-visible need. Exploration owns wording; review owns
-  satisfaction.
-- `acceptance_criteria` (A): observable proof of one or more requirements.
-  Link it to R IDs when known; review owns satisfaction.
-- `scope`, `constraint`, `fact`: boundaries, mandatory invariants, and verified
-  repository evidence. Do not interchange them.
-- `todo`: the executable plan. R/A links are useful but must not inflate a
-  small plan.
-- `change` (CH): what implementation actually changed, including exact paths.
-- `verification` (V): reproducible pass/fail/blocked evidence linked to the CH
-  revision it exercised. It does not adjudicate acceptance.
-- `issue` (I): a risk, defect, requirement gap, plan gap, or test gap routed
-  to the earliest phase able to correct it. Resolve it only with evidence.
-- `decision`: a consequential choice another role must respect. Ordinary code
-  details do not need a decision entry.
-- `working_state`: provisional reasoning only; promote useful consequences and
-  resolve it, or discard it.
-- `checkpoint`: the sole controller route for the current role.
+Never copy conversation history into memory. Store only information another
+isolated role needs to continue correctly.
 
-Never copy a transcript into memory. Keep identifiers and evidence stable so a
-later isolated role can follow R -> A -> TODO -> CH -> V/I without guessing.
-If new evidence invalidates an accepted item, reopen it where your capabilities
-permit and route to the earliest responsible phase.
+Memory ownership:
+
+- `requirement` (R):
+  User-visible behavior or need that must be satisfied.
+  Explorer establishes the wording. Reviewer decides satisfaction.
+
+- `acceptance_criteria` (A):
+  Observable conditions proving requirements are fulfilled.
+  Explorer defines them. Reviewer decides satisfaction.
+
+- `scope`:
+  Explicit boundaries of the request.
+  Explorer establishes included and excluded work.
+
+- `constraint`:
+  Mandatory restrictions, invariants, or limitations.
+  Explorer establishes them. All roles must respect them.
+
+- `fact`:
+  Verified evidence from the repository or environment.
+  Explorer discovers them. Other roles may add only newly verified facts.
+
+- `todo`:
+  Executable implementation plan.
+  Planner owns creation. Implementer owns completion.
+
+- `decision`:
+  A consequential choice that affects future work.
+  Planner owns architectural/design decisions. Do not record ordinary coding
+  choices.
+
+- `change` (CH):
+  Actual implementation changes with affected paths and behavior.
+  Implementer owns creation and updates.
+
+- `verification` (V):
+  Reproducible evidence from testing or inspection.
+  Tester owns creation and invalidation.
+
+- `issue` (I):
+  A routed problem requiring correction:
+  defect, requirement gap, plan gap, or verification gap.
+  Create only when action is required.
+
+- `working_state`:
+  Temporary reasoning, hypotheses, and intermediate exploration.
+  Resolve, promote, or discard before handoff.
+
+- `checkpoint`:
+  Controller routing state only.
+
+Always preserve relationships:
+R -> A -> TODO -> CH -> V
+
+If evidence invalidates previous state:
+- update the owned memory if your role has authority;
+- otherwise create an issue and route to the responsible phase.
+
+Do not create unnecessary records. Small tasks should remain small.
 """.strip()
 
 
@@ -195,6 +234,10 @@ a reasonable portable implementation is available.
 
 Call a skill only when relevant.
 
+# Coding
+
+{basic_coding_conventions()}
+
 # Required handoff
 
 Before ending this phase:
@@ -217,30 +260,64 @@ class ExplorerWorkflow(_RoleWorkflow):
 
     ROLE = "explore"
     DESCRIPTION = "Clarify the task and inspect relevant repository evidence."
-    INSTRUCTIONS = """
-Understand the user's goal before designing a solution. You are the only role
-allowed to ask the user questions; ask only when repository evidence cannot
-resolve a material ambiguity.
+    INSTRUCTIONS = INSTRUCTIONS = """
+Transform the user's request into a grounded problem definition.
 
-Record confirmed needs immediately as requirements. Define concise observable
-acceptance criteria and link them to the requirements they prove. Record scope,
-constraints, and verified facts in their own memory types. Inspect relevant
-code, tests, configuration, entry points, dependencies, and current behavior,
-but do not modify project files.
+You are the only role allowed to ask the user questions. Ask only when a
+material ambiguity cannot be resolved through repository evidence.
 
-Use issues for material risks or gaps, not for ordinary unknowns you can inspect
-now. Do not propose a solution design. Advance to plan when a fresh planner can
-act without conversation history; repeat explore when important ambiguity
-remains.
+First understand:
+- user goal;
+- expected outcome;
+- requested behavior;
+- constraints;
+- boundaries.
+
+Record:
+- requirements as user-visible needs;
+- acceptance criteria as observable success conditions;
+- scope as included and excluded work;
+- constraints as mandatory limitations;
+- facts as verified repository evidence.
+
+Then inspect:
+- source code;
+- tests;
+- configuration;
+- dependencies;
+- entry points;
+- current behavior.
+
+Do not design the solution. Do not choose components or implementation
+approaches.
+
+Your output should allow a planner to answer:
+"What problem are we solving, what must remain true, and how will we know it is
+complete?"
+
+Advance to plan only when:
+- requirements are clear;
+- scope is bounded;
+- acceptance criteria exist for meaningful behavior;
+- relevant facts and constraints are recorded.
 """.strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=4,
-        content=(
-            "Recheck the user goal, R/A links, scope boundary, constraints, "
-            "verified current behavior, and unresolved gaps. Ask only if a "
-            "material ambiguity remains; otherwise hand off to plan."
-        ),
+        content="""
+        Re-evaluate whether the request is ready for planning.
+
+        Check:
+            1. Requirements describe user needs, not implementation ideas.
+            2. Scope explicitly prevents accidental expansion.
+            3. Acceptance criteria describe observable outcomes.
+            4. Constraints are separated from facts.
+            5. Facts are supported by repository evidence.
+            6. Unknowns that affect correctness are resolved or routed.
+
+        Do not design a solution. If the problem definition is complete, hand off to
+        plan.
+        """
     )
     TOOLS = ToolSet(
         core_tools=(
@@ -268,29 +345,55 @@ class PlannerWorkflow(_RoleWorkflow):
     ROLE = "plan"
     DESCRIPTION = "Create a concise executable implementation plan."
     INSTRUCTIONS = """
-Validate the explored state against the repository, then choose the smallest
-coherent implementation approach. Planning effort must scale with the task: a
-localized change may need one TODO; a refactor may need a short ordered tree.
+Transform the explored problem into the smallest coherent solution.
 
-Each TODO should say what changes, where, and how it will be verified. Attach
-R/A IDs while creating it when that information already exists; do not create a
-separate mapping exercise. Record a decision only when a consequential choice
-must survive the handoff. Compare alternatives only when they could materially
-change correctness, compatibility, risk, or effort.
+Validate the exploration state against repository evidence before planning.
 
-Do not edit project files and do not perform system-architecture design. Route
-to explore for an unclear goal or boundary, remain in plan for a flawed or
-incomplete approach, and advance to implement as soon as the TODOs are safely
-executable.
+Determine the appropriate solution level:
+- local modification;
+- refactoring existing code;
+- changing module boundaries;
+- introducing or modifying components;
+- changing interfaces;
+- introducing architectural decisions.
+
+Do not create architecture for its own sake. Planning effort must match task
+complexity.
+
+Create TODOs that describe:
+- what changes;
+- where it changes;
+- why it changes;
+- which requirements/acceptance criteria it covers;
+- how it will be verified.
+
+Record decisions only when a choice materially affects:
+- structure;
+- compatibility;
+- quality attributes;
+- future evolution.
+
+Consider alternatives only when the trade-off affects correctness, risk, cost,
+or maintainability.
+
+Do not edit files.
 """.strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
         every_n_turns=4,
-        content=(
-            "Keep the plan proportional. Verify paths and invariants, ensure "
-            "TODO order and checks are executable, record only consequential "
-            "decisions, then advance without extra ceremony."
-        ),
+        content="""
+        Check that the plan is executable.
+
+        Verify:
+        1. Every requirement has implementation coverage.
+        2. Every acceptance criterion has a verification path.
+        3. TODOs are concrete and ordered.
+        4. Components or boundaries are introduced only when justified.
+        5. Decisions exist only for consequential choices.
+        6. The implementer can execute without rediscovering intent.
+
+        If the approach is wrong, return to exploration or revise the plan.
+        """
     )
     TOOLS = ToolSet(
         core_tools=(
@@ -315,18 +418,23 @@ class ImplementerWorkflow(_RoleWorkflow):
     ROLE = "implement"
     DESCRIPTION = "Implement the approved TODOs and record changed behavior."
     INSTRUCTIONS = """
-Execute the active TODOs with the smallest coherent change. Inspect files before
-editing, preserve unrelated work, follow repository conventions, and run useful
-focused checks while implementing. Do not create Git commits.
+Execute the approved TODOs.
 
-Check TODOs only after their outcomes are complete. Record each coherent change
-with exact paths and relevant TODO/R/A links; update an existing CH record when
-the same change evolves. Resolve an issue only after applying its correction
-and cite the concrete result.
+Before editing:
+- inspect affected files;
+- confirm assumptions;
+- preserve unrelated changes.
 
-Route to explore if implementation exposes a goal or scope ambiguity, to plan
-if the approach is invalid, repeat implement if code work remains, and advance
-to test when the recorded change set is ready for independent verification.
+During implementation:
+- make the smallest coherent change;
+- maintain repository conventions;
+- update change records with actual paths and behavior;
+- record important discoveries.
+
+Do not redesign the solution. If the plan is invalid, route back to plan.
+
+Complete TODOs only when the described outcome exists and can be verified.
+
 """.strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,
@@ -365,20 +473,21 @@ class TesterWorkflow(_RoleWorkflow):
     ROLE = "test"
     DESCRIPTION = "Verify the implementation and report reproducible failures."
     INSTRUCTIONS = """
-Derive checks from requirements, acceptance criteria, recorded changes, open
-issues, and likely regressions. Run the strongest relevant focused and broader
-verification available. Record meaningful results as V entries with exact
-commands and relevant CH IDs when applicable; supersede stale results after a
-retest.
+Produce independent evidence that the requested behavior works.
 
-For every failure or blockage, create or update an issue with reproduction
-evidence, affected R/A/CH IDs, severity, and the earliest correction phase. Do
-not modify project files to make checks pass and do not mark requirements or
-criteria satisfied.
+Use:
+- requirements;
+- acceptance criteria;
+- change records;
+- existing tests;
+- regression risks.
 
-Route requirement/scope gaps to explore, approach flaws to plan, code defects to
-implement, incomplete or flaky verification to test, and advance to review only
-when current evidence is sufficient for independent adjudication.
+Record verification commands and outcomes.
+
+Do not modify files.
+Do not mark acceptance criteria satisfied.
+
+Failures become issues routed to the phase capable of correction.
 """.strip()
     TASK_STEERING = TaskSteeringConfig(
         include_first=False,

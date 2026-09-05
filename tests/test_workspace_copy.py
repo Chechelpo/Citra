@@ -52,10 +52,13 @@ def test_project_is_copied_without_legacy_aliases_and_preserved(
             context.resolve_path(legacy)
 
     (project / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    process_log = context.logs / "latest.log"
+    process_log.write_text("diagnostic\n", encoding="utf-8")
     assert (original / "tracked.txt").read_text(encoding="utf-8") == "original\n"
 
     context.cleanup(preserve_workspace=True)
     assert context.lifecycle_state is RuntimeState.CLOSED
     assert (project / "tracked.txt").read_text(encoding="utf-8") == "changed\n"
+    assert process_log.read_text(encoding="utf-8") == "diagnostic\n"
     assert (root / ".citra-workspace").is_file()
     assert not (root / "runtime").exists()

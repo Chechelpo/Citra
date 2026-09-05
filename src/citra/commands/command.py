@@ -24,6 +24,10 @@ from dataclasses import dataclass
 from typing import final
 
 from ..context import ExecutionContext
+from ..logging import Logger
+
+
+_registry_logger = Logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -62,12 +66,14 @@ class Command(ABC):
     description: str = ""
 
     def __init__(self, context: ExecutionContext) -> None:
-        """Initialize the instance."""
+        """Bind one execution context and a source-labelled diagnostic logger."""
         self._context = context
+        self._logger = Logger(type(self).__module__)
+        self._logger.trace("Created command instance", command=self.id)
 
     @property
     def context(self) -> ExecutionContext:
-        """Handle context."""
+        """Return the execution context bound to this invocation."""
         return self._context
 
     @final
@@ -82,11 +88,25 @@ class Command(ABC):
         Errors raised by :meth:`_run` are caught here and converted into
         error :class:`CommandResult` so the REPL never crashes.
         """
+        self._logger.debug("Executing command", command=self.id)
         try:
-            return self._run(args)
+            result = self._run(args)
+            self._logger.info(
+                "Command completed",
+                command=self.id,
+                exit=result.exit,
+                clears_messages=result.clear_messages,
+            )
+            return result
         except Exception as error:  # noqa: BLE001
             from ..utils.terminal import RED, RESET
 
+            self._logger.error(
+                "Command failed",
+                command=self.id,
+                error_type=type(error).__name__,
+                error=str(error),
+            )
             return CommandResult(
                 output=f"{RED}⏺ Command error: {error}{RESET}",
             )
@@ -107,24 +127,35 @@ class CommandRegistry:
     """
 
     def __init__(self) -> None:
-        """Initialize the instance."""
+        """Create an empty registry of command implementation classes."""
         self.__commands: dict[str, type[Command]] = {}
+        _registry_logger.trace("Created command registry")
 
     def register(
         self,
         command_id: str,
         command_type: type[Command],
     ) -> None:
-        """Handle register."""
+        """Register one command class under a unique non-empty id."""
         if command_id in self.__commands:
+            _registry_logger.error(
+                "Rejected duplicate command registration",
+                command=command_id,
+            )
             raise ValueError(
                 f"Command '{command_id}' is already registered."
             )
 
         if not command_id:
+            _registry_logger.error("Rejected empty command registration")
             raise ValueError("Command id cannot be empty.")
 
         self.__commands[command_id] = command_type
+        _registry_logger.debug(
+            "Registered command",
+            command=command_id,
+            implementation=command_type.__module__,
+        )
 
     def instantiate(
         self,
@@ -137,17 +168,28 @@ class CommandRegistry:
         command_type = self.__commands.get(command_id)
 
         if command_type is None:
+            _registry_logger.warning(
+                "Requested command is not registered",
+                command=command_id,
+            )
             return None
 
+        _registry_logger.trace("Instantiating command", command=command_id)
         return command_type(context)
 
     def contains(self, command_id: str) -> bool:
-        """Handle contains."""
-        return command_id in self.__commands
+        """Return whether a command id is registered."""
+        present = command_id in self.__commands
+        _registry_logger.trace(
+            "Checked command registration",
+            command=command_id,
+            present=present,
+        )
+        return present
 
     @property
     def command_ids(self) -> tuple[str, ...]:
-        """Handle command ids."""
+        """Return command ids in registration order."""
         return tuple(self.__commands)
 
     def help_lines(self) -> list[str]:
@@ -161,4 +203,5 @@ class CommandRegistry:
             description = self.__commands[command_id].description
             lines.append(f"  /{command_id:<10} {description}")
 
+        _registry_logger.trace("Rendered command help", commands=len(lines))
         return lines

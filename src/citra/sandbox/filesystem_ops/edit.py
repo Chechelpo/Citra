@@ -6,7 +6,6 @@ from typing import Any
 from .base import FilesystemInput, FilesystemOutput, require_payload_dict, require_string
 from .scope import ScopedFilesystem
 
-
 @dataclass(frozen=True, slots=True)
 class EditOutput(FilesystemOutput):
     """Represent EditOutput."""
@@ -93,6 +92,7 @@ class EditInput(FilesystemInput[EditOutput]):
 def execute(order: EditInput, fs: ScopedFilesystem) -> EditOutput:
     """Execute the execute operation."""
     path = fs.require_writable_path(order.path)
+
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {fs.display_path(path)}")
 
@@ -101,18 +101,24 @@ def execute(order: EditInput, fs: ScopedFilesystem) -> EditOutput:
 
     if order.line is not None:
         lines = text.splitlines(keepends=True)
+
         if order.line > len(lines) + 1:
             raise ValueError(
                 f"Insert line must be between 1 and {len(lines) + 1}, got {order.line}."
             )
+
         lines.insert(order.line - 1, order.new)
         fs.write_text_atomic(path, "".join(lines))
+
         return EditOutput(status="ok")
 
     assert order.old is not None
+
     count = text.count(order.old)
+
     if count == 0:
         return EditOutput(status="error: old_string not found")
+
     if count > 1 and not order.all:
         return EditOutput(
             status=(
@@ -121,6 +127,12 @@ def execute(order: EditInput, fs: ScopedFilesystem) -> EditOutput:
             )
         )
 
-    replacement = text.replace(order.old, order.new, -1 if order.all else 1)
+    replacement = text.replace(
+        order.old,
+        order.new,
+        -1 if order.all else 1,
+    )
+
     fs.write_text_atomic(path, replacement)
+
     return EditOutput(status="ok")

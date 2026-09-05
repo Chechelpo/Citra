@@ -114,8 +114,21 @@ class WorkspaceSandbox:
     def resolve_command(self, command: str) -> Path | None:
         """Resolve a discovered or staged command in the isolated runtime."""
         if self.__workspace is None:
+            logger.debug(
+                "Sandbox command resolution has no workspace registry",
+                extra={"origin": __name__, "command": command},
+            )
             return None
-        return self.__workspace.resolve_command(command)
+        resolved = self.__workspace.resolve_command(command)
+        logger.debug(
+            "Resolved command through sandbox runtime",
+            extra={
+                "origin": __name__,
+                "command": command,
+                "found": resolved is not None,
+            },
+        )
+        return resolved
 
     def readonly_binds(self) -> tuple[Path, ...]:
         """Return sandbox targets exposed read-only."""
@@ -168,6 +181,7 @@ class WorkspaceSandbox:
         path_prepend: Sequence[str | Path] = (),
     ) -> dict[str, str]:
         """Build a sanitized process environment with an immutable runtime PATH."""
+
         environment = dict(
             self.__base_environment
             if base is None
@@ -183,22 +197,32 @@ class WorkspaceSandbox:
                 overrides
             )
 
-        for name in (
-            self.__policy.drop_environment_variables
-        ):
-            if name not in explicitly_set:
+        # Runtime-owned variables must survive sandbox execution.
+        # These point to the Citra installation/configuration, not the workspace.
+        runtime_environment = {
+            "CITRA_ROOT",
+            "CITRA_INSTALL_ROOT",
+            "CITRA_CONFIG_PATH",
+        }
+
+        for name in self.__policy.drop_environment_variables:
+            if (
+                name not in explicitly_set
+                and name not in runtime_environment
+            ):
                 environment.pop(
                     name,
                     None,
                 )
 
-        prefixes = (
-            self.__policy.drop_environment_prefixes
-        )
+        prefixes = self.__policy.drop_environment_prefixes
 
         if prefixes:
             for name in tuple(environment):
-                if name in explicitly_set:
+                if (
+                    name in explicitly_set
+                    or name in runtime_environment
+                ):
                     continue
 
                 if any(
@@ -210,15 +234,33 @@ class WorkspaceSandbox:
                         None,
                     )
 
-        environment["CITRA_PROJECT_ROOT"] = str(self.__source)
+        environment["CITRA_PROJECT_ROOT"] = str(
+            self.__source
+        )
+
         if "PATH" in self.__base_environment:
             canonical_path = self.__base_environment["PATH"]
-            validated = self._validated_path_prepend(path_prepend)
-            environment["PATH"] = os.pathsep.join(
-                (*validated, canonical_path)
+
+            validated = self._validated_path_prepend(
+                path_prepend
             )
-        environment.pop("CITRA_SOURCE", None)
-        environment.pop("CITRA_WORKSPACE", None)
+
+            environment["PATH"] = os.pathsep.join(
+                (
+                    *validated,
+                    canonical_path,
+                )
+            )
+
+        environment.pop(
+            "CITRA_SOURCE",
+            None,
+        )
+
+        environment.pop(
+            "CITRA_WORKSPACE",
+            None,
+        )
 
         return environment
 

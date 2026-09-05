@@ -104,6 +104,7 @@ class WorkspaceContext:
     library: Path
     workspace: Path
     root: Path
+    logs: Path
     home: Path
     tmp: Path
     cache: Path
@@ -163,6 +164,7 @@ class WorkspaceContext:
         processes = RuntimeProcessSupervisor()
         lifecycle.set(RuntimeState.CREATING_FILESYSTEM)
         workspace_path = root / 'workspace'
+        logs = root / 'logs'
         runtime = root / 'runtime'
         env = root / 'env'
         cache = root / 'cache'
@@ -185,8 +187,9 @@ class WorkspaceContext:
         private_source_paths = _private_source_exclusions(source_workspace, library_path)
         try:
             library_path.mkdir(parents=True, exist_ok=True)
-            for directory in (workspace_path, runtime, env, cache, tmp, home, metadata, config_dir, data, xdg_state, runtime_state):
+            for directory in (workspace_path, logs, runtime, env, cache, tmp, home, metadata, config_dir, data, xdg_state, runtime_state):
                 directory.mkdir(parents=True, exist_ok=False)
+            logs.chmod(448)
             home.chmod(448)
             runtime_state.chmod(448)
             created_at = datetime.now(timezone.utc).isoformat()
@@ -209,7 +212,7 @@ class WorkspaceContext:
             for directory in (env / 'npm', env / 'npm' / 'bin', env / 'cargo', env / 'cargo' / 'bin', env / 'rustup', env / 'gem', env / 'gem' / 'bin', env / 'go' / 'pkg' / 'mod', env / 'go' / 'bin', cache / 'xdg', cache / 'pip', cache / 'uv', cache / 'ruff', cache / 'npm', cache / 'go-build', cache / 'gradle', cache / 'playwright', cache / 'python'):
                 directory.mkdir(parents=True, exist_ok=True)
             warnings = tuple(janitor_warnings + copy_warnings + list(provisioning.warnings) + dependency_warnings)
-            instance = cls(source_workspace=source_workspace, library=library_path, workspace=workspace_path, root=root, home=home, tmp=tmp, cache=cache, config=config_dir, data=data, state=state, runtime=runtime, env=env, metadata=metadata, runtime_state=runtime_state, provisioning=provisioning, sandbox_mode=sandbox_mode, private_source_paths=private_source_paths, source_baseline=source_baseline, created_at=created_at, workspace_initial_bytes=workspace_bytes, startup_warnings=warnings, processes=processes, _lifecycle=lifecycle, environment_info=EnvironmentInfo.collect_environment(), aggressive_environment_normalization=aggressive_environment_normalization, environment_overrides=tuple(((str(name), str(value)) for name, value in (environment_overrides or {}).items())), env_soft_limit_bytes=env_soft_limit_bytes, cache_soft_limit_bytes=cache_soft_limit_bytes, tmp_soft_limit_bytes=tmp_soft_limit_bytes)
+            instance = cls(source_workspace=source_workspace, library=library_path, workspace=workspace_path, root=root, logs=logs, home=home, tmp=tmp, cache=cache, config=config_dir, data=data, state=state, runtime=runtime, env=env, metadata=metadata, runtime_state=runtime_state, provisioning=provisioning, sandbox_mode=sandbox_mode, private_source_paths=private_source_paths, source_baseline=source_baseline, created_at=created_at, workspace_initial_bytes=workspace_bytes, startup_warnings=warnings, processes=processes, _lifecycle=lifecycle, environment_info=EnvironmentInfo.collect_environment(), aggressive_environment_normalization=aggressive_environment_normalization, environment_overrides=tuple(((str(name), str(value)) for name, value in (environment_overrides or {}).items())), env_soft_limit_bytes=env_soft_limit_bytes, cache_soft_limit_bytes=cache_soft_limit_bytes, tmp_soft_limit_bytes=tmp_soft_limit_bytes)
             lifecycle.set(RuntimeState.ACTIVE)
             instance.write_runtime_manifest(workspace_bytes=workspace_bytes)
             logger.info('Workspace context activated', extra={'origin': __name__, 'runtime_id': instance.runtime_id, 'sandbox_mode': sandbox_mode.name})
@@ -280,8 +283,21 @@ class WorkspaceContext:
     def resolve_command(self, command: str) -> Path | None:
         """Resolve a provisioned command while the runtime is active."""
         if self.is_closing:
+            logger.warning(
+                'Rejected command resolution while runtime is closing',
+                extra={'origin': __name__, 'command': command},
+            )
             return None
-        return self.provisioning.resolve_command(command)
+        resolved = self.provisioning.resolve_command(command)
+        logger.debug(
+            'Resolved command through workspace runtime',
+            extra={
+                'origin': __name__,
+                'command': command,
+                'found': resolved is not None,
+            },
+        )
+        return resolved
 
     def resolve_path(self, path: str | Path) -> Path:
         """Resolve a model-facing path and enforce the allowed-root boundary."""
@@ -410,7 +426,19 @@ class WorkspaceContext:
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 self.provisioning.register_staged_command(command, candidate)
                 self.write_runtime_manifest()
+                logger.info(
+                    'Discovered command in mutable dependency environment',
+                    extra={
+                        'origin': __name__,
+                        'command': command,
+                        'path': str(candidate),
+                    },
+                )
                 return candidate
+        logger.debug(
+            'Mutable dependency-environment command is unavailable',
+            extra={'origin': __name__, 'command': command},
+        )
         return None
 
     def write_runtime_manifest(self, *, workspace_bytes: int | None=None) -> None:
@@ -445,14 +473,14 @@ class WorkspaceContext:
 
     def runtime_diagnostics(self) -> dict[str, object]:
         """Return controller-facing runtime diagnostics."""
-        return {'runtime_id': self.runtime_id, 'root': str(self.root), 'workspace': str(self.workspace), 'source': str(self.source_workspace), 'workspace_mode': 'isolated-copy', 'runtime': str(Path('/runtime')), 'dependency_environment': str(self.env), 'state': self.lifecycle_state.value, 'active_child_processes': self.processes.active_count, 'provisioning_budget_bytes': self.provisioning.budget_bytes, 'provisioning_copied_bytes': self.provisioning.copied_bytes, 'aggressive_normalization': self.aggressive_environment_normalization, 'storage': self.storage_usage(), 'tools': self.provisioning.as_manifest()['tools'], 'warnings': [*self.startup_warnings, *self.soft_limit_warnings()]}
+        return {'runtime_id': self.runtime_id, 'root': str(self.root), 'workspace': str(self.workspace), 'logs': str(self.logs), 'source': str(self.source_workspace), 'workspace_mode': 'isolated-copy', 'runtime': str(Path('/runtime')), 'dependency_environment': str(self.env), 'state': self.lifecycle_state.value, 'active_child_processes': self.processes.active_count, 'provisioning_budget_bytes': self.provisioning.budget_bytes, 'provisioning_copied_bytes': self.provisioning.copied_bytes, 'aggressive_normalization': self.aggressive_environment_normalization, 'storage': self.storage_usage(), 'tools': self.provisioning.as_manifest()['tools'], 'warnings': [*self.startup_warnings, *self.soft_limit_warnings()]}
 
     def cleanup(self, *, force: bool=False, preserve_workspace: bool=False) -> None:
         """Terminate children and remove runtime-only state.
 
-        ``preserve_workspace`` keeps the copied project and its Git repository
-        for the user. This is used by normal application shutdown because Citra
-        never commits on the user's behalf.
+        ``preserve_workspace`` keeps the copied project, its Git repository,
+        and the process logs for the user. This is used by normal application
+        shutdown because Citra never commits on the user's behalf.
         """
         if self.lifecycle_state is RuntimeState.CLOSED:
             return
@@ -464,7 +492,7 @@ class WorkspaceContext:
         try:
             if preserve_workspace:
                 for child in self.root.iterdir():
-                    if child == self.workspace:
+                    if child in {self.workspace, self.logs}:
                         continue
                     if child.is_dir() and (not child.is_symlink()):
                         _remove_tree(child)

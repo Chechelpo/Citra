@@ -5,8 +5,12 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
+from citra.logging import Logger
 from citra.utils.lsp import LspManager
 from .command import Command, CommandResult
+
+
+_logger = Logger(__name__)
 
 
 class LspCommand(Command):
@@ -16,12 +20,15 @@ class LspCommand(Command):
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
+        _logger.debug("Executing LSP command", arguments=args)
         manager = self.context.lsp_manager
         if not isinstance(manager, LspManager):
+            _logger.warning("LSP command has no lifecycle manager")
             return CommandResult(output="LSP services are unavailable in this execution context.")
 
         tokens = shlex.split(args)
         if not tokens or tokens == ["status"]:
+            _logger.info("Rendering LSP status")
             return CommandResult(output=self._format_status(manager.status()))
 
         action = tokens[0].casefold()
@@ -33,8 +40,15 @@ class LspCommand(Command):
             target = tokens[1] if len(tokens) == 2 else None
             count = manager.restart(target) if action == "restart" else manager.stop(target)
             verb = "restarted" if action == "restart" else "stopped"
+            _logger.info(
+                "Changed language-server lifecycle state",
+                action=action,
+                target=target,
+                instances=count,
+            )
             return CommandResult(output=f"{verb}: {count} language-server instance(s)")
 
+        _logger.warning("Rejected unknown LSP command action", action=action)
         raise ValueError(
             "Usage: /lsp [status|install <server|language|missing|all> [--dry-run]|"
             "restart [server]|stop [server]]"
@@ -56,7 +70,13 @@ class LspCommand(Command):
         if len(targets) != 1:
             raise ValueError("/lsp install requires exactly one target.")
 
-        results = manager.install(targets[0], dry_run=dry_run)
+        target = targets[0]
+        _logger.info(
+            "Starting explicit language-server installation",
+            target=target,
+            dry_run=dry_run,
+        )
+        results = manager.install(target, dry_run=dry_run)
         lines: list[str] = []
         skipped: list[str] = []
         for result in results:
@@ -82,11 +102,19 @@ class LspCommand(Command):
                 lines.append("")
             lines.append("Skipped:")
             lines.extend(skipped)
-        return "\n".join(lines) or "No installable language servers selected."
+        output = "\n".join(lines) or "No installable language servers selected."
+        _logger.info(
+            "Finished explicit language-server installation",
+            target=target,
+            dry_run=dry_run,
+            results=len(results),
+        )
+        return output
 
     @staticmethod
     def _format_status(status: dict[str, Any]) -> str:
         """Handle format status."""
+        _logger.trace("Formatting language-server status")
         if not status.get("enabled", True):
             prefix = "LSP: disabled\n"
         else:
@@ -126,4 +154,9 @@ class LspCommand(Command):
                     major = optional.get("java_major")
                     detail = f"Java {major}" if isinstance(major, int) else "unknown Java version"
                     lines.append(f"  JDTLS runtime: {detail}; Java 21+ required")
-        return "\n".join(lines)
+        output = "\n".join(lines)
+        _logger.debug(
+            "Formatted language-server status",
+            servers=len(servers),
+        )
+        return output

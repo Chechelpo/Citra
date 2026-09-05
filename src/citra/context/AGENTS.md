@@ -15,16 +15,18 @@ context shared by tools.
   schemas, ordinary filesystem aliases, or model process environments.
 - Project changes stay uncommitted. The user owns Git commits. The model may
   restore exact tracked files only through the `workspace` tool.
-- At copy time, the controller records content identities for tracked and
-  non-ignored files. The user-only `/apply` command compares the checkout to
-  that baseline, rejects concurrent source conflicts, copies confirmed changes
-  back transactionally, and stages only source paths whose index/worktree was
-  clean unless the user explicitly overrides that safeguard.
+- At copy time, the controller records content identities for applicable files
+  and symlinks. A copied Git repository root honors its tracked/non-ignored
+  inventory; a plain directory or repository subdirectory uses a filesystem
+  inventory. The user-only `/apply` command compares the checkout to that
+  baseline, rejects concurrent source conflicts, copies confirmed changes back
+  transactionally, and optionally stages clean paths in the containing Git
+  worktree. Applying does not require a repository.
 - Runtime/home/cache/tmp/env roots remain lifecycle-owned. The document library
   is available only through its trusted semantic tools.
-- Controller process diagnostics live in source-local `.citra.logs/last.log`.
-  This private runtime directory is excluded from the copied project and its
-  apply baseline.
+- Controller process diagnostics live in `<process-root>/logs/latest.log`.
+  `CITRA_ROOT/logs/config.toml` is the only installation log asset loaded.
+  Normal shutdown preserves the process log directory beside `workspace/`.
 
 ## Configuration
 

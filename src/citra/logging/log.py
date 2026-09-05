@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-import threading
 import tomllib
-from datetime import datetime
 from pathlib import Path
+from threading import current_thread
 from typing import Any
 
 
@@ -19,42 +18,43 @@ LEVELS = {
     "error": 50,
 }
 
+LOG_DIRECTORY_NAME = "logs"
+LATEST_LOG_NAME = "latest.log"
+
+
+def _resolve_log_config_directory(citra_root: str | Path | None = None) -> Path:
+    """Return the installation directory containing log configuration."""
+    root = citra_root if citra_root is not None else os.environ.get("CITRA_ROOT")
+    if root is None or not str(root).strip():
+        raise RuntimeError("CITRA_ROOT is not defined.")
+    return Path(root).expanduser() / LOG_DIRECTORY_NAME
+
 
 class Logger:
-    """Write compact structured diagnostics without breaking application code."""
+    """Emit structured diagnostics through the process logging pipeline."""
 
     def __init__(self, source: str):
-        """Create a source-labelled logger with optional file persistence."""
+        """Create a source-labelled logger."""
         self.source = source
-        self._lock = threading.Lock()
 
-        self.log_dir = self._resolve_log_dir()
-        self.level = self._load_level()
-
-    def _resolve_log_dir(self) -> Path | None:
-        """Resolve the configured log directory, or use stdlib logging only."""
-        config_path = os.environ.get("CITRA_ROOT") or os.environ.get(
-            "CITRA_CONFIG_PATH"
+        self.verbose = (
+            os.environ.get(
+                "CITRA_LOG_VERBOSE",
+                "false",
+            ).lower()
+            in ("1", "true", "yes", "on")
         )
 
-        if not config_path:
-            return None
+        self.log_config_dir = self._resolve_log_config_dir()
+        self.level = self._load_level()
 
-        path = Path(config_path)
-        if path.suffix == ".toml":
-            log_dir = path.parent / "logs"
-        else:
-            log_dir = path / "logs"
-
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        return log_dir
+    def _resolve_log_config_dir(self) -> Path:
+        """Resolve the installation directory containing only log config."""
+        return _resolve_log_config_directory()
 
     def _load_level(self) -> int:
-        """Load the configured threshold while keeping logging non-fatal."""
-        if self.log_dir is None:
-            return LEVELS["trace"]
-        config_file = self.log_dir / "config.toml"
+        """Load configured log level."""
+        config_file = self.log_config_dir / "config.toml"
 
         if not config_file.exists():
             return LEVELS["trace"]
@@ -63,77 +63,229 @@ class Logger:
             with config_file.open("rb") as f:
                 config = tomllib.load(f)
 
-            level = str(config.get("level", "trace")).lower()
+            level = str(
+                config.get(
+                    "level",
+                    "trace",
+                )
+            ).lower()
 
-            return LEVELS.get(level, LEVELS["trace"])
+            return LEVELS.get(
+                level,
+                LEVELS["trace"],
+            )
 
         except Exception:
-            # Logging should never break the application.
             return LEVELS["trace"]
 
-    def _write(self, level: str, message: str, **fields: Any) -> None:
-        """Emit one structured record at the requested severity."""
+    def _serialize(self, value: Any) -> str:
+        """Serialize log metadata with readable multiline values."""
+        try:
+            if isinstance(value, dict):
+                parts: list[str] = []
+
+                for key, item in value.items():
+                    if isinstance(item, str) and "\n" in item:
+                        parts.append(
+                            f"\n--- {key} ---\n{item}\n--- end {key} ---"
+                        )
+                    else:
+                        parts.append(
+                            f"{key}={json.dumps(item, ensure_ascii=False, default=str)}"
+                        )
+
+                return " ".join(parts)
+
+            if isinstance(value, str) and "\n" in value:
+                return f"\n{value}"
+
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                default=str,
+            )
+
+        except Exception:
+            return repr(value)
+
+    def _write(
+        self,
+        level: str,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        """Emit one structured log record."""
+
         if LEVELS[level] < self.level:
             return
 
-        entry = {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "level": level,
-            "source": self.source,
-            "message": message,
-        }
+        thread = current_thread()
 
-        if fields:
-            entry["fields"] = fields
+        logger_name = (
+            logger_name
+            or f"citra.{self.source}"
+        )
 
-        if self.log_dir is None:
-            std_level = {
-                "trace": logging.DEBUG,
-                "debug": logging.DEBUG,
-                "info": logging.INFO,
-                "warn": logging.WARNING,
-                "warning": logging.WARNING,
-                "error": logging.ERROR,
-            }[level]
-            logging.getLogger(f"citra.{self.source}").log(
-                std_level,
-                message,
-                extra={"origin": self.source, **fields},
-            )
-            return
-        try:
-            with self._lock:
-                with (self.log_dir / "latest.txt").open(
-                    "a",
-                    encoding="utf-8",
-                ) as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError:
-            logging.getLogger(f"citra.{self.source}").exception(
-                "Could not persist structured log record",
-                extra={"origin": self.source},
+        metadata: dict[str, Any] = {}
+
+        if isinstance(event, dict):
+            metadata.update(event)
+
+            text = str(
+                metadata.pop(
+                    "message",
+                    "structured event",
+                )
             )
 
-    def trace(self, message: str, **fields: Any) -> None:
-        """Emit a trace-level record."""
-        self._write("trace", message, **fields)
+        else:
+            text = event
 
-    def debug(self, message: str, **fields: Any) -> None:
-        """Emit a debug-level record."""
-        self._write("debug", message, **fields)
+        metadata.update(fields)
 
-    def info(self, message: str, **fields: Any) -> None:
-        """Emit an info-level record."""
-        self._write("info", message, **fields)
+        if self.verbose:
+            metadata.update(
+                {
+                    "pid": os.getpid(),
+                    "thread": thread.name,
+                    "thread_id": thread.ident,
+                    "logger": logger_name,
+                }
+            )
 
-    def warning(self, message: str, **fields: Any) -> None:
-        """Emit a warning-level record."""
-        self._write("warning", message, **fields)
+            if file is not None:
+                metadata["file"] = file
 
-    def warn(self, message: str, **fields: Any) -> None:
-        """Emit a warn-level record using the requested level spelling."""
-        self._write("warn", message, **fields)
+            if line is not None:
+                metadata["line"] = line
 
-    def error(self, message: str, **fields: Any) -> None:
-        """Emit an error-level record."""
-        self._write("error", message, **fields)
+        record = text
+
+        if metadata:
+            record += " " + self._serialize(metadata)
+
+        std_level = {
+            "trace": logging.DEBUG,
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warn": logging.WARNING,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+        }[level]
+        logging.getLogger(logger_name).log(
+            std_level,
+            record,
+            extra={"origin": self.source},
+        )
+
+    def trace(
+        self,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        self._write(
+            "trace",
+            event,
+            logger_name=logger_name,
+            file=file,
+            line=line,
+            **fields,
+        )
+
+    def debug(
+        self,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        self._write(
+            "debug",
+            event,
+            logger_name=logger_name,
+            file=file,
+            line=line,
+            **fields,
+        )
+
+    def info(
+        self,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        self._write(
+            "info",
+            event,
+            logger_name=logger_name,
+            file=file,
+            line=line,
+            **fields,
+        )
+
+    def warning(
+        self,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        self._write(
+            "warning",
+            event,
+            logger_name=logger_name,
+            file=file,
+            line=line,
+            **fields,
+        )
+
+    def warn(
+        self,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        self._write(
+            "warn",
+            event,
+            logger_name=logger_name,
+            file=file,
+            line=line,
+            **fields,
+        )
+
+    def error(
+        self,
+        event: str | dict[str, Any],
+        *,
+        logger_name: str | None = None,
+        file: str | None = None,
+        line: int | None = None,
+        **fields: Any,
+    ) -> None:
+        self._write(
+            "error",
+            event,
+            logger_name=logger_name,
+            file=file,
+            line=line,
+            **fields,
+        )

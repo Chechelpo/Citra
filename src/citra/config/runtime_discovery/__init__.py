@@ -17,6 +17,7 @@ from ._language import (
     RubyRuntimeDiscovery,
     RustRuntimeDiscovery,
 )
+from ._lsp import LanguageServerRuntimeDiscovery
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ DISCOVERIES: tuple[RuntimeDiscovery, ...] = (
     DotNetRuntimeDiscovery(),
     RubyRuntimeDiscovery(),
     GitRuntimeDiscovery(),
+    LanguageServerRuntimeDiscovery(),
     StandardDiscovery(),
 )
 
@@ -102,6 +104,7 @@ __all__ = [
     "DISCOVERIES",
     "RuntimeDiscovery",
     "RuntimeDiscoveryResult",
+    "LanguageServerRuntimeDiscovery",
     "aggregate_results",
     "get_ro_binds",
 ]

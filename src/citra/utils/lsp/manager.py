@@ -12,6 +12,7 @@ from threading import RLock
 from typing import Any
 
 from citra.context.workspace_context import WorkspaceContext
+from citra.logging import Logger
 from citra.sandbox.sandbox import WorkspaceSandbox
 from citra.sandbox.filesystem_ops import ReadRawInput
 from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
@@ -29,6 +30,7 @@ from .transport import JsonRpcTransport
 
 
 logger = logging.getLogger(__name__)
+_activity_logger = Logger(__name__)
 
 
 def _merge_dict(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
@@ -154,6 +156,7 @@ class LspManager:
 
     def status(self) -> dict[str, Any]:
         """Handle status."""
+        _activity_logger.debug("Collecting sandbox language-server status")
         with self._lock:
             running = {
                 server_id: sum(
@@ -165,12 +168,13 @@ class LspManager:
                 for server_id in SERVERS
             }
         servers: list[dict[str, Any]] = []
+        managers = self._available_managers()
         for definition in SERVERS.values():
             available, details = self._availability(definition)
             executable = details["executable"]
             candidate = candidate_for(
                 definition,
-                managers=self._available_managers(),
+                managers=managers,
             )
             servers.append(
                 {
@@ -185,7 +189,15 @@ class LspManager:
                     "install_hint": None if available else definition.install_hint,
                 }
             )
-        return {"enabled": self.config.enabled, "servers": servers}
+        result = {"enabled": self.config.enabled, "servers": servers}
+        _activity_logger.info(
+            "Collected sandbox language-server status",
+            enabled=self.config.enabled,
+            installed=sum(bool(item["installed"]) for item in servers),
+            available=sum(bool(item["available"]) for item in servers),
+            running=sum(int(item["running"]) for item in servers),
+        )
+        return result
 
     def diagnostics(
         self,
@@ -373,7 +385,7 @@ class LspManager:
                 sandbox=self.sandbox,
                 cwd=self.workspace.workspace,
                 environment=self.workspace.environment(),
-                resolver=self._resolve_or_refresh,
+                resolver=self._which,
             )
             results.append(result)
             if not dry_run:
@@ -804,17 +816,32 @@ class LspManager:
         return new_config, tuple(resolved.path_prepend)
 
     def _which(self, command: str) -> str | None:
-        """Handle which."""
-        path = self.workspace.resolve_command(command)
-        return str(path) if path is not None else None
+        """Resolve a command exactly as a process inside the sandbox can see it.
 
-    def _resolve_or_refresh(self, command: str) -> str | None:
-        """Handle resolve or refresh."""
-        existing = self._which(command)
-        if existing is not None:
-            return existing
-        path = self.workspace.refresh_staged_command(command)
-        return str(path) if path is not None else None
+        Immutable host-discovered commands are resolved through the sandbox's
+        runtime manifest.  Mutable dependency-environment bins are refreshed
+        on every miss so ``/lsp status`` immediately observes servers installed
+        during the current Citra process, including installs performed through
+        an ordinary sandbox shell rather than ``/lsp install``.
+        """
+        path = self.sandbox.resolve_command(command)
+        source = "runtime"
+        if path is None:
+            path = self.workspace.refresh_staged_command(command)
+            source = "dependency-environment"
+        if path is None:
+            _activity_logger.trace(
+                "Sandbox command is unavailable",
+                command=command,
+            )
+            return None
+        _activity_logger.debug(
+            "Resolved sandbox command",
+            command=command,
+            executable=str(path),
+            source=source,
+        )
+        return str(path)
 
     def _available_managers(self) -> tuple[str, ...]:
         """Handle available managers."""

@@ -262,7 +262,21 @@ class RuntimeProvisioning:
         """Resolve one command to its canonical sandbox launcher."""
         for tool in self.tools.values():
             if tool.available and command in tool.commands:
-                return tool.commands[command]
+                resolved = tool.commands[command]
+                logger.debug(
+                    "Resolved provisioned runtime command",
+                    extra={
+                        "origin": __name__,
+                        "command": command,
+                        "tool": tool.id,
+                        "path": str(resolved),
+                    },
+                )
+                return resolved
+        logger.debug(
+            "Provisioned runtime command is unavailable",
+            extra={"origin": __name__, "command": command},
+        )
         return None
 
     def asset_path(self, asset_id: str) -> Path | None:
@@ -277,6 +291,14 @@ class RuntimeProvisioning:
             commands={command: path},
             mode="dependency-environment",
             health="not-configured",
+        )
+        logger.info(
+            "Registered mutable dependency-environment command",
+            extra={
+                "origin": __name__,
+                "command": command,
+                "path": str(path),
+            },
         )
 
     @property

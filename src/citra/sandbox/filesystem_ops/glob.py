@@ -5,8 +5,6 @@ import glob as globlib
 from pathlib import Path
 from typing import Any
 
-from citra.logging import Logger
-
 from .base import (
     FilesystemInput,
     FilesystemOutput,
@@ -14,9 +12,6 @@ from .base import (
     require_payload_dict,
 )
 from .scope import ScopedFilesystem
-
-
-_logger = Logger("glob.py")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +61,7 @@ class GlobInput(FilesystemInput[GlobOutput]):
         if not isinstance(pat, str):
             raise ValueError("'pat' or 'pattern' must be a string.")
 
-        result = cls(
+        return cls(
             pat=pat,
             path=optional_string(
                 arguments,
@@ -74,14 +69,6 @@ class GlobInput(FilesystemInput[GlobOutput]):
                 optional_string(arguments, "dir_path", "."),
             ),
         )
-
-        _logger.debug(
-            "Parsed glob request",
-            pattern=result.pat,
-            path=result.path,
-        )
-
-        return result
 
     def to_arguments(self) -> dict[str, Any]:
         """Serialize input into tool arguments."""
@@ -96,55 +83,32 @@ class GlobInput(FilesystemInput[GlobOutput]):
 def execute(order: GlobInput, fs: ScopedFilesystem) -> GlobOutput:
     """Execute a scoped recursive glob search."""
 
-    _logger.info(
-        "Starting glob search",
-        pattern=order.pat,
-        path=order.path,
-    )
-
-    try:
-        base = fs.require_allowed_path(
-            fs.resolve_path(order.path)
-        )
-    except Exception as error:
-        _logger.error(
-            "Failed to resolve glob root",
-            path=order.path,
-            error=str(error),
-        )
-        raise
-
-    _logger.trace(
-        "Resolved glob root",
-        resolved=fs.display_path(base),
+    base = fs.require_allowed_path(
+        fs.resolve_path(order.path)
     )
 
     if not base.is_dir():
-        _logger.warning(
-            "Glob root is not a directory",
-            path=fs.display_path(base),
-        )
-
         raise NotADirectoryError(
             f"Glob root is not a directory: {fs.display_path(base)}"
         )
 
+    pattern = str(base / order.pat)
+
+    raw_matches = list(
+        globlib.glob(
+            pattern,
+            recursive=True,
+        )
+    )
+
     entries: list[Path] = []
 
-    for raw in globlib.glob(
-        str(base / order.pat),
-        recursive=True,
-    ):
+    for raw in raw_matches:
         try:
             entries.append(
                 fs.require_allowed_path(raw)
             )
-        except ValueError as error:
-            _logger.warning(
-                "Ignoring glob match outside filesystem scope",
-                path=str(raw),
-                error=str(error),
-            )
+        except ValueError:
             continue
 
     entries = sorted(
@@ -156,12 +120,6 @@ def execute(order: GlobInput, fs: ScopedFilesystem) -> GlobOutput:
     paths = tuple(
         fs.display_path(path)
         for path in entries
-    )
-
-    _logger.info(
-        "Glob search completed",
-        pattern=order.pat,
-        matches=len(paths),
     )
 
     return GlobOutput(paths=paths)

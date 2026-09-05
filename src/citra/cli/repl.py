@@ -16,6 +16,7 @@ from ..agent.runner import ApiCall
 from ..application import CitraApplication
 from ..workflows import Workflow, WorkflowRegistry
 from ..utils.chat_completions_api import call_api
+from ..utils.process_logging import process_log
 from ..utils.terminal import (
     BLUE,
     BOLD,
@@ -237,6 +238,16 @@ def main(
         workflow=workflow,
         workflow_registry=workflow_registry,
     )
+    with process_log(application.workspace.logs):
+        _run_application(application, input_service=input_service)
+
+
+def _run_application(
+    application: CitraApplication,
+    *,
+    input_service: Any,
+) -> None:
+    """Run and shut down an application under its process log handler."""
     try:
         print_header(application.config, application.workspace.workspace)
         while True:

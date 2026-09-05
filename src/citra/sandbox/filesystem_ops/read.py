@@ -5,13 +5,8 @@ import glob as globlib
 from pathlib import Path
 from typing import Any
 
-from citra.logging import Logger
-
 from .base import FilesystemInput, FilesystemOutput, require_payload_dict
 from .scope import ScopedFilesystem
-
-
-_logger = Logger("read.py")
 
 
 MAX_READ_REQUESTS = 20
@@ -259,9 +254,4 @@ def execute(order: ReadInput, fs: ScopedFilesystem) -> ReadOutput:
                     selected=selected,
                 )
             )
-    _logger.info(
-        "Filesystem read completed",
-        requests=len(order.requests),
-        files=len(entries),
-    )
     return ReadOutput(entries=tuple(entries), single_literal=single_literal)

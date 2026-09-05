@@ -53,6 +53,18 @@ def _command(
     return ApplyCommand(context)
 
 
+def _plain_workspaces(
+    tmp_path: Path,
+) -> tuple[Path, Path, dict[str, SourceEntry]]:
+    source = tmp_path / "plain-source"
+    source.mkdir()
+    (source / "changed.txt").write_text("before\n", encoding="utf-8")
+    (source / "deleted.txt").write_text("remove me\n", encoding="utf-8")
+    checkout = tmp_path / "plain-checkout"
+    shutil.copytree(source, checkout, symlinks=True)
+    return source, checkout, capture_source_baseline(checkout)
+
+
 def test_apply_command_is_registered() -> None:
     assert COMMAND_REGISTRY.contains("apply")
 
@@ -160,7 +172,7 @@ def test_apply_advances_baseline_for_later_model_edits(tmp_path: Path) -> None:
         first = _command(source, checkout, baseline).run("")
     assert "Staged 1 path(s)" in first.output
 
-    assert "No non-ignored" in _command(
+    assert "No applicable" in _command(
         source,
         checkout,
         baseline,
@@ -172,3 +184,102 @@ def test_apply_advances_baseline_for_later_model_edits(tmp_path: Path) -> None:
 
     assert "Applied 1 file change" in second.output
     assert (source / "tracked.py").read_text(encoding="utf-8") == "later = 3\n"
+
+
+def test_apply_supports_plain_directories_without_git(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source, checkout, baseline = _plain_workspaces(tmp_path)
+    (checkout / "changed.txt").write_text("after\n", encoding="utf-8")
+    (checkout / "deleted.txt").unlink()
+    (checkout / "created.txt").write_text("created\n", encoding="utf-8")
+
+    with mock.patch("builtins.input", return_value="yes"):
+        result = _command(source, checkout, baseline).run("")
+
+    preview = capsys.readouterr().out
+    assert "Git staging: unavailable" in preview
+    assert "Changes can still be applied" in preview
+    assert (source / "changed.txt").read_text(encoding="utf-8") == "after\n"
+    assert not (source / "deleted.txt").exists()
+    assert (source / "created.txt").read_text(encoding="utf-8") == "created\n"
+    assert "Applied 3 file change(s)" in result.output
+    assert "Git staging was skipped" in result.output
+    assert "git commit" not in result.output
+
+
+def test_apply_plain_directory_retains_conflict_detection(tmp_path: Path) -> None:
+    source, checkout, baseline = _plain_workspaces(tmp_path)
+    (source / "changed.txt").write_text("user edit\n", encoding="utf-8")
+    (checkout / "changed.txt").write_text("model edit\n", encoding="utf-8")
+
+    with mock.patch("builtins.input", return_value="yes") as confirmation:
+        result = _command(source, checkout, baseline).run("")
+
+    assert "Nothing was applied" in result.output
+    assert (source / "changed.txt").read_text(encoding="utf-8") == "user edit\n"
+    confirmation.assert_not_called()
+
+
+def test_apply_uses_repository_containing_selected_workspace(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    repository = tmp_path / "repository"
+    source = repository / "packages" / "selected"
+    source.mkdir(parents=True)
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "test")
+    _git(repository, "config", "user.email", "test@example.invalid")
+    (source / "tracked.py").write_text("before = 1\n", encoding="utf-8")
+    _git(repository, "add", "packages/selected/tracked.py")
+    _git(repository, "commit", "-qm", "initial")
+    checkout = tmp_path / "nested-checkout"
+    shutil.copytree(source, checkout, symlinks=True)
+    baseline = capture_source_baseline(checkout)
+    (checkout / "tracked.py").write_text("after = 2\n", encoding="utf-8")
+    (checkout / "created.py").write_text("created = True\n", encoding="utf-8")
+
+    with mock.patch("builtins.input", return_value="yes"):
+        result = _command(source, checkout, baseline).run("")
+
+    preview = capsys.readouterr().out
+    assert f"Containing repository: {repository}" in preview
+    staged = _git(repository, "diff", "--cached", "--name-only").splitlines()
+    assert staged == [
+        "packages/selected/created.py",
+        "packages/selected/tracked.py",
+    ]
+    assert "Staged 2 path(s)" in result.output
+    assert f"repository: {repository}" in result.output
+
+
+def test_apply_nested_workspace_does_not_stage_ignored_paths(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    source = repository / "packages" / "selected"
+    source.mkdir(parents=True)
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "test")
+    _git(repository, "config", "user.email", "test@example.invalid")
+    (repository / ".gitignore").write_text(
+        "packages/selected/generated.txt\n",
+        encoding="utf-8",
+    )
+    (source / "tracked.py").write_text("before = 1\n", encoding="utf-8")
+    _git(repository, "add", ".gitignore", "packages/selected/tracked.py")
+    _git(repository, "commit", "-qm", "initial")
+    checkout = tmp_path / "nested-checkout"
+    shutil.copytree(source, checkout, symlinks=True)
+    baseline = capture_source_baseline(checkout)
+    (checkout / "tracked.py").write_text("after = 2\n", encoding="utf-8")
+    (checkout / "generated.txt").write_text("generated\n", encoding="utf-8")
+
+    with mock.patch("builtins.input", return_value="yes"):
+        result = _command(source, checkout, baseline).run("")
+
+    assert (source / "generated.txt").read_text(encoding="utf-8") == "generated\n"
+    staged = _git(repository, "diff", "--cached", "--name-only").splitlines()
+    assert staged == ["packages/selected/tracked.py"]
+    assert "Applied but did not stage Git-ignored source paths" in result.output
+    assert "generated.txt" in result.output

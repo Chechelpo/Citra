@@ -164,6 +164,20 @@ class AgentRunner:
             model_config = self.context.config.model()
             model_id = model_config.id
             max_input_tokens = model_config.max_input_tokens
+            memory_services = self.session.memory.values()
+            request_prompt = prompt
+            if self.api_call is not call_api:
+                memory_context = build_memory_context(memory_services)
+                if memory_context:
+                    request_prompt = "\n\n".join(
+                        section
+                        for section in (request_prompt, memory_context)
+                        if section
+                    )
+                    _logger.debug(
+                        "Projected retained memory into custom API prompt",
+                        services=len(memory_services),
+                    )
 
             api_arguments: dict[str, Any] = {
                 "context": self.context,
@@ -184,10 +198,10 @@ class AgentRunner:
                 api_arguments["retry_interrupt"] = (
                     self.session.steering.has_pending
                 )
-                api_arguments["memory_services"] = self.session.memory.values()
+                api_arguments["memory_services"] = memory_services
 
-            if prompt:
-                api_arguments["sys_prompt"] = prompt
+            if request_prompt:
+                api_arguments["sys_prompt"] = request_prompt
 
             _logger.debug(
                 "Calling model",
