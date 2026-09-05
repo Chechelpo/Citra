@@ -35,7 +35,7 @@ _logger = Logger(__name__)
 class SandboxConfig:
     """One workflow's contribution to the process sandbox policy."""
 
-    mode: SandboxMode = SandboxMode.FULL_SANDBOX
+    mode: SandboxMode = SandboxMode.PARTIAL_SANDBOX
     additional_ro_binds: tuple[Path, ...] = ()
     additional_w_binds: tuple[Path, ...] = ()
     global_network_disallow: bool = False

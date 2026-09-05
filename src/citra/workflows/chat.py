@@ -13,6 +13,7 @@ from citra.tools.transient import (
     Edit,
     Git,
     Glob,
+    Grep,
     Lsp,
     PromptUser,
     Read,
@@ -39,7 +40,7 @@ class ChatWorkflow(StaticWorkflow):
         "Conversational assistant with a writable project and optional tools."
     )
     _TOOLS = ToolSet(
-        core_tools=(Read, Write, Edit, Glob, Tree, Workspace, PromptUser),
+        core_tools=(Read, Write, Edit, Glob, Grep, Tree, Workspace, PromptUser),
         deferred_tools=(
             Bash,
             Git,

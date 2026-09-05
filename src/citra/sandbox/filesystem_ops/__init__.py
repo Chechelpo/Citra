@@ -1,6 +1,7 @@
 from .base import FilesystemInput, FilesystemOutput
 from .edit import EditInput, EditOutput
 from .glob import GlobInput, GlobOutput
+from .grep import GrepInput, GrepMatch, GrepOutput
 from .read import ReadInput, ReadOutput, ReadSlice
 from .read_binary import ReadBinaryInput, ReadBinaryOutput
 from .read_raw import ReadRawInput, ReadRawOutput
@@ -23,6 +24,9 @@ __all__ = [
     "EditOutput",
     "GlobInput",
     "GlobOutput",
+    "GrepInput",
+    "GrepMatch",
+    "GrepOutput",
     "TreeInput",
     "TreeOutput",
 ]

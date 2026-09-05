@@ -5,6 +5,7 @@ from .document import Document
 from .edit import Edit
 from .git import Git
 from .glob import Glob
+from .grep import Grep
 from .lsp import Lsp
 from .prompt_user import PromptUser
 from .read import Read
@@ -24,6 +25,7 @@ __all__ = [
     "Edit",
     "Git",
     "Glob",
+    "Grep",
     "Lsp",
     "PromptUser",
     "Read",

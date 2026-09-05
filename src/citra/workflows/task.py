@@ -1,5 +1,4 @@
 """General-purpose single-mode task workflow."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
@@ -11,20 +10,7 @@ from citra.tools.session_memory import (
     FactTool,
     TodoTool,
 )
-from citra.tools.transient import (
-    Bash,
-    Diagram,
-    Document,
-    Edit,
-    Glob,
-    Lsp,
-    PromptUser,
-    Read,
-    Tree,
-    WebSearch,
-    Workspace,
-    Write,
-)
+from citra.tools.transient import  *
 from citra.utils.directory_tree import render_tree
 from citra.utils.prompt import collect_environment
 
@@ -48,6 +34,7 @@ class TaskWorkflow(StaticWorkflow):
             Write,
             Read,
             Glob,
+            Grep,
             Bash,
             Workspace,
             Tree,
@@ -56,7 +43,7 @@ class TaskWorkflow(StaticWorkflow):
             DecisionTool,
             ConstraintTool,
         ),
-        deferred_tools=(Lsp, WebSearch, PromptUser, Document, Diagram),
+        deferred_tools=(Lsp, WebSearch, Browser, PromptUser, Document, Diagram),
     )
     _SANDBOX_CONFIG = SandboxConfig()
     _TASK_STEERING = TaskSteeringConfig(
@@ -77,6 +64,7 @@ class TaskWorkflow(StaticWorkflow):
             limit=100,
             max_depth=2,
         )
+        initial_aider_tree = context.repo_map.render(model_id=context.model_config().id)
         return f"""
 # Role
 
@@ -93,11 +81,17 @@ exact tracked file when an attempted change is wrong.
 
 Treat this environment as the current execution target.
 
-# Initial tree
+# Initial trees
+
+Treat both as an initial snapshot.
+
+## Directory tree
 
 {initial_tree}
 
-Treat this as a snapshot at the start
+## Aider tree
+
+{initial_aider_tree}
 
 # Operating principles
 
