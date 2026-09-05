@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING
 
 from citra.context.environment_fetching import EnvironmentInfo
 from citra.tools.skills.skill import Skill
-from citra.workflows import SingleModeWorkflow
 from citra.utils.directory_tree import render_tree
 from .names import agent_name
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
+    from citra.workflows import SingleModeWorkflow
 
 
 __all__ = [
