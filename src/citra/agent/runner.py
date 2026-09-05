@@ -9,7 +9,6 @@ from typing import Any, cast
 from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 
 from citra.logging import Logger
-from citra.utils.prompt import build_system_prompt
 
 from ..cli.rendering import (
     memory_tool_for_call,
@@ -106,7 +105,7 @@ class AgentRunner:
             )
             self.session.add_user_message(steering)
 
-        prompt = build_system_prompt(self.context)
+        prompt: str = workflow.get_system_prompt(self.context)
 
         tool_registry = ToolRegistry(toolset=workflow.tool_set)
 

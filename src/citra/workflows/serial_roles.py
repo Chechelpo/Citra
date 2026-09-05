@@ -24,22 +24,8 @@ from citra.tools.session_memory import (
 )
 from citra.tools.skills.skill import Skill
 from citra.tools.subagent.tool import SubagentTool
-from citra.tools.transient import (
-    Bash,
-    Browser,
-    Edit,
-    Glob,
-    Grep,
-    Lsp,
-    PromptUser,
-    Read,
-    SkillTool,
-    Subprocess,
-    Tree,
-    Workspace,
-    Write,
-)
-from citra.utils.prompt import EnvironmentInfo, collect_environment, format_skills, basic_coding_conventions
+from citra.tools.transient import  *
+from citra.workflows.sys_prompt import build_system_prompt
 
 from .workflow import (
     SandboxConfig,
@@ -197,7 +183,6 @@ class _RoleWorkflow(SingleModeWorkflow):
             context
         ).function.name
         allowed = ", ".join(f"`{item}`" for item in step.allowed_next)
-        environment: EnvironmentInfo = collect_environment(context)
         assurance = (
             f"\n\n# Additional assurance discipline\n\n{self.ASSURANCE_INSTRUCTIONS}"
             if self.ASSURANCE_INSTRUCTIONS
@@ -210,34 +195,22 @@ class _RoleWorkflow(SingleModeWorkflow):
             allowed_next=step.allowed_next,
         )
 
-        return f"""
-# Serial workflow role: {self.ROLE}
+        return build_system_prompt(
+            context = context,
+            preepend=f"""
+            # Serial workflow role: {self.ROLE}
 
-Work only on this phase. You share the sandbox, filesystem, and structured
-memory with other roles, but this conversation is fresh. Treat the previous
-role's message and retained memory as evidence to verify, not hidden reasoning.
+            Work only on this phase. You share the sandbox, filesystem, and structured
+            memory with other roles, but this conversation is fresh. Treat the previous
+            role's message and retained memory as evidence to verify, not hidden reasoning.
 
-{self.INSTRUCTIONS}
+            {self.INSTRUCTIONS}
+            """,
+            give_name=True,
+            add_coding_convetions=True,
+            append = f"""
 
 {_MEMORY_PROTOCOL}{assurance}
-
-# Environment
-
-{environment.as_prompt_section()}
-
-Use the available inspection, editing, execution, and documentation tools only
-when they materially help this phase. Avoid environment-specific coupling when
-a reasonable portable implementation is available.
-
-# Available skills
-
-{format_skills(self._AVAILABLE_SKILLS)}
-
-Call a skill only when relevant.
-
-# Coding
-
-{basic_coding_conventions()}
 
 # Required handoff
 
@@ -254,6 +227,7 @@ Before ending this phase:
 The controller validates the checkpoint and starts a new isolated role. Do not
 simulate that role in this turn.
 """.strip()
+)
 
 
 class ExplorerWorkflow(_RoleWorkflow):
@@ -325,6 +299,7 @@ Advance to plan only when:
             PromptUser,
             SkillTool,
             Read,
+            Find,
             Glob,
             Grep,
             Tree,
@@ -404,6 +379,7 @@ Do not edit files.
             Glob,
             Grep,
             Tree,
+            Find,
             _restricted(TodoTool, "add", "insert", "promote", "remove"),
             DecisionTool,
             FactTool,
@@ -456,6 +432,7 @@ Complete TODOs only when the described outcome exists and can be verified.
             Grep,
             Tree,
             Edit,
+            Find,
             Write,
             Bash,
             Workspace,
@@ -509,6 +486,7 @@ Failures become issues routed to the phase capable of correction.
             Glob,
             Grep,
             Tree,
+            Find,
             Bash,
             Lsp,
             VerificationTool,
@@ -555,6 +533,7 @@ open, and no working state remains provisional.
             Read,
             Glob,
             Grep,
+            Find,
             Tree,
             Bash,
             Lsp,

@@ -6,10 +6,15 @@ sandbox-scoped operation. The agent can:
 * recursively walk one or more root paths
 * filter by filename glob and/or file extension
 * optionally search file contents (literal or regex, with case sensitivity)
-* prune excluded directories before descending
+* prune excluded directories before descending; a built-in junk set
+  (``DEFAULT_TREE_SKIPS`` — ``__pycache__``, ``.venv``, ``.git``,
+  ``node_modules``, etc.) is skipped by default unless the caller opts out
+  with ``use_default_skips=False``
 * cap traversal depth
-* ask for ``mode="files"`` (path list, ``GlobOutput``-shaped) or
-  ``mode="matches"`` (per-file structured hits with context windows)
+* ask for ``mode="files"`` (path list, ``GlobOutput``-shaped),
+  ``mode="matches"`` (per-file structured hits with context windows), or
+  ``mode="count"`` (one ``(path, count)`` row per file with at least one
+  match, mirroring :mod:`grep`'s ``count`` mode)
 
 The operation reuses ``_walk_files``, ``_glob_matches``, ``MAX_FILE_BYTES``,
 ``MAX_LINE_CHARS``, and the binary-skip heuristic from :mod:`grep` to keep a
@@ -36,8 +41,9 @@ from .grep import (
     _glob_matches,
 )
 from .scope import ScopedFilesystem
+from .tree import DEFAULT_TREE_SKIPS
 
-OUTPUT_MODES = ("files", "matches")
+OUTPUT_MODES = ("files", "matches", "count")
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
@@ -310,11 +316,15 @@ class FindOutput(FilesystemOutput):
 
     * ``mode="files"`` carries ``paths`` (matching ``GlobOutput``).
     * ``mode="matches"`` carries ``results`` of per-file matches.
+    * ``mode="count"`` carries ``counts``: one ``(path, count)`` entry per
+      file with at least one content match, where ``count`` is the per-file
+      match total.
     """
 
     mode: str = "files"
     paths: tuple[str, ...] = ()
     results: tuple[FindFileMatches, ...] = ()
+    counts: tuple[tuple[str, int], ...] = ()
     truncated: bool = False
 
     @classmethod
@@ -325,32 +335,56 @@ class FindOutput(FilesystemOutput):
         if not isinstance(mode, str) or mode not in OUTPUT_MODES:
             raise ValueError("Find output 'mode' is invalid.")
 
+        truncated = raw.get("truncated", False)
+        if not isinstance(truncated, bool):
+            raise ValueError("Find output 'truncated' must be boolean.")
+
         if mode == "files":
             raw_paths = raw.get("paths", [])
             if not isinstance(raw_paths, list) or not all(
                 isinstance(path, str) for path in raw_paths
             ):
                 raise ValueError("Find output 'paths' must be an array of strings.")
-            truncated = raw.get("truncated", False)
-            if not isinstance(truncated, bool):
-                raise ValueError("Find output 'truncated' must be boolean.")
             return cls(
                 mode=mode,
                 paths=tuple(raw_paths),
                 results=(),
+                counts=(),
+                truncated=truncated,
+            )
+
+        if mode == "count":
+            raw_counts = raw.get("counts", [])
+            if not isinstance(raw_counts, list) or not all(
+                isinstance(item, dict)
+                and isinstance(item.get("path"), str)
+                and isinstance(item.get("count"), int)
+                and not isinstance(item.get("count"), bool)
+                and item.get("count") >= 0
+                for item in raw_counts
+            ):
+                raise ValueError(
+                    "Find output 'counts' must be an array of "
+                    "{'path': str, 'count': non-negative int} objects."
+                )
+            return cls(
+                mode=mode,
+                paths=(),
+                results=(),
+                counts=tuple(
+                    (item["path"], item["count"]) for item in raw_counts
+                ),
                 truncated=truncated,
             )
 
         raw_results = raw.get("results", [])
         if not isinstance(raw_results, list):
             raise ValueError("Find output 'results' must be an array.")
-        truncated = raw.get("truncated", False)
-        if not isinstance(truncated, bool):
-            raise ValueError("Find output 'truncated' must be boolean.")
         return cls(
             mode=mode,
             paths=(),
             results=tuple(FindFileMatches.from_payload(item) for item in raw_results),
+            counts=(),
             truncated=truncated,
         )
 
@@ -360,6 +394,14 @@ class FindOutput(FilesystemOutput):
             return {
                 "mode": self.mode,
                 "paths": list(self.paths),
+                "truncated": self.truncated,
+            }
+        if self.mode == "count":
+            return {
+                "mode": self.mode,
+                "counts": [
+                    {"path": path, "count": count} for path, count in self.counts
+                ],
                 "truncated": self.truncated,
             }
         return {
@@ -372,8 +414,14 @@ class FindOutput(FilesystemOutput):
         """Render the full result in the legacy textual format."""
         if self.mode == "files":
             if not self.paths:
-                return "no matches"
-            text = "\n".join(self.paths)
+                text = "no matches"
+            else:
+                text = "\n".join(self.paths)
+        elif self.mode == "count":
+            if not self.counts:
+                text = "no matches"
+            else:
+                text = "\n".join(f"{path}: {count}" for path, count in self.counts)
         else:
             if not self.results:
                 text = "no matches"
@@ -416,6 +464,7 @@ class FindInput(FilesystemInput[FindOutput]):
     context: int = 0
     limit: int = DEFAULT_LIMIT
     mode: str = "files"
+    use_default_skips: bool = True
 
     def __post_init__(self) -> None:
         """Validate the search request."""
@@ -471,6 +520,13 @@ class FindInput(FilesystemInput[FindOutput]):
             raise ValueError(f"'limit' must be between 1 and {MAX_LIMIT}.")
         if self.mode not in OUTPUT_MODES:
             raise ValueError("'mode' must be one of: " + ", ".join(OUTPUT_MODES) + ".")
+        if not isinstance(self.use_default_skips, bool):
+            raise ValueError("'use_default_skips' must be a boolean.")
+        if self.mode == "count" and not self.content:
+            # Per-file counts have nothing to count without a content filter;
+            # fail fast so the model sees a clear error before the worker
+            # dispatches a filesystem walk.
+            raise ValueError("'content' is required when 'mode' is 'count'.")
         # Pre-compile regex up-front so invalid patterns surface before we
         # touch the filesystem. ``compile_content_expression`` raises
         # ``ValueError`` for bad patterns; ``content`` may also be None.
@@ -547,6 +603,15 @@ class FindInput(FilesystemInput[FindOutput]):
         if mode not in OUTPUT_MODES:
             raise ValueError("'mode' must be one of: " + ", ".join(OUTPUT_MODES) + ".")
 
+        if "use_default_skips" in arguments:
+            use_default_skips = arguments["use_default_skips"]
+        elif "useDefaultSkips" in arguments:
+            use_default_skips = arguments["useDefaultSkips"]
+        else:
+            use_default_skips = True
+        if not isinstance(use_default_skips, bool):
+            raise ValueError("'useDefaultSkips' must be a boolean.")
+
         return cls(
             paths=paths,
             name=name,
@@ -559,6 +624,7 @@ class FindInput(FilesystemInput[FindOutput]):
             context=context,
             limit=limit,
             mode=mode,
+            use_default_skips=use_default_skips,
         )
 
     def to_arguments(self) -> dict[str, Any]:
@@ -584,7 +650,34 @@ class FindInput(FilesystemInput[FindOutput]):
             result["limit"] = self.limit
         if self.mode != "files":
             result["mode"] = self.mode
+        # Only surface the opt-out so the wire-protocol default stays "on"
+        # for existing callers that omit ``useDefaultSkips``.
+        if not self.use_default_skips:
+            result["useDefaultSkips"] = False
         return result
+
+
+def _effective_exclude_patterns(input: FindInput) -> tuple[str, ...]:
+    """Return the exclude patterns actually applied during the walk.
+
+    When ``use_default_skips`` is true (the default), the canonical
+    repository-junk set from :data:`DEFAULT_TREE_SKIPS` is unioned with any
+    model-supplied ``exclude`` entries so:
+
+    * callers that omit ``exclude`` still get the default junk prune
+      (mirroring :mod:`tree` and :mod:`glob`);
+    * callers that pass an explicit ``exclude`` get a union of their entries
+      with the defaults — their patterns stack on top, never replace them;
+    * passing ``exclude=[]`` does **not** silently disable the defaults,
+      because the union is computed from the defaults plus the explicit
+      empty tuple.
+    """
+    patterns: set[str] = set()
+    if input.use_default_skips:
+        patterns.update(DEFAULT_TREE_SKIPS)
+    if input.exclude:
+        patterns.update(input.exclude)
+    return tuple(patterns)
 
 
 def _scan_paths_for_files(
@@ -594,6 +687,7 @@ def _scan_paths_for_files(
     """Resolve each root path and walk it with depth/exclude filtering."""
     seen: set[str] = set()
     resolved: list[Path] = []
+    effective_exclude = _effective_exclude_patterns(input)
     for raw in input.paths:
         try:
             base = fs.require_allowed_path(fs.resolve_path(raw))
@@ -641,7 +735,7 @@ def _scan_paths_for_files(
                 ) >= input.max_depth:
                     pruned.append(directory)
                     continue
-                if _is_excluded(directory_path, base, input.exclude or ()):
+                if _is_excluded(directory_path, base, effective_exclude):
                     pruned.append(directory)
                     continue
             directories[:] = [d for d in directories if d not in pruned]
@@ -779,12 +873,13 @@ def execute(input: FindInput, fs: ScopedFilesystem) -> FindOutput:
     The implementation follows the staged pipeline described in the spec:
 
     1. resolve and dedupe ``paths``;
-    2. walk each root while honouring ``exclude`` / ``maxDepth``;
+    2. walk each root while honouring ``exclude`` / ``useDefaultSkips`` /
+       ``maxDepth``;
     3. apply ``name`` and ``extensions`` filters during the walk;
     4. when ``content`` is provided, run the per-file regex search;
     5. stop early once ``limit`` is reached and set ``truncated``;
-    6. render to either ``paths`` (``mode="files"``) or
-       ``results`` (``mode="matches"``).
+    6. render to either ``paths`` (``mode="files"``), ``results``
+       (``mode="matches"``), or ``counts`` (``mode="count"``).
     """
     candidates = _scan_paths_for_files(input, fs)
 
@@ -817,6 +912,15 @@ def execute(input: FindInput, fs: ScopedFilesystem) -> FindOutput:
                 truncated=truncated,
             )
 
+        # ``mode='count'`` with no ``content`` is rejected at parse time,
+        # but defensive guard keeps the type-narrowing honest.
+        if input.mode == "count":
+            return FindOutput(
+                mode="count",
+                counts=(),
+                truncated=truncated,
+            )
+
         return FindOutput(
             mode="files",
             paths=tuple(unique_paths),
@@ -843,9 +947,10 @@ def execute(input: FindInput, fs: ScopedFilesystem) -> FindOutput:
             truncated = True
             break
 
-    # In ``matches`` mode the ``limit`` counts total matches; once we have
-    # reached it we may still have an overshoot in the current file. Trim
-    # the last file's matches if necessary so the count is at most ``limit``.
+    # In ``matches`` / ``count`` modes the ``limit`` counts total matches;
+    # once we have reached it we may still have an overshoot in the current
+    # file. Trim the last file's matches if necessary so the count is at
+    # most ``limit``.
     if truncated and file_results:
         kept: list[FindFileMatches] = []
         running = 0
@@ -876,6 +981,23 @@ def execute(input: FindInput, fs: ScopedFilesystem) -> FindOutput:
             mode="files",
             paths=tuple(unique_paths),
             truncated=truncated,
+        )
+
+    if input.mode == "count":
+        # Per-file totals; emit one ``(path, count)`` entry per file with
+        # at least one content match. ``limit`` bounds the *number of
+        # files* we surface (not the raw match totals), mirroring the
+        # grep ``count`` mode semantics where ``max_results`` caps the
+        # number of file rows.
+        count_rows: list[tuple[str, int]] = [
+            (entry.path, len(entry.matches)) for entry in file_results
+        ]
+        count_truncated = truncated or len(count_rows) > input.limit
+        count_rows = count_rows[: input.limit]
+        return FindOutput(
+            mode="count",
+            counts=tuple(count_rows),
+            truncated=count_truncated,
         )
 
     return FindOutput(

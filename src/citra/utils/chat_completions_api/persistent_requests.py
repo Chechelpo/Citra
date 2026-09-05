@@ -18,7 +18,6 @@ from ...context import ExecutionContext
 from ...tools.session_memory import MemoryTool
 from ...tools.tool import Tool
 from ..api import chat_completions_url
-from ..prompt import build_system_prompt
 from .model_normalization import normalize_model_response
 from ..terminal import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, separator
 logger = logging.getLogger(__name__)
@@ -83,9 +82,6 @@ def _messages_are_mergeable(first: ChatMessage, second: ChatMessage) -> bool:
         return False
     return True
 
-def system_prompt(context: ExecutionContext) -> str:
-    """Handle system prompt."""
-    return build_system_prompt(context)
 
 def _backoff_delay(attempt: int, initial: float, maximum: float) -> float:
     """
@@ -615,6 +611,7 @@ def call_api(
     context: ExecutionContext,
     messages: list[ChatMessage],
     tools: dict[str, Tool],
+    sys_prompt: str,
     reasoning_effort: str | None = None,
     *,
     model_config: ModelConfig | None = None,
@@ -623,7 +620,6 @@ def call_api(
     initial_backoff: float | None = None,
     max_backoff: float | None = None,
     retry_interrupt: Callable[[], bool] | None = None,
-    sys_prompt: str | None = None,
     memory_services: Iterable[object] | None = None,
 ) -> dict[str, Any]:
     """
@@ -763,8 +759,6 @@ def call_api(
         initial_backoff = retry_config.initial_backoff
     if max_backoff is None:
         max_backoff = retry_config.max_backoff
-    if sys_prompt is None:
-        sys_prompt = system_prompt(context)
     if max_attempts < 1:
         raise ValueError('max_attempts must be at least 1.')
     if request_timeout <= 0:

@@ -5,26 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, override
 
 from citra.tools.default_registry import ToolSet
-from citra.tools.transient import (
-    Bash,
-    Browser,
-    Diagram,
-    Document,
-    Edit,
-    Git,
-    Glob,
-    Grep,
-    Lsp,
-    PromptUser,
-    Read,
-    ReadImage,
-    Subprocess,
-    Tree,
-    WebSearch,
-    Workspace,
-    Write,
-)
-from citra.utils.prompt import collect_environment
+from citra.tools.transient import *
+from citra.workflows.sys_prompt import build_system_prompt
 
 from .workflow import SandboxConfig, StaticWorkflow
 
@@ -58,17 +40,14 @@ class ChatWorkflow(StaticWorkflow):
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
         """Return get system prompt."""
-        environment = collect_environment(context)
-        return f"""
+        return build_system_prompt( 
+            context = context,
+            preepend = f"""
 # Role
 
 You are a helpful conversational assistant. Respond directly to the user's
 actual request and match the level of detail they need. Do not turn a simple
 question into a software-engineering workflow.
-
-# Environment
-
-{environment.as_prompt_section()}
 
 You have a writable current project rooted at `.`. Treat it as an ordinary
 project directory. Inspect or modify it only when the request benefits from
@@ -81,7 +60,8 @@ commits, stage files, or alter repository history; the user owns commits.
 
 Prefer dedicated tools over Bash when one exists. Use Bash for focused command
 execution, tests, builds, and similar project work—not for Git mutation.
-""".strip()
-
+""".strip(),
+append=""
+)
 
 __all__ = ["ChatWorkflow"]

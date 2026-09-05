@@ -470,5 +470,198 @@ class FindAdditionalBehaviorTests(unittest.TestCase):
         self.assertEqual(round_trip, order)
 
 
+class FindCountModeTests(unittest.TestCase):
+    """Count mode emits one ``(path, count)`` entry per file with a hit."""
+
+    def test_count_mode_emits_per_file_totals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _TreeBuilder.build(root)
+            fs = _make_filesystem(root)
+            order = FindInput.parse(
+                {
+                    "paths": ["src"],
+                    "content": "TODO",
+                    "mode": "count",
+                }
+            )
+            output = execute_find(order, fs)
+            self.assertEqual(output.mode, "count")
+            assert output.counts is not None
+            counts_by_path = dict(output.counts)
+            # ``login.ts`` contains exactly one ``TODO`` substring and must
+            # appear with count == 1; ``session.ts`` and ``Panel.tsx`` are
+            # not TODO-bearing.
+            self.assertIn("src/auth/login.ts", counts_by_path)
+            self.assertEqual(counts_by_path["src/auth/login.ts"], 1)
+            self.assertNotIn("src/auth/session.ts", counts_by_path)
+            self.assertNotIn("src/ui/Panel.tsx", counts_by_path)
+            # Each row is a ``(path, count)`` tuple.
+            for row in output.counts:
+                self.assertEqual(len(row), 2)
+                self.assertIsInstance(row[0], str)
+                self.assertIsInstance(row[1], int)
+                self.assertGreaterEqual(row[1], 1)
+            self.assertFalse(output.truncated)
+            # ``count: <decimal>`` rendering, mirroring grep.
+            rendered = output.render()
+            self.assertIn("src/auth/login.ts: 1", rendered)
+            self.assertNotIn("=====", rendered)
+
+    def test_count_mode_payload_round_trip(self) -> None:
+        """A1: ``FindOutput.from_payload`` / ``to_payload`` round-trip."""
+        payload = {
+            "mode": "count",
+            "counts": [
+                {"path": "src/foo.ts", "count": 3},
+                {"path": "src/bar.ts", "count": 0},
+            ],
+            "truncated": False,
+        }
+        output = FindOutput.from_payload(payload)
+        self.assertEqual(output.mode, "count")
+        self.assertEqual(
+            output.counts,
+            (("src/foo.ts", 3), ("src/bar.ts", 0)),
+        )
+        # Empty ``counts`` must also survive the round-trip.
+        empty = FindOutput(mode="count", counts=())
+        self.assertEqual(empty.to_payload(), {
+            "mode": "count",
+            "counts": [],
+            "truncated": False,
+        })
+
+    def test_count_without_content_raises_value_error(self) -> None:
+        """A2: ``mode='count'`` has nothing to count without ``content``."""
+        with self.assertRaises(ValueError):
+            FindInput.parse({"paths": ["src"], "mode": "count"})
+
+
+class FindDefaultSkipsTests(unittest.TestCase):
+    """Default junk pruning is applied unless ``useDefaultSkips=false``."""
+
+    def test_default_skips_prune_junk_directories(self) -> None:
+        """A4: ``find`` with no ``exclude`` skips ``__pycache__`` / ``.venv``
+        / ``.git`` / ``node_modules`` / etc. by default."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = _TreeBuilder.build(root)
+            # Add explicit junk directories so the default prune is exercised
+            # beyond the synthetic tree's existing ``node_modules`` stub.
+            for junk in ("__pycache__", ".venv", ".git", "dist", "build"):
+                _write_file(
+                    project / junk / "sentinel.py",
+                    "JUNK_SENTINEL = True\n",
+                )
+                _write_file(
+                    project / "src" / junk / "nested_sentinel.py",
+                    "JUNK_SENTINEL = True\n",
+                )
+            fs = _make_filesystem(root)
+            order = FindInput.parse({"paths": ["."]})
+            output = execute_find(order, fs)
+            assert output.paths is not None
+            basenames = {Path(path).name for path in output.paths}
+            self.assertNotIn("sentinel.py", basenames)
+            self.assertNotIn("nested_sentinel.py", basenames)
+            for path in output.paths:
+                parts = set(Path(path).parts)
+                self.assertFalse(
+                    parts & {"__pycache__", ".venv", ".git", "dist", "build",
+                             ".pytest_cache", "node_modules"},
+                    f"path under default junk dir leaked: {path}",
+                )
+            # The legitimate source tree must still be reachable.
+            self.assertIn("src/auth/login.ts", output.paths)
+
+    def test_explicit_exclude_stacks_on_top_of_defaults(self) -> None:
+        """A5: explicit ``exclude`` entries prune in addition to defaults;
+        passing ``exclude=[]`` is a validation error (not an opt-out)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = _TreeBuilder.build(root)
+            # A user-named junk dir that the defaults do not cover; the
+            # explicit ``exclude`` entry must prune it in addition to the
+            # defaults.
+            _write_file(
+                project / "vendor" / "x.py",
+                "VENDOR = True\n",
+            )
+            # A defaults-covered junk dir.
+            _write_file(
+                project / "build" / "y.py",
+                "BUILD = True\n",
+            )
+            fs = _make_filesystem(root)
+            order = FindInput.parse(
+                {
+                    "paths": ["."],
+                    "exclude": ["vendor"],
+                }
+            )
+            output = execute_find(order, fs)
+            assert output.paths is not None
+            basenames = {Path(path).name for path in output.paths}
+            self.assertNotIn("x.py", basenames)  # explicit prune
+            self.assertNotIn("y.py", basenames)  # default prune
+            # The legitimate source tree must still be reachable.
+            self.assertIn("login.ts", basenames)
+            # ``exclude=[]`` is rejected by validation; it cannot silently
+            # disable the default junk prune.
+            with self.assertRaises(ValueError):
+                FindInput.parse({"paths": ["."], "exclude": []})
+
+    def test_use_default_skips_false_re_enables_traversal(self) -> None:
+        """A6: ``useDefaultSkips=False`` re-enables the default junk dirs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = _TreeBuilder.build(root)
+            _write_file(
+                project / "__pycache__" / "sentinel.py",
+                "JUNK = True\n",
+            )
+            _write_file(
+                project / ".venv" / "lib" / "sentinel.py",
+                "JUNK = True\n",
+            )
+            fs = _make_filesystem(root)
+            order = FindInput.parse(
+                {
+                    "paths": ["."],
+                    "useDefaultSkips": False,
+                }
+            )
+            output = execute_find(order, fs)
+            assert output.paths is not None
+            basenames = {Path(path).name for path in output.paths}
+            # With the prune disabled, the junk sentinels are reachable.
+            self.assertIn("sentinel.py", basenames)
+            self.assertIn("login.ts", basenames)
+
+    def test_explicit_exclude_still_prunes_node_modules(self) -> None:
+        """A7 regression: existing ``exclude=['node_modules/**']`` still
+        works under the new default-on junk prune."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _TreeBuilder.build(root)
+            fs = _make_filesystem(root)
+            order = FindInput.parse(
+                {
+                    "paths": ["."],
+                    "content": "react",
+                    "exclude": ["node_modules/**"],
+                }
+            )
+            output = execute_find(order, fs)
+            assert output.paths is not None
+            for path in output.paths:
+                self.assertFalse(
+                    "node_modules" in Path(path).parts,
+                    f"path under node_modules leaked: {path}",
+                )
+            self.assertIn("src/ui/Panel.tsx", output.paths)
+
+
 if __name__ == "__main__":
     unittest.main()

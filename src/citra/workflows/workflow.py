@@ -192,7 +192,7 @@ class SingleModeWorkflow(Workflow):
     def initial_working_states(self) -> tuple[str, ...]:
         """Provisional memory states created on the first turn."""
         ...
-
+    
     @abstractmethod
     def get_system_prompt(self, context: ExecutionContext) -> str:
         """Return get system prompt."""
