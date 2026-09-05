@@ -12,13 +12,12 @@ from citra.tools.session_memory import (
 )
 from citra.tools.transient import  *
 from citra.utils.directory_tree import render_tree
-from citra.utils.prompt import collect_environment
+from citra.workflows.sys_prompt import build_system_prompt
 
 from .workflow import SandboxConfig, StaticWorkflow, TaskSteeringConfig
 
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
-    from citra.utils.prompt import EnvironmentInfo
 
 
 class TaskWorkflow(StaticWorkflow):
@@ -32,6 +31,7 @@ class TaskWorkflow(StaticWorkflow):
         core_tools=(
             Edit,
             Write,
+            Find,
             Read,
             Glob,
             Grep,
@@ -58,14 +58,11 @@ class TaskWorkflow(StaticWorkflow):
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
         """Return get system prompt."""
-        environment: EnvironmentInfo = collect_environment(context)
-        initial_tree = render_tree(
-            workspace=context.workspace,
-            limit=100,
-            max_depth=2,
-        )
-        initial_aider_tree = context.repo_map.render(model_id=context.model_config().id)
-        return f"""
+
+        return build_system_prompt(
+            context,
+            add_coding_convetions=True, 
+            preepend="""
 # Role
 
 You are a helpful assistant task agent. Take the role the user asks you to.
@@ -74,31 +71,6 @@ Inspect the current state, make the necessary changes, verify them, and leave
 the project in a coherent state. Do not create Git commits or stage files;
 repository history belongs to the user. Use the workspace tool to roll back an
 exact tracked file when an attempted change is wrong.
-
-# Environment
-
-{environment.as_prompt_section()}
-
-Treat this environment as the current execution target.
-
-# Initial trees
-
-Treat both as an initial snapshot.
-
-## Directory tree
-
-{initial_tree}
-
-## Aider tree
-
-{initial_aider_tree}
-
-# Operating principles
-
-Understand the task before making substantial changes.
-
-Inspect the relevant files and existing behavior rather than making assumptions
-from filenames, documentation, or repository structure alone.
 
 For non-trivial work:
 
@@ -112,7 +84,8 @@ For non-trivial work:
 8. Finish with the repository in a consistent state.
 
 Do not stop after planning unless the user explicitly asked only for a plan.
-
+""",
+    append="""
 # Tools
 
 Use the available tools when they materially help complete the task.
@@ -171,7 +144,7 @@ Before finishing, make sure:
 - unrelated code was not changed without reason.
 
 Report what was changed and any important verification results.
-""".strip()
+""".strip())
 
 
 __all__ = ["TaskWorkflow"]

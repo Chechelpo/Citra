@@ -113,7 +113,26 @@ def _find_definition(
                                 "not be traversed. Patterns are matched "
                                 "against the directory basename and the "
                                 "relative POSIX path; 'node_modules/**' "
-                                "prunes the matching subtree entirely."
+                                "prunes the matching subtree entirely. "
+                                "Patterns stack on top of the built-in "
+                                "default junk set (``__pycache__``, "
+                                "``.venv``, ``.git``, ``node_modules``, "
+                                "etc.); set ``useDefaultSkips=false`` to "
+                                "walk everything."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="useDefaultSkips",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "When true (the default), the built-in "
+                                "default junk set (``.git``, ``__pycache__``, "
+                                "``.venv``, ``node_modules``, ``dist``, "
+                                "``build``, ...) is pruned before "
+                                "descending. Set to false to walk every "
+                                "directory, including vendored trees."
                             ),
                         ),
                         required=False,
@@ -149,7 +168,8 @@ def _find_definition(
                                 f"Maximum number of results to return "
                                 f"(1..{MAX_LIMIT}, default {DEFAULT_LIMIT}). "
                                 "Excess results are dropped and ``truncated`` "
-                                "is set when ``mode='matches'``."
+                                "is set when ``mode='matches'`` or "
+                                "``mode='count'``."
                             ),
                         ),
                         required=False,
@@ -161,7 +181,10 @@ def _find_definition(
                                 "``files`` (default) returns matching file "
                                 "paths in a flat array; ``matches`` returns "
                                 "per-file structured hits with line numbers "
-                                "and context."
+                                "and context; ``count`` returns one "
+                                "``path: <decimal>`` line per file with at "
+                                "least one content match (requires "
+                                "``content``)."
                             ),
                             enum=OUTPUT_MODES,
                         ),
@@ -181,11 +204,13 @@ class Find(Tool):
     The agent supplies one or more root ``paths`` and any combination of
     filename globs (``name``), extension whitelists (``extensions``),
     content expressions (``content`` with optional ``regex`` /
-    ``caseSensitive``), directory pruning (``exclude``), traversal depth
-    (``maxDepth``), per-match context (``context``), and a result cap
-    (``limit``). The single output mode (``files`` for a flat list of
-    paths, ``matches`` for structured per-file hits) is selected with
-    ``mode``.
+    ``caseSensitive``), directory pruning (``exclude`` plus the built-in
+    default junk prune controlled by ``useDefaultSkips``), traversal
+    depth (``maxDepth``), per-match context (``context``), and a result
+    cap (``limit``). The single output mode (``files`` for a flat list of
+    paths, ``matches`` for structured per-file hits, ``count`` for one
+    ``path: <decimal>`` row per file with at least one match) is selected
+    with ``mode``.
 
     Implementation delegates to the sandboxed ``FindInput`` worker; the
     transient tool is responsible for schema exposure, argument
@@ -208,6 +233,7 @@ class Find(Tool):
     #     regex?,
     #     caseSensitive?,
     #     exclude?,
+    #     useDefaultSkips?,
     #     maxDepth?,
     #     context?,
     #     limit?,
@@ -219,14 +245,18 @@ class Find(Tool):
         name="find",
         description=(
             "Combined filesystem search (find + glob + grep). Walks the "
-            "given root paths and returns either matching file paths or "
-            "structured per-file hits. Supports filename globs, extension "
-            "filters, content search (literal or regex), case sensitivity, "
-            "directory pruning, traversal depth, per-match context lines, "
-            "and a result limit. Use this when you need a single primitive "
-            "that covers the find/glob/grep triangle; reach for Grep, Glob, "
-            "or Tree directly only when their specialized output is more "
-            "useful."
+            "given root paths and returns either matching file paths, "
+            "structured per-file hits, or per-file match counts. Supports "
+            "filename globs, extension filters, content search (literal or "
+            "regex), case sensitivity, directory pruning (an explicit "
+            "``exclude`` list that stacks on top of a built-in default "
+            "junk prune — ``__pycache__``, ``.venv``, ``.git``, "
+            "``node_modules``, ``dist``, ``build``, ...; set "
+            "``useDefaultSkips=false`` to walk everything), traversal "
+            "depth, per-match context lines, and a result limit. Use this "
+            "when you need a single primitive that covers the "
+            "find/glob/grep triangle; reach for Grep, Glob, or Tree "
+            "directly only when their specialized output is more useful."
         ),
     )
 

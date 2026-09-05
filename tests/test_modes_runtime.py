@@ -13,7 +13,7 @@ from citra.cli.repl import select_startup_workflow
 from citra.config import SandboxPolicy
 from citra.sandbox import SandboxMode, WorkspaceSandbox
 from citra.tools.session_memory import RequirementTool
-from citra.utils.prompt import build_system_prompt
+from citra.workflows.sys_prompt.sys_prompt import build_system_prompt
 from citra.workflows import (
     ChatWorkflow,
     SandboxConfig,

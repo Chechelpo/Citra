@@ -44,7 +44,7 @@ from citra.sandbox import WorkspaceSandbox
 from citra.tools.session_memory import TodoTool
 from citra.tools.skills.skill_registry import SkillRegistry
 from citra.tools.tool_registry import ToolRegistry
-from citra.utils.prompt import _memory_guidance, _operating_model, _working_method
+from citra.workflows.sys_prompt.sys_prompt import _memory_guidance, _operating_model, _working_method
 
 
 @contextmanager
