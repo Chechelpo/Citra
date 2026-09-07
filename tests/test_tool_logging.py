@@ -112,6 +112,21 @@ class TestEdit:
         )
         assert "all=true" in log
 
+    def test_call_log_uses_whole_file_context_when_available(self, tmp_path) -> None:
+        source = tmp_path / "a.py"
+        source.write_text("one\ntwo\nold\nfour\nfive\n", encoding="utf-8")
+        context = _ctx()
+        context.workspace = SimpleNamespace(resolve_path=lambda _path: source)
+
+        log = Edit(context).format_call_log(
+            {"path": "a.py", "old": "old", "new": "new"}
+        )
+
+        assert " one" in log
+        assert "-old" in log
+        assert "+new" in log
+        assert " five" in log
+
     def test_result_log_ok(self) -> None:
         assert Edit(_ctx()).format_result_log("ok") == "ok"
 

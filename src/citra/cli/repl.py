@@ -226,6 +226,7 @@ def run_turn_with_steering(
                     message=_steering_prompt_text(),
                     boxed=True,
                     footer=status_footer,
+                    command_ids=("agent", "memory", "workflow"),
                 )
             except KeyboardInterrupt:
                 if handle_interrupt():

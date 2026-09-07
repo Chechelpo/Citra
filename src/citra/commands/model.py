@@ -4,14 +4,79 @@ import shlex
 from typing import override
 
 from citra.commands import CommandResult
-from .command import Command
+from .command import Command, CommandArgument, CommandForm, CommandOption, CommandUsage
 
 
 class ModelCommand(Command):
     """Inspect and modify Citra's named model profiles."""
 
     id = "model"
-    description = "inspect and switch model profiles"
+    usage = CommandUsage(
+        command="model",
+        description="Inspect and modify named model profiles.",
+        forms=(
+            CommandForm(
+                path=("show",),
+                arguments=(CommandArgument("[profile]", "Profile name."),),
+            ),
+            CommandForm(path=("list",), description="List model profiles."),
+            CommandForm(
+                path=("use",),
+                arguments=(CommandArgument("<profile>", "Orchestrator profile."),),
+            ),
+            CommandForm(
+                path=("use",),
+                arguments=(
+                    CommandArgument(
+                        "<role>",
+                        "Model role.",
+                        suggestions=("orchestrator", "subagent"),
+                    ),
+                    CommandArgument("<profile>", "Profile name."),
+                ),
+            ),
+            CommandForm(
+                path=("add",),
+                options=(
+                    CommandOption("--copy", "Optional source profile.", "<profile>"),
+                ),
+                arguments=(CommandArgument("<profile>", "New profile name."),),
+            ),
+            CommandForm(
+                path=("delete",),
+                arguments=(CommandArgument("<profile>", "Profile to delete."),),
+            ),
+            CommandForm(
+                path=("set",),
+                options=(
+                    CommandOption(
+                        "--profile",
+                        "Target profile; defaults to active.",
+                        "<profile>",
+                    ),
+                ),
+                arguments=(
+                    CommandArgument(
+                        "<setting>",
+                        "Configuration field.",
+                        suggestions=(
+                            "host",
+                            "id",
+                            "api_key",
+                            "max_input_tokens",
+                            "max_output_tokens",
+                            "reasoning_effort",
+                            "retry.max_attempts",
+                            "retry.request_timeout",
+                            "retry.initial_backoff",
+                            "retry.max_backoff",
+                        ),
+                    ),
+                    CommandArgument("<value>", "New setting value."),
+                ),
+            ),
+        ),
+    )
 
     _TOP_LEVEL_FIELDS = {
         "host",
@@ -35,7 +100,7 @@ class ModelCommand(Command):
         try:
             parts = shlex.split(args)
         except ValueError as error:
-            return CommandResult(f"Invalid arguments: {error}")
+            return self.usage_result(f"Invalid arguments: {error}")
 
         if not parts:
             return self._show([])
@@ -58,16 +123,12 @@ class ModelCommand(Command):
         if action in {"help", "-h", "--help"}:
             return self._help()
 
-        return CommandResult(
-            f"Unknown model command: {action}\n\n{self._usage()}"
-        )
+        return self.usage_result(f"Unknown model command: {action}")
 
     def _show(self, args: list[str]) -> CommandResult:
         """Handle show."""
         if len(args) > 1:
-            return CommandResult(
-                "Expected zero or one profile name.\n\n" + self._usage()
-            )
+            return self.usage_result("Expected zero or one profile name.")
 
         name = args[0] if args else None
         store = self.context.config.model_config_store
@@ -113,7 +174,7 @@ class ModelCommand(Command):
     def _list(self, args: list[str]) -> CommandResult:
         """Handle list."""
         if args:
-            return CommandResult("model list takes no arguments.\n\n" + self._usage())
+            return self.usage_result("Model list takes no arguments.")
 
         store = self.context.config.model_config_store
         try:
@@ -153,14 +214,14 @@ class ModelCommand(Command):
     def _use(self, args: list[str]) -> CommandResult:
         """Handle use."""
         if not args:
-            return CommandResult("Expected a role and profile name.\n\n" + self._usage())
+            return self.usage_result("Expected a role and profile name.")
 
         store = self.context.config.model_config_store
         first = args[0].lower()
         if first in {"orchestrator", "subagent"}:
             if len(args) != 2:
-                return CommandResult(
-                    f"Expected 'model use {first} <profile>'.\n\n" + self._usage()
+                return self.usage_result(
+                    f"Expected '/model use {first} <profile>'."
                 )
             profile_name = args[1]
             try:
@@ -176,7 +237,7 @@ class ModelCommand(Command):
             )
 
         if len(args) != 1:
-            return CommandResult("Expected a profile name.\n\n" + self._usage())
+            return self.usage_result("Expected a profile name.")
 
         profile_name = args[0]
         try:
@@ -192,16 +253,15 @@ class ModelCommand(Command):
     def _add(self, args: list[str]) -> CommandResult:
         """Handle add."""
         if not args:
-            return CommandResult("Expected a new profile name.\n\n" + self._usage())
+            return self.usage_result("Expected a new profile name.")
 
         name = args[0]
         copy_from: str | None = None
         remaining = args[1:]
         if remaining:
             if len(remaining) != 2 or remaining[0] != "--copy":
-                return CommandResult(
-                    "Expected '--copy <profile>' after the new profile name.\n\n"
-                    + self._usage()
+                return self.usage_result(
+                    "Expected '--copy <profile>' after the new profile name."
                 )
             copy_from = remaining[1]
 
@@ -220,7 +280,7 @@ class ModelCommand(Command):
     def _delete(self, args: list[str]) -> CommandResult:
         """Handle delete."""
         if len(args) != 1:
-            return CommandResult("Expected a profile name.\n\n" + self._usage())
+            return self.usage_result("Expected a profile name.")
 
         store = self.context.config.model_config_store
         try:
@@ -235,17 +295,14 @@ class ModelCommand(Command):
         profile: str | None = None
         if args[:1] == ["--profile"]:
             if len(args) < 4:
-                return CommandResult(
-                    "Expected '--profile <name> <setting> <value>'.\n\n"
-                    + self._usage()
+                return self.usage_result(
+                    "Expected '--profile <name> <setting> <value>'."
                 )
             profile = args[1]
             args = args[2:]
 
         if len(args) < 2:
-            return CommandResult(
-                "Expected a setting and value.\n\n" + self._usage()
-            )
+            return self.usage_result("Expected a setting and value.")
 
         field = args[0].strip().lower().replace("-", "_")
         value = " ".join(args[1:])
@@ -302,7 +359,7 @@ class ModelCommand(Command):
 
     def _help(self) -> CommandResult:
         """Handle help."""
-        return CommandResult(self._usage())
+        return self.usage_result()
 
     @staticmethod
     def _error(operation: str, error: Exception) -> CommandResult:
@@ -349,27 +406,3 @@ class ModelCommand(Command):
         if normalized.lower() in {"none", "null", "unset", "off"}:
             return None
         return normalized or None
-
-    @staticmethod
-    def _usage() -> str:
-        """Handle usage."""
-        return (
-            "Usage:\n"
-            "  model show [profile]\n"
-            "  model list\n"
-            "  model use <profile>            (sets the orchestrator profile)\n"
-            "  model use orchestrator <profile>\n"
-            "  model use subagent <profile>    (omit to inherit the orchestrator)\n"
-            "  model add <profile> [--copy <profile>]\n"
-            "  model delete <profile>\n"
-            "  model set [--profile <profile>] host <url>\n"
-            "  model set [--profile <profile>] id <model-id>\n"
-            "  model set [--profile <profile>] api_key <key>\n"
-            "  model set [--profile <profile>] max_input_tokens <integer>\n"
-            "  model set [--profile <profile>] max_output_tokens <integer>\n"
-            "  model set [--profile <profile>] reasoning_effort <value|none>\n"
-            "  model set [--profile <profile>] retry.max_attempts <integer>\n"
-            "  model set [--profile <profile>] retry.request_timeout <seconds>\n"
-            "  model set [--profile <profile>] retry.initial_backoff <seconds>\n"
-            "  model set [--profile <profile>] retry.max_backoff <seconds>"
-        )

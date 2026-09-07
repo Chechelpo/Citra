@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import override
 
 from ..utils import chat_completions_api
-from .command import Command, CommandResult
+from .command import Command, CommandArgument, CommandForm, CommandResult, CommandUsage
 
 
 class DebugCommand(Command):
@@ -17,7 +17,21 @@ class DebugCommand(Command):
     """
 
     id = "debug"
-    description = "toggle grey model-request debug output"
+    usage = CommandUsage(
+        command="debug",
+        description="Toggle grey model-request debug output.",
+        forms=(
+            CommandForm(
+                arguments=(
+                    CommandArgument(
+                        "[on|off]",
+                        "Set a state; omit to toggle.",
+                        suggestions=("on", "off"),
+                    ),
+                ),
+            ),
+        ),
+    )
 
     @override
     def _run(self, args: str) -> CommandResult:
@@ -29,10 +43,7 @@ class DebugCommand(Command):
         elif action == "off":
             chat_completions_api.set_debug_printing(False)
         elif action:
-            return CommandResult(
-                f"Unknown debug action: {action}\n\n"
-                f"{self._usage()}"
-            )
+            return self.usage_result(f"Unknown debug action: {action}")
         else:
             chat_completions_api.set_debug_printing(
                 not chat_completions_api.debug_printing_enabled()
@@ -44,8 +55,3 @@ class DebugCommand(Command):
             else "disabled"
         )
         return CommandResult(output=f"Debug printing {state}.")
-
-    @staticmethod
-    def _usage() -> str:
-        """Handle usage."""
-        return "Usage: /debug [on|off]"

@@ -339,6 +339,12 @@ class AgentRunner:
                     )
                 )
 
+                if self.render_output:
+                    tool_render_state.prepare_call(
+                        tool_call,
+                        tools.get(tool_name),
+                    )
+
                 result = execute_tool_call(
                     tools,
                     tool_call,

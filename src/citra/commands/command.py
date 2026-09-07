@@ -31,6 +31,83 @@ _registry_logger = Logger(__name__)
 
 
 @dataclass(frozen=True)
+class CommandArgument:
+    """Describe one positional argument or option in a command form."""
+
+    syntax: str
+    description: str
+    suggestions: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.syntax.strip():
+            raise ValueError("Command argument syntax cannot be empty.")
+        if not self.description.strip():
+            raise ValueError("Command argument description cannot be empty.")
+        if any(not suggestion.strip() for suggestion in self.suggestions):
+            raise ValueError("Command argument suggestions cannot be empty.")
+
+
+@dataclass(frozen=True)
+class CommandOption:
+    """Describe a named option and its optional value placeholder."""
+
+    flag: str
+    description: str
+    value: str | None = None
+    value_suggestions: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.flag.startswith("--") or any(
+            character.isspace() for character in self.flag
+        ):
+            raise ValueError("Command option flags must be one --long token.")
+        if not self.description.strip():
+            raise ValueError("Command option description cannot be empty.")
+
+    @property
+    def syntax(self) -> str:
+        """Return optional command-line syntax for this option."""
+        value = f" {self.value}" if self.value else ""
+        return f"[{self.flag}{value}]"
+
+
+@dataclass(frozen=True)
+class CommandForm:
+    """Describe one supported invocation beneath a slash command."""
+
+    path: tuple[str, ...] = ()
+    arguments: tuple[CommandArgument, ...] = ()
+    options: tuple[CommandOption, ...] = ()
+    description: str = ""
+
+    @property
+    def suffix(self) -> str:
+        """Return the form syntax following the slash-command name."""
+        return " ".join(
+            (
+                *self.path,
+                *(item.syntax for item in self.options),
+                *(item.syntax for item in self.arguments),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class CommandUsage:
+    """Declare the complete user-facing usage tree for one command."""
+
+    command: str
+    description: str
+    forms: tuple[CommandForm, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.command.strip() or any(character.isspace() for character in self.command):
+            raise ValueError("Command usage name must be one non-empty token.")
+        if not self.description.strip():
+            raise ValueError("Command usage description cannot be empty.")
+
+
+@dataclass(frozen=True)
 class CommandResult:
     """
     Outcome of running a command.
@@ -39,6 +116,8 @@ class CommandResult:
     ----------
     output:
         Text to print to the terminal. May be empty.
+    usage:
+        Command usage trees to render after the output.
     clear_messages:
         If ``True``, the conversation history is cleared after the
         command runs. Used by ``/clear`` and similar maintenance
@@ -49,6 +128,7 @@ class CommandResult:
     """
 
     output: str = ""
+    usage: tuple[CommandUsage, ...] = ()
     clear_messages: bool = False
     exit: bool = False
 
@@ -57,13 +137,12 @@ class Command(ABC):
     """
     Abstract base for all REPL commands.
 
-    Subclasses must set :attr:`id` (the string the user types without
-    the leading ``/``, e.g. ``"test"``) and :attr:`description`, and
-    implement :meth:`_run`.
+    Subclasses must set :attr:`id` and declare a matching
+    :attr:`usage` tree, then implement :meth:`_run`.
     """
 
     id: str = ""
-    description: str = ""
+    usage = CommandUsage(command="command", description="Undocumented command.")
 
     def __init__(self, context: ExecutionContext) -> None:
         """Bind one execution context and a source-labelled diagnostic logger."""
@@ -75,6 +154,10 @@ class Command(ABC):
     def context(self) -> ExecutionContext:
         """Return the execution context bound to this invocation."""
         return self._context
+
+    def usage_result(self, output: str = "") -> CommandResult:
+        """Return an optional message followed by this command's usage tree."""
+        return CommandResult(output=output, usage=(self.usage,))
 
     @final
     def run(self, args: str) -> CommandResult:
@@ -150,6 +233,12 @@ class CommandRegistry:
             _registry_logger.error("Rejected empty command registration")
             raise ValueError("Command id cannot be empty.")
 
+        if command_type.usage.command != command_id:
+            raise ValueError(
+                f"Command usage name {command_type.usage.command!r} does not match "
+                f"registered id {command_id!r}."
+            )
+
         self.__commands[command_id] = command_type
         _registry_logger.debug(
             "Registered command",
@@ -192,16 +281,10 @@ class CommandRegistry:
         """Return command ids in registration order."""
         return tuple(self.__commands)
 
-    def help_lines(self) -> list[str]:
-        """
-        Return ``(id, description)`` pairs sorted alphabetically,
-        formatted for display.
-        """
-        lines: list[str] = []
-
-        for command_id in sorted(self.__commands):
-            description = self.__commands[command_id].description
-            lines.append(f"  /{command_id:<10} {description}")
-
-        _registry_logger.trace("Rendered command help", commands=len(lines))
-        return lines
+    @property
+    def usages(self) -> tuple[CommandUsage, ...]:
+        """Return declared command usage trees sorted by command name."""
+        return tuple(
+            self.__commands[command_id].usage
+            for command_id in sorted(self.__commands)
+        )

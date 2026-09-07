@@ -33,7 +33,7 @@ from typing import Any
 from ..utils.api import chat_completions_url
 from ..utils.terminal import BOLD, DIM, GREEN, RED, RESET
 from citra.utils.lsp import LspManager
-from .command import Command, CommandResult
+from .command import Command, CommandResult, CommandUsage
 
 
 @dataclass
@@ -92,7 +92,10 @@ class TestCommand(Command):
     """Test the current setup and report whether it is working."""
 
     id = "test"
-    description = "Run diagnostics on the current Citra setup."
+    usage = CommandUsage(
+        command="test",
+        description="Run diagnostics on the current Citra setup.",
+    )
 
     # ------------------------------------------------------------------
     # Individual checks

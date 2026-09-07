@@ -471,7 +471,7 @@ class Edit(Tool):
         self,
         arguments: dict[str, Any],
     ) -> str:
-        """Handle format call log."""
+        """Render the intended edit as a contextual whole-file diff."""
         normalized = self._normalize_arguments(
             arguments
         )
@@ -491,6 +491,34 @@ class Edit(Tool):
 
         old_text = "" if old is None else str(old)
         new_text = "" if new is None else str(new)
+        before: str | None = None
+        try:
+            resolved = self.context.workspace.resolve_path(path)
+            before = resolved.read_text(encoding="utf-8")
+        except (AttributeError, OSError, TypeError, UnicodeError, ValueError):
+            # Lightweight test contexts and inaccessible paths still get the
+            # replacement-fragment diff used by legacy logs.
+            pass
+
+        if before is not None:
+            if line is not None:
+                lines = before.splitlines(keepends=True)
+                line_number = int(line)
+                if 1 <= line_number <= len(lines) + 1:
+                    lines.insert(line_number - 1, new_text)
+                    old_text = before
+                    new_text = "".join(lines)
+            elif old is not None:
+                count = before.count(old_text)
+                if count and (count == 1 or replace_all):
+                    new_content = before.replace(
+                        old_text,
+                        new_text,
+                        -1 if replace_all else 1,
+                    )
+                    old_text = before
+                    new_text = new_content
+
         diff = "\n".join(
             unified_diff(
                 old_text.splitlines(),

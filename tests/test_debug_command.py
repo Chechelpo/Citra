@@ -49,7 +49,8 @@ class DebugCommandTests(unittest.TestCase):
     def test_unknown_action_reports_usage(self):
         result = self.command.run("maybe")
         self.assertTrue(chat_completions_api.debug_printing_enabled())
-        self.assertIn("Usage: /debug [on|off]", result.output)
+        self.assertIn("Unknown debug action", result.output)
+        self.assertEqual(result.usage, (DebugCommand.usage,))
 
 
 if __name__ == "__main__":

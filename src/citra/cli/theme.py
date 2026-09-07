@@ -20,6 +20,8 @@ CITRA_THEME = Theme(
         "citra.error": "bold #f7768e",
         "citra.tool": "bold #7dcfff",
         "citra.path": "underline #bb9af7",
+        "citra.diff.added": "#9ece6a",
+        "citra.diff.deleted": "#f7768e",
         "citra.border": "#444444",
         "citra.surface": f"on {SURFACE}",
     }

@@ -2,19 +2,23 @@
 
 from citra.utils.chat_completions_api import build_memory_context
 
-from .command import Command, CommandResult
+from .command import Command, CommandForm, CommandResult, CommandUsage
 
 
 class MemoryCommand(Command):
     """Print structured session memory on demand."""
 
     id = "memory"
-    description = "Show the current structured session memory."
+    usage = CommandUsage(
+        command="memory",
+        description="Show the current structured session memory.",
+        forms=(CommandForm(path=("show",), description="Display all memory records."),),
+    )
 
     def _run(self, args: str) -> CommandResult:
         """Render the active session's complete structured memory."""
         if args.strip() not in {"", "show", "status"}:
-            return CommandResult(output="Usage: /memory [show]")
+            return self.usage_result("Unknown memory action.")
         session = self.context.session
         if session is None:
             return CommandResult(output="Session memory is unavailable.")

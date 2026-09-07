@@ -6,22 +6,11 @@ from typing import Protocol, runtime_checkable
 
 from citra.tools.subagent.spec import SubagentSnapshot
 
-from .command import Command, CommandResult
+from .command import Command, CommandArgument, CommandForm, CommandResult, CommandUsage
 
 
 _TRANSCRIPT_TAIL = 30
 _ENTRY_CHAR_LIMIT = 4_000
-_USAGE = """\
-Usage:
-  /agent list
-  /agent show <id>
-  /agent <id>
-  /agent steer <id> <message>
-  /agent answer <id> <message>
-  /agent cancel <id>
-
-The command is also available from the foreground steering prompt while the
-orchestrator is running."""
 
 
 @runtime_checkable
@@ -53,7 +42,40 @@ class AgentCommand(Command):
     """Inspect and control one worker without routing through the model."""
 
     id = "agent"
-    description = "Inspect, steer, answer, or cancel a subagent."
+    usage = CommandUsage(
+        command="agent",
+        description="Inspect, steer, answer, or cancel a subagent.",
+        forms=(
+            CommandForm(path=("list",), description="List supervised subagents."),
+            CommandForm(
+                path=("show",),
+                arguments=(CommandArgument("<id>", "Subagent identifier."),),
+                description="Show one subagent and its transcript tail.",
+            ),
+            CommandForm(
+                arguments=(CommandArgument("<id>", "Subagent identifier."),),
+                description="Shortcut for show.",
+            ),
+            CommandForm(
+                path=("steer",),
+                arguments=(
+                    CommandArgument("<id>", "Subagent identifier."),
+                    CommandArgument("<message>", "Steering text to queue."),
+                ),
+            ),
+            CommandForm(
+                path=("answer",),
+                arguments=(
+                    CommandArgument("<id>", "Subagent identifier."),
+                    CommandArgument("<message>", "Guidance response."),
+                ),
+            ),
+            CommandForm(
+                path=("cancel",),
+                arguments=(CommandArgument("<id>", "Subagent identifier."),),
+            ),
+        ),
+    )
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
@@ -64,17 +86,19 @@ class AgentCommand(Command):
         parts = args.split(maxsplit=2)
         if not parts or parts[0] == "list":
             if len(parts) > 1:
-                return CommandResult(output=_USAGE)
+                return self.usage_result()
             return CommandResult(output=_format_list(supervisor.poll()))
 
         action = parts[0]
         if action == "show":
             if len(parts) != 2:
-                return CommandResult(output=_USAGE)
+                return self.usage_result()
             return CommandResult(
                 output=_format_one(supervisor.snapshot(parts[1]))
             )
         if action == "steer":
+            if len(parts) != 3 or not parts[2].strip():
+                return self.usage_result()
             return CommandResult(
                 output=self._send_message(
                     supervisor,
@@ -83,6 +107,8 @@ class AgentCommand(Command):
                 )
             )
         if action == "answer":
+            if len(parts) != 3 or not parts[2].strip():
+                return self.usage_result()
             return CommandResult(
                 output=self._send_message(
                     supervisor,
@@ -92,7 +118,7 @@ class AgentCommand(Command):
             )
         if action == "cancel":
             if len(parts) != 2:
-                return CommandResult(output=_USAGE)
+                return self.usage_result()
             subagent_id = parts[1]
             if supervisor.cancel(
                 subagent_id,
@@ -108,7 +134,7 @@ class AgentCommand(Command):
             return CommandResult(
                 output=_format_one(supervisor.snapshot(action))
             )
-        return CommandResult(output=_USAGE)
+        return self.usage_result()
 
     @staticmethod
     def _send_message(
@@ -118,8 +144,6 @@ class AgentCommand(Command):
         operation: str,
     ) -> str:
         """Handle send message."""
-        if len(parts) != 3 or not parts[2].strip():
-            return _USAGE
         subagent_id = parts[1]
         message = parts[2].strip()
         if operation == "steer":

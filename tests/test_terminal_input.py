@@ -17,6 +17,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
 
 _SRC = os.path.join(
     os.path.dirname(__file__),
@@ -30,6 +32,7 @@ from citra.cli.input import (
     _COMPOSER_BACKGROUND,
     _COMPOSER_BINDINGS,
     _COMPOSER_STYLE,
+    _CommandCompleter,
     _STATUS_BACKGROUND,
     ComposerPrompt,
     TerminalInput,
@@ -200,7 +203,7 @@ class IdleWatchdogTests(unittest.TestCase):
 
 
 class TerminalInputApiTests(unittest.TestCase):
-    def test_composer_footer_identifies_model_source_workspace_and_process(self):
+    def test_composer_footer_identifies_model_source_and_workspace(self):
         application = SimpleNamespace(
             config=SimpleNamespace(
                 model=lambda: SimpleNamespace(name="fast", id="gpt-test")
@@ -217,7 +220,6 @@ class TerminalInputApiTests(unittest.TestCase):
         self.assertIn("model: fast (gpt-test)", footer)
         self.assertIn("source: /work/project", footer)
         self.assertIn("workspace: /work/runtime", footer)
-        self.assertIn("process: citra-process-12-abcd", footer)
 
     def test_enter_submits_the_composer_buffer(self):
         buffer = mock.Mock()
@@ -284,6 +286,7 @@ class TerminalInputApiTests(unittest.TestCase):
         self.assertNotIn("rprompt", prompt.call_args.kwargs)
         self.assertIn("style", prompt.call_args.kwargs)
         self.assertTrue(prompt.call_args.kwargs["multiline"])
+        self.assertEqual(prompt.call_args.kwargs["reserve_space_for_menu"], 0)
         self.assertEqual(erase_values, [True])
         self.assertFalse(ti._session.app.erase_when_done)
         self.assertIn("key_bindings", prompt.call_args.kwargs)
@@ -326,6 +329,40 @@ class TerminalInputApiTests(unittest.TestCase):
 
     def test_module_singleton_exists(self):
         self.assertIsInstance(terminal_input, TerminalInput)
+
+    def test_command_completions_come_from_declared_usage(self):
+        completer = _CommandCompleter()
+
+        def suggestions(text: str) -> set[str]:
+            return {
+                completion.text
+                for completion in completer.get_completions(
+                    Document(text, cursor_position=len(text)),
+                    CompleteEvent(text_inserted=True),
+                )
+            }
+
+        self.assertIn("/model", suggestions("/mod"))
+        self.assertEqual(suggestions("/model sh"), {"show"})
+        self.assertEqual(suggestions("/debug o"), {"off", "on"})
+        self.assertEqual(
+            suggestions("/apply --f"),
+            {"--force", "--force-conflicts"},
+        )
+        self.assertEqual(suggestions("/model set --profile p"), set())
+        self.assertIn("host", suggestions("/model set --profile primary h"))
+
+    def test_steering_completions_only_include_available_commands(self):
+        completer = _CommandCompleter(("agent", "memory", "workflow"))
+        suggestions = {
+            completion.text
+            for completion in completer.get_completions(
+                Document("/", cursor_position=1),
+                CompleteEvent(text_inserted=True),
+            )
+        }
+
+        self.assertEqual(suggestions, {"/agent", "/memory", "/workflow"})
 
     def test_prompt_until_returns_none_when_background_state_changes(self):
         ti = TerminalInput()

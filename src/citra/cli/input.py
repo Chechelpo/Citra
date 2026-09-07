@@ -39,7 +39,7 @@ User prompt area:
 from __future__ import annotations
 
 from asyncio import TimerHandle
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from threading import RLock
 from time import perf_counter
@@ -48,6 +48,8 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import get_app, get_app_or_none
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -122,6 +124,7 @@ class ComposerPrompt:
 
     placeholder: str
     footer: str
+    command_ids: tuple[str, ...] | None = None
 
 
 class TerminalUiState:
@@ -241,6 +244,120 @@ def _format_elapsed(seconds: float) -> str:
     return f"{minutes}m {remainder}s" if minutes else f"{remainder}s"
 
 
+class _CommandCompleter(Completer):
+    """Suggest slash commands from their centralized usage declarations."""
+
+    def __init__(self, command_ids: tuple[str, ...] | None = None) -> None:
+        """Optionally restrict suggestions to commands valid in this prompt."""
+        self._command_ids = frozenset(command_ids) if command_ids is not None else None
+
+    def get_completions(
+        self,
+        document: Document,
+        complete_event: CompleteEvent,
+    ) -> Iterator[Completion]:
+        """Yield command, form, and enumerated argument completions."""
+        del complete_event
+        text = document.text_before_cursor
+        if not text.startswith("/") or "\n" in text:
+            return
+
+        from ..commands.default_registry import COMMAND_REGISTRY
+
+        usages = tuple(
+            usage
+            for usage in COMMAND_REGISTRY.usages
+            if self._command_ids is None or usage.command in self._command_ids
+        )
+        body = text[1:]
+        command_text, separator, remainder = body.partition(" ")
+        if not separator:
+            for usage in usages:
+                candidate = f"/{usage.command}"
+                if candidate.startswith(text):
+                    yield Completion(
+                        candidate,
+                        start_position=-len(text),
+                        display_meta=usage.description,
+                    )
+            return
+
+        usage = next(
+            (
+                item
+                for item in usages
+                if item.command == command_text
+            ),
+            None,
+        )
+        if usage is None:
+            return
+
+        trailing_space = remainder.endswith(" ")
+        tokens = remainder.split()
+        prefix = "" if trailing_space else (tokens[-1] if tokens else "")
+        completed = tokens if trailing_space else tokens[:-1]
+        candidates: dict[str, str] = {}
+        for form in usage.forms:
+            matched_path = 0
+            while (
+                matched_path < len(form.path)
+                and matched_path < len(completed)
+                and completed[matched_path] == form.path[matched_path]
+            ):
+                matched_path += 1
+            if matched_path < min(len(form.path), len(completed)):
+                continue
+            if matched_path < len(form.path):
+                candidate = form.path[matched_path]
+                candidates[candidate] = form.description
+                continue
+
+            invocation_tokens = completed[len(form.path):]
+            options = {option.flag: option for option in form.options}
+            used_options: set[str] = set()
+            positional_tokens: list[str] = []
+            waiting_for_option_value = None
+            token_index = 0
+            while token_index < len(invocation_tokens):
+                token = invocation_tokens[token_index]
+                option = options.get(token)
+                if option is None:
+                    positional_tokens.append(token)
+                    token_index += 1
+                    continue
+                used_options.add(option.flag)
+                if option.value is not None:
+                    if token_index + 1 >= len(invocation_tokens):
+                        waiting_for_option_value = option
+                        break
+                    token_index += 1
+                token_index += 1
+
+            if waiting_for_option_value is not None:
+                for candidate in waiting_for_option_value.value_suggestions:
+                    candidates[candidate] = waiting_for_option_value.description
+                continue
+
+            for option in form.options:
+                if option.flag not in used_options:
+                    candidates[option.flag] = option.description
+
+            argument_index = len(positional_tokens)
+            if argument_index < len(form.arguments):
+                argument = form.arguments[argument_index]
+                for candidate in argument.suggestions:
+                    candidates[candidate] = argument.description
+
+        for candidate, description in sorted(candidates.items()):
+            if candidate.startswith(prefix):
+                yield Completion(
+                    candidate,
+                    start_position=-len(prefix),
+                    display_meta=description,
+                )
+
+
 class TerminalInput:
     """
     Reusable ``prompt_toolkit``-based terminal input abstraction.
@@ -265,6 +382,7 @@ class TerminalInput:
         *,
         boxed: bool = False,
         footer: str = "",
+        command_ids: tuple[str, ...] | None = None,
     ) -> str:
         """
         Read one line of normal, unlimited user input.
@@ -284,7 +402,7 @@ class TerminalInput:
                 handle_sigint=True,
             )
 
-        return self._prompt_composer(ComposerPrompt(message, footer))
+        return self._prompt_composer(ComposerPrompt(message, footer, command_ids))
 
     def _prompt_composer(
         self,
@@ -307,6 +425,9 @@ class TerminalInput:
                     width=width,
                 ),
                 style=_COMPOSER_STYLE,
+                completer=_CommandCompleter(composer.command_ids),
+                complete_while_typing=True,
+                reserve_space_for_menu=0,
                 multiline=True,
                 key_bindings=_COMPOSER_BINDINGS,
                 prompt_continuation=FormattedText(
@@ -402,6 +523,7 @@ class TerminalInput:
         poll_interval: float = 0.1,
         boxed: bool = False,
         footer: str = "",
+        command_ids: tuple[str, ...] | None = None,
     ) -> str | None:
         """Read a line, or return ``None`` once ``predicate`` is true.
 
@@ -418,7 +540,7 @@ class TerminalInput:
         try:
             if boxed:
                 return self._prompt_composer(
-                    ComposerPrompt(message, footer),
+                    ComposerPrompt(message, footer, command_ids),
                     pre_run=watcher.start,
                 )
             return self._session.prompt(

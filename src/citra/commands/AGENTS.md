@@ -14,7 +14,9 @@ synchronously by `CitraApplication.handle_command()`.
 
 **`Command`** (abstract base class):
 
-- Class attributes: `id` (str, the name without `/`), `description` (str).
+- Class attributes: `id` (str, the name without `/`) and `usage`
+  (`CommandUsage`, including forms, named options, arguments, and completion
+  suggestions).
 - `__init__(context: ExecutionContext)` — stores the context.
 - `run(args: str) → CommandResult` (`@final`) — catches exceptions,
   delegates to `_run`.
@@ -26,6 +28,7 @@ synchronously by `CitraApplication.handle_command()`.
 | Field             | Type   | Effect                                           |
 |-------------------|--------|--------------------------------------------------|
 | `output`          | `str`  | Text printed to the terminal after execution.    |
+| `usage`           | `tuple[CommandUsage, ...]` | Usage trees rendered after output. |
 | `clear_messages`  | `bool` | If `True`, the conversation history is cleared.  |
 | `exit`            | `bool` | If `True`, the REPL terminates.                  |
 
@@ -38,7 +41,7 @@ Module-level singleton.  **This is where you wire in new commands.**
 
 ### `__init__.py`
 
-Re-exports `Command`, `CommandRegistry`, `CommandResult`,
+Re-exports the command base, registry, result, usage dataclasses, and
 `COMMAND_REGISTRY`.
 
 ---
@@ -72,11 +75,15 @@ active turn.
 
 1. Create `commands/my_command.py`:
    ```python
-   from .command import Command, CommandResult
+   from .command import Command, CommandForm, CommandResult, CommandUsage
 
    class MyCommand(Command):
        id = "my_command"
-       description = "What it does."
+       usage = CommandUsage(
+           command="my_command",
+           description="What it does.",
+           forms=(CommandForm(path=("show",)),),
+       )
 
        def _run(self, args: str) -> CommandResult:
            return CommandResult(output="result")
@@ -102,8 +109,9 @@ active turn.
 - After a successful `/apply`, normal shutdown removes the copied checkout only
   when it still matches the advanced apply baseline. Any edits made afterward
   cause the checkout to be preserved instead.
-- `HelpCommand` reads from `COMMAND_REGISTRY.help_lines()` — new
-  commands appear in `/help` automatically once registered.
+- `/help`, invalid-argument usage, and live command completion all consume the
+  same `CommandUsage` declarations. New commands appear automatically once
+  registered; do not build command-specific usage strings.
 - `TestCommand` is the most complex command; it demonstrates how to
   make direct HTTP calls (model API + SearXNG) and render check results
   with terminal colors.

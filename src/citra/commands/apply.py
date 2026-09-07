@@ -22,7 +22,14 @@ from citra.context.source_baseline import (
 )
 from citra.logging import Logger
 
-from .command import Command, CommandResult
+from .command import (
+    Command,
+    CommandArgument,
+    CommandForm,
+    CommandOption,
+    CommandResult,
+    CommandUsage,
+)
 
 _logger = Logger(__name__)
 
@@ -31,12 +38,40 @@ class ApplyCommand(Command):
     """Apply checkout changes and stage them when a Git worktree is available."""
 
     id = "apply"
-    description = "Preview and apply checkout changes to the original source."
+    usage = CommandUsage(
+        command="apply",
+        description="Preview and apply checkout changes to the original source.",
+        forms=(
+            CommandForm(
+                options=(
+                    CommandOption(
+                        "--include-dirty",
+                        "Allow staging dirty source paths.",
+                    ),
+                    CommandOption(
+                        "--force-conflicts",
+                        "Overwrite conflicting source edits.",
+                    ),
+                ),
+                arguments=(
+                    CommandArgument("[path ...]", "Apply only selected changed paths."),
+                ),
+                description="Apply reviewed checkout changes.",
+            ),
+            CommandForm(
+                path=("--force",),
+                description="Dump the whole checkout without other options.",
+            ),
+        ),
+    )
 
     def _run(self, args: str) -> CommandResult:
         """Preview and apply selected checkout changes after confirmation."""
         _logger.info("Starting source apply command", arguments=args)
-        include_dirty, force_conflicts, force_dump, requested = self._parse_args(args)
+        try:
+            include_dirty, force_conflicts, force_dump, requested = self._parse_args(args)
+        except ValueError as error:
+            return self.usage_result(str(error))
         source, checkout = self._roots()
         repository_root = git_repository_root(source)
 
@@ -280,11 +315,7 @@ class ApplyCommand(Command):
             elif token == "--force":
                 force_dump = True
             elif token.startswith("--"):
-                raise ValueError(
-                    "Usage: /apply [--force | --include-dirty] "
-                    "[--force-conflicts] "
-                    "[path ...]"
-                )
+                raise ValueError(f"Unknown /apply option: {token}")
             else:
                 paths.append(normalize_project_path(token))
         requested = tuple(dict.fromkeys(paths))

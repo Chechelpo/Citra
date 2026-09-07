@@ -7,7 +7,14 @@ from typing import Any
 
 from citra.logging import Logger
 from citra.utils.lsp import LspManager
-from .command import Command, CommandResult
+from .command import (
+    Command,
+    CommandArgument,
+    CommandForm,
+    CommandOption,
+    CommandResult,
+    CommandUsage,
+)
 
 
 _logger = Logger(__name__)
@@ -16,7 +23,34 @@ _logger = Logger(__name__)
 class LspCommand(Command):
     """Represent LspCommand."""
     id = "lsp"
-    description = "Inspect, install, restart, or stop optional language servers."
+    usage = CommandUsage(
+        command="lsp",
+        description="Inspect, install, restart, or stop language servers.",
+        forms=(
+            CommandForm(path=("status",), description="Show server availability and state."),
+            CommandForm(
+                path=("install",),
+                options=(
+                    CommandOption("--dry-run", "Preview installation commands."),
+                ),
+                arguments=(
+                    CommandArgument(
+                        "<target>",
+                        "Server, language, missing, or all.",
+                        suggestions=("missing", "all"),
+                    ),
+                ),
+            ),
+            CommandForm(
+                path=("restart",),
+                arguments=(CommandArgument("[server]", "Optional server identifier."),),
+            ),
+            CommandForm(
+                path=("stop",),
+                arguments=(CommandArgument("[server]", "Optional server identifier."),),
+            ),
+        ),
+    )
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
@@ -26,17 +60,23 @@ class LspCommand(Command):
             _logger.warning("LSP command has no lifecycle manager")
             return CommandResult(output="LSP services are unavailable in this execution context.")
 
-        tokens = shlex.split(args)
+        try:
+            tokens = shlex.split(args)
+        except ValueError as error:
+            return self.usage_result(f"Invalid arguments: {error}")
         if not tokens or tokens == ["status"]:
             _logger.info("Rendering LSP status")
             return CommandResult(output=self._format_status(manager.status()))
 
         action = tokens[0].casefold()
         if action == "install":
-            return CommandResult(output=self._install(manager, tokens[1:]))
+            try:
+                return CommandResult(output=self._install(manager, tokens[1:]))
+            except ValueError as error:
+                return self.usage_result(str(error))
         if action in {"restart", "stop"}:
             if len(tokens) > 2:
-                raise ValueError(f"Usage: /lsp {action} [server]")
+                return self.usage_result(f"Too many arguments for /lsp {action}.")
             target = tokens[1] if len(tokens) == 2 else None
             count = manager.restart(target) if action == "restart" else manager.stop(target)
             verb = "restarted" if action == "restart" else "stopped"
@@ -49,15 +89,12 @@ class LspCommand(Command):
             return CommandResult(output=f"{verb}: {count} language-server instance(s)")
 
         _logger.warning("Rejected unknown LSP command action", action=action)
-        raise ValueError(
-            "Usage: /lsp [status|install <server|language|missing|all> [--dry-run]|"
-            "restart [server]|stop [server]]"
-        )
+        return self.usage_result(f"Unknown LSP action: {action}")
 
     def _install(self, manager: LspManager, tokens: list[str]) -> str:
         """Handle install."""
         if not tokens:
-            raise ValueError("Usage: /lsp install <server|language|missing|all> [--dry-run]")
+            raise ValueError("/lsp install requires a target.")
         dry_run = False
         targets: list[str] = []
         for token in tokens:
@@ -119,7 +156,7 @@ class LspCommand(Command):
             prefix = "LSP: disabled\n"
         else:
             prefix = "LSP: enabled\n"
-        lines = [prefix.rstrip()]
+        lines: list[str] = [prefix.rstrip()]
         servers = status.get("servers", [])
         if not isinstance(servers, list):
             return prefix.rstrip()

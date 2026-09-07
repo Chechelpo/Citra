@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from .command import Command, CommandResult
+from .command import Command, CommandResult, CommandUsage
 
 
 class QuitCommand(Command):
     """Exit the Citra REPL."""
 
     id = "q"
-    description = "Exit Citra."
+    usage = CommandUsage(command="q", description="Exit Citra.")
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""

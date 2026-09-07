@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -27,11 +28,25 @@ from ..tools.tool import InvalidToolArguments, Tool
 from .theme import console
 from .input import terminal_ui_state
 
+if TYPE_CHECKING:
+    from ..commands.command import CommandUsage
+
 _MAX_PANEL_WIDTH = 120
 _FILE_LIST_TOOLS = {"read", "glob", "tree"}
 _DIFF_TOOLS = {"edit", "apply_patch"}
 _SHELL_TOOLS = {"bash", "subprocess"}
 _MAX_FALLBACK_PREVIEW_LENGTH = 1_000
+_DIFF_HUNK = re.compile(
+    r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@"
+)
+
+
+@dataclass(frozen=True)
+class PreparedToolCall:
+    """Hold presentation data captured before a tool mutates its target."""
+
+    arguments: dict[str, Any] | None
+    preview: str
 
 
 @dataclass(frozen=True)
@@ -77,7 +92,7 @@ class SessionFooter:
         """
         return (
             f"model: {self.model_selection}  ·  source: {self.source_directory}  ·  "
-            f"workspace: {self.workspace_directory}  ·  process: {self.process_name}"
+            f"workspace: {self.workspace_directory}"
         )
 
 
@@ -150,15 +165,98 @@ class ToolCallRenderState:
 
     active_group: ToolCallGroup | None = None
     active_arguments: dict[str, Any] | None = None
+    prepared_calls: dict[str, PreparedToolCall] | None = None
+
+    def prepare_call(
+        self,
+        tool_call: ToolCall,
+        tool: Tool | None,
+    ) -> None:
+        """Capture an invocation preview before the tool changes any files."""
+        if self.prepared_calls is None:
+            self.prepared_calls = {}
+        arguments, preview = _prepare_tool_call(tool_call, tool)
+        self.prepared_calls[tool_call.id] = PreparedToolCall(arguments, preview)
 
     def render_batch(
         self,
         calls: Iterable[tuple[ToolCall, Tool | None, str]],
     ) -> None:
         """Render a completed assistant tool-call batch in execution order."""
-        for tool_call, tool, result in calls:
+        materialized = list(calls)
+        index = 0
+        while index < len(materialized):
+            edit_calls: list[tuple[ToolCall, Tool | None, str]] = []
+            while index < len(materialized):
+                tool_call, tool, result = materialized[index]
+                prepared = self._prepared(tool_call)
+                semantic_name = str(getattr(tool, "id", tool_call.name)).lower()
+                if (
+                    semantic_name != "edit"
+                    or not result.startswith("ok")
+                    or prepared is None
+                    or not prepared.preview.startswith("--- ")
+                ):
+                    break
+                edit_calls.append(materialized[index])
+                index += 1
+            if edit_calls:
+                self._render_edit_batch(edit_calls)
+                self.active_group = None
+                continue
+
+            tool_call, tool, result = materialized[index]
             self.render_start(tool_call, tool)
             self.render_result(result, tool)
+            index += 1
+        if self.prepared_calls is not None:
+            for tool_call, _tool, _result in materialized:
+                self.prepared_calls.pop(tool_call.id, None)
+
+    def _prepared(self, tool_call: ToolCall) -> PreparedToolCall | None:
+        if self.prepared_calls is None:
+            return None
+        return self.prepared_calls.get(tool_call.id)
+
+    def _render_edit_batch(
+        self,
+        calls: list[tuple[ToolCall, Tool | None, str]],
+    ) -> None:
+        """Render successful edits as one contextual, line-numbered diff tree."""
+        entries: list[tuple[str, str, str, int, int]] = []
+        for tool_call, _tool, result in calls:
+            prepared = self._prepared(tool_call)
+            assert prepared is not None
+            path = _argument_path(prepared.arguments) or tool_call.name
+            added, deleted = _diff_line_counts(prepared.preview)
+            entries.append((path, prepared.preview, result, added, deleted))
+
+        total_added = sum(entry[3] for entry in entries)
+        total_deleted = sum(entry[4] for entry in entries)
+        file_count = len({entry[0] for entry in entries})
+        noun = "file" if file_count == 1 else "files"
+        console.print()
+        console.print(
+            Text.assemble(
+                ("• ", "citra.tool"),
+                (f"Edited {file_count} {noun} ", "citra.tool"),
+                (f"(+{total_added} -{total_deleted})", "citra.muted"),
+            )
+        )
+        for path, preview, result, added, deleted in entries:
+            console.print(
+                Text.assemble(
+                    ("  └ ", "citra.border"),
+                    (path, "citra.path"),
+                    (f" (+{added} -{deleted})", "citra.muted"),
+                )
+            )
+            console.print(_compact_diff(preview))
+            diagnostics = result.removeprefix("ok").strip()
+            receipt = f"ok (+{added}, -{deleted})"
+            if diagnostics:
+                receipt += f"\n{diagnostics}"
+            _render_result_receipt(receipt, nested=True)
 
     def render_start(
         self,
@@ -170,10 +268,12 @@ class ToolCallRenderState:
         if group is not self.active_group:
             render_tool_group_heading(group)
             self.active_group = group
+        prepared = self._prepared(tool_call)
         self.active_arguments = render_tool_call_start(
             tool_call,
             tool,
             nested=True,
+            prepared=prepared,
         )
         return self.active_arguments
 
@@ -259,6 +359,70 @@ def _safe_call_preview(tool: Tool | None, arguments: dict[str, Any]) -> str:
         return _fallback_call_preview(arguments)
 
 
+def _prepare_tool_call(
+    tool_call: ToolCall,
+    tool: Tool | None,
+) -> tuple[dict[str, Any] | None, str]:
+    """Decode a tool call and build its safe presentation preview."""
+    if tool is None:
+        return None, tool_call.arguments[:_MAX_FALLBACK_PREVIEW_LENGTH]
+    try:
+        arguments = tool.parse_arguments(tool_call.arguments)
+    except InvalidToolArguments as error:
+        return None, str(error)
+    return arguments, _safe_call_preview(tool, arguments)
+
+
+def _diff_line_counts(diff: str) -> tuple[int, int]:
+    """Count created and deleted content lines in a unified diff."""
+    added = 0
+    deleted = 0
+    in_hunk = False
+    for line in diff.splitlines():
+        if line.startswith("@@ "):
+            in_hunk = True
+        elif in_hunk and line.startswith("+"):
+            added += 1
+        elif in_hunk and line.startswith("-"):
+            deleted += 1
+    return added, deleted
+
+
+def _compact_diff(diff: str) -> Text:
+    """Convert a unified diff into compact numbered contextual hunks."""
+    rendered = Text()
+    old_line = 0
+    new_line = 0
+    seen_hunk = False
+    for line in diff.splitlines():
+        match = _DIFF_HUNK.match(line)
+        if match is not None:
+            if seen_hunk:
+                rendered.append("   ⋮\n", style="citra.muted")
+            old_line = int(match.group(1))
+            new_line = int(match.group(2))
+            seen_hunk = True
+            continue
+        if not seen_hunk or line.startswith(("--- ", "+++ ")):
+            continue
+        marker = line[:1]
+        content = line[1:]
+        if marker == "-":
+            rendered.append(f"{old_line:>4} -{content}\n", style="citra.diff.deleted")
+            old_line += 1
+        elif marker == "+":
+            rendered.append(f"{new_line:>4} +{content}\n", style="citra.diff.added")
+            new_line += 1
+        elif marker == " ":
+            rendered.append(f"{new_line:>4}  {content}\n")
+            old_line += 1
+            new_line += 1
+        elif marker == "\\":
+            rendered.append(f"     {line}\n", style="citra.muted")
+    rendered.rstrip()
+    return rendered
+
+
 def result_preview(result: str, line_limit: int = 72) -> str:
     lines = result.splitlines()
     if not lines:
@@ -281,8 +445,18 @@ def _mutation_result_preview(
         return result_preview(result)
 
     path = _argument_path(arguments)
-    verb = "Wrote" if name == "write" else "Updated"
-    summary = f"{verb} {path}" if path else verb
+    if name == "edit":
+        old = str((arguments or {}).get("old", ""))
+        new = str((arguments or {}).get("new", ""))
+        fragment = "\n".join(
+            ("@@ -1 +1 @@",)
+            + tuple(f"-{line}" for line in old.splitlines())
+            + tuple(f"+{line}" for line in new.splitlines())
+        )
+        added, deleted = _diff_line_counts(fragment)
+        summary = f"ok (+{added}, -{deleted})"
+    else:
+        summary = f"Wrote {path}" if path else "Wrote"
     diagnostics = result.removeprefix("ok").strip()
     if not diagnostics:
         return summary
@@ -378,19 +552,15 @@ def render_tool_call_start(
     tool: Tool | None = None,
     *,
     nested: bool = False,
+    prepared: PreparedToolCall | None = None,
 ) -> dict[str, Any] | None:
     """Render one tool invocation and return decoded object arguments when valid."""
     name = tool_call.name
-    raw = tool_call.arguments
-    arguments: dict[str, Any] | None = None
-    if tool is None:
-        preview = raw[:_MAX_FALLBACK_PREVIEW_LENGTH]
+    if prepared is None:
+        arguments, preview = _prepare_tool_call(tool_call, tool)
     else:
-        try:
-            arguments = tool.parse_arguments(raw)
-            preview = _safe_call_preview(tool, arguments)
-        except InvalidToolArguments as error:
-            preview = str(error)
+        arguments = prepared.arguments
+        preview = prepared.preview
 
     title = name.replace("_", " ").capitalize()
     if not nested:
@@ -413,6 +583,11 @@ def render_tool_call_result(
     """Render a compact, safely formatted receipt for a completed tool call."""
     semantic_name = str(getattr(tool, "id", "unknown"))
     shown = tool_result_preview(semantic_name, result, arguments).strip() or "(empty)"
+    _render_result_receipt(shown, nested=nested)
+
+
+def _render_result_receipt(shown: str, *, nested: bool) -> None:
+    """Render a result receipt with aligned continuation lines."""
     lines = shown.splitlines()
     indent = "    " if nested else "  "
     receipt = Text.assemble((f"{indent}└ ", "citra.border"), (lines[0], "citra.muted"))
@@ -484,6 +659,52 @@ def render_command_output(output: str) -> None:
         console.print(Syntax(output.rstrip(), "diff", theme="monokai", word_wrap=True))
     else:
         console.print(Markdown(output, code_theme="monokai"))
+
+
+def render_command_usage(usages: tuple[CommandUsage, ...]) -> None:
+    """Render declared slash-command forms and arguments as a Rich tree."""
+    if not usages:
+        return
+    tree = Tree(
+        "Commands" if len(usages) > 1 else "Usage",
+        guide_style="citra.border",
+    )
+    for usage in usages:
+        command_node = tree.add(
+            Text.assemble(
+                (f"/{usage.command}", "citra.accent"),
+                (f" — {usage.description}", "default"),
+            )
+        )
+        for form in usage.forms:
+            suffix = form.suffix
+            label = f"/{usage.command}{f' {suffix}' if suffix else ''}"
+            form_node = command_node.add(
+                Text.assemble(
+                    (label, "citra.tool"),
+                    (
+                        (f" — {form.description}", "citra.muted")
+                        if form.description
+                        else ("", "")
+                    ),
+                )
+            )
+            for option in form.options:
+                form_node.add(
+                    Text.assemble(
+                        (option.syntax, "citra.accent"),
+                        (f" — {option.description}", "citra.muted"),
+                    )
+                )
+            for argument in form.arguments:
+                form_node.add(
+                    Text.assemble(
+                        (argument.syntax, "citra.accent"),
+                        (f" — {argument.description}", "citra.muted"),
+                    )
+                )
+    console.print()
+    console.print(tree)
 
 
 def render_question(question: str, options: tuple[str, ...] | list[str] = ()) -> None:

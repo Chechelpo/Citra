@@ -21,4 +21,5 @@ def test_memory_command_reports_empty_session() -> None:
 def test_memory_command_rejects_unknown_arguments() -> None:
     context = SimpleNamespace(session=AgentSession())
     result = MemoryCommand(context).run("clear")
-    assert "Usage: /memory" in result.output
+    assert "Unknown memory action" in result.output
+    assert result.usage == (MemoryCommand.usage,)

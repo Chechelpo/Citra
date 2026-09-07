@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from ..utils.terminal import GREEN, RESET
-from .command import Command, CommandResult
+from .command import Command, CommandResult, CommandUsage
 
 
 class ClearCommand(Command):
     """Clear the conversation history."""
 
     id = "c"
-    description = "Clear the conversation history."
+    usage = CommandUsage(command="c", description="Clear the conversation history.")
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""

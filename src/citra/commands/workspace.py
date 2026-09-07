@@ -8,14 +8,21 @@ import shlex
 import shutil
 import subprocess
 
-from .command import Command, CommandResult
+from .command import Command, CommandForm, CommandResult, CommandUsage
 
 
 class WorkspaceCommand(Command):
     """Show or enter the copied project checkout."""
 
     id = "workspace"
-    description = "Show or enter the project checkout."
+    usage = CommandUsage(
+        command="workspace",
+        description="Show or enter the project checkout.",
+        forms=(
+            CommandForm(path=("path",), description="Show the checkout path."),
+            CommandForm(path=("shell",), description="Open an interactive shell there."),
+        ),
+    )
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
@@ -87,9 +94,7 @@ class WorkspaceCommand(Command):
     @staticmethod
     def _usage() -> CommandResult:
         """Handle usage."""
-        return CommandResult(
-            output="Usage: /workspace [path|shell]"
-        )
+        return CommandResult(usage=(WorkspaceCommand.usage,))
 
 
 __all__ = ["WorkspaceCommand"]

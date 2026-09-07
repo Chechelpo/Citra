@@ -11,6 +11,7 @@ from citra.agent.runner import AgentRunner
 from citra.agent.session import AgentSession
 from citra.cli import rendering
 from citra.cli.rendering import SessionHeader, format_elapsed
+from citra.commands.model import ModelCommand
 from citra.cli.theme import CITRA_THEME
 from citra.sandbox import SandboxMode
 from citra.tools.default_registry import ToolSet
@@ -202,9 +203,49 @@ def test_multiline_result_keeps_continuation_lines_indented(monkeypatch) -> None
     )
 
     rendered = output.export_text()
-    assert "  └ Updated src/app.py" in rendered
+    assert "  └ ok (+0, -0)" in rendered
     assert "    LSP diagnostics after edit:" in rendered
     assert "    warning: slow" in rendered
+
+
+def test_successful_edits_render_as_one_numbered_diff_tree(monkeypatch) -> None:
+    output = _recording_console(width=100)
+    monkeypatch.setattr(rendering, "console", output)
+    state = rendering.ToolCallRenderState()
+    previews = {
+        "src/a.py": (
+            "--- a/src/a.py\n+++ b/src/a.py\n"
+            "@@ -3,3 +3,3 @@\n context\n-old\n+new\n tail"
+        ),
+        "src/b.py": (
+            "--- a/src/b.py\n+++ b/src/b.py\n"
+            "@@ -8,2 +8,3 @@\n value\n+extra\n end"
+        ),
+    }
+
+    def make_tool(path: str):
+        return SimpleNamespace(
+            id="edit",
+            parse_arguments=json.loads,
+            format_call_log=lambda _arguments: previews[path],
+        )
+
+    calls = []
+    for index, path in enumerate(previews, 1):
+        tool = make_tool(path)
+        call = ToolCall(f"edit-{index}", "edit", json.dumps({"path": path}))
+        state.prepare_call(call, tool)
+        calls.append((call, tool, "ok"))
+
+    state.render_batch(calls)
+
+    rendered = output.export_text()
+    assert "• Edited 2 files (+2 -1)" in rendered
+    assert "└ src/a.py (+1 -1)" in rendered
+    assert "   4 -old" in rendered
+    assert "   4 +new" in rendered
+    assert "└ src/b.py (+1 -0)" in rendered
+    assert "ok (+1, -1)" in rendered
 
 
 def test_write_result_uses_call_path_without_legacy_log_formatter(
@@ -254,6 +295,20 @@ def test_model_request_diagnostics_use_semantic_styles(monkeypatch) -> None:
     assert "Retrying in 1.2s (attempt 2/4)" in rendered
     assert "! Provider returned an empty response." in rendered
     assert "× Model API returned HTTP 401" in rendered
+
+
+def test_command_usage_renders_forms_and_arguments_as_a_tree(monkeypatch) -> None:
+    output = _recording_console(width=110)
+    monkeypatch.setattr(rendering, "console", output)
+
+    rendering.render_command_usage((ModelCommand.usage,))
+
+    rendered = output.export_text()
+    assert "Usage" in rendered
+    assert "/model — Inspect and modify named model profiles." in rendered
+    assert "├── /model show [profile]" in rendered
+    assert "│   └── [profile] — Profile name." in rendered
+    assert "/model set [--profile <profile>] <setting> <value>" in rendered
 
 
 def test_adjacent_tool_calls_share_semantic_group_until_category_changes(

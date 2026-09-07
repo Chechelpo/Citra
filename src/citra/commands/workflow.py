@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-from .command import Command, CommandResult
+from .command import Command, CommandForm, CommandResult, CommandUsage
 
 
 class WorkflowCommand(Command):
     """Represent WorkflowCommand."""
     id = "workflow"
-    description = "Inspect the workflow and current serial phase."
+    usage = CommandUsage(
+        command="workflow",
+        description="Inspect the workflow and current serial phase.",
+        forms=(
+            CommandForm(path=("status",), description="Show workflow state."),
+            CommandForm(path=("cancel",), description="Cancel the active workflow run."),
+        ),
+    )
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
         action = args.strip() or "status"
         if action not in {"status", "show", "cancel"}:
-            return CommandResult(output="Usage: /workflow [status|cancel]")
+            return self.usage_result(f"Unknown workflow action: {action}")
 
         runtime = self.context.workflow_runtime
         workflow = runtime.workflow
