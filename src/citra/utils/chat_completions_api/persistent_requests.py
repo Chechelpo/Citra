@@ -12,24 +12,39 @@ from typing import Any, Callable, cast
 import urllib.error
 import urllib.request
 from openai.types.chat import ChatCompletionSystemMessageParam
+from ...cli.rendering import (
+    render_model_debug,
+    render_model_error,
+    render_model_retry,
+    render_model_warning,
+)
 from ...agent import ChatMessage
 from ...config import ModelConfig
 from ...context import ExecutionContext
 from ...tools.session_memory import MemoryTool
 from ...tools.tool import Tool
 from ..api import chat_completions_url
+from .model_call import ModelCall
 from .model_normalization import normalize_model_response
-from ..terminal import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, separator
 logger = logging.getLogger(__name__)
 RETRY_ON_RATE_LIMIT: bool = True
 DEBUG_PRINTING: bool = True
 DEFAULT_MAX_RETRIES: int = 12
 
+def debug_printing_enabled() -> bool:
+    """Return whether model-request diagnostics are rendered in the CLI."""
+    return DEBUG_PRINTING
+
+def set_debug_printing(enabled: bool) -> None:
+    """Enable or disable model-request diagnostics at their owning module."""
+    global DEBUG_PRINTING
+    DEBUG_PRINTING = enabled
+
 def _debug_print(message: str) -> None:
-    """Print a grey diagnostic line when debug printing is enabled."""
+    """Render a quiet diagnostic line when debug printing is enabled."""
     logger.debug(message)
     if DEBUG_PRINTING:
-        print(f'{DIM}{message}{RESET}')
+        render_model_debug(message)
 
 class ModelRequestInterrupted(RuntimeError):
     """A pending retry was superseded by newly queued user steering."""
@@ -114,7 +129,12 @@ def _retry_after_error(attempt: int, max_attempts: int, initial_backoff: float, 
     if retry_after is not None:
         delay = max(delay, retry_after)
     logger.warning('Model request %s; retrying in %.1fs (attempt %d/%d).', reason, delay, attempt + 1, max_attempts, exc_info=(type(error), error, error.__traceback__))
-    print(f'{YELLOW}⏺ Model request {reason}. Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_attempts})...{RESET}')
+    render_model_retry(
+        reason,
+        delay=delay,
+        attempt=attempt + 1,
+        max_attempts=max_attempts,
+    )
     deadline = time.monotonic() + delay
     while True:
         if interrupt is not None and interrupt():
@@ -515,7 +535,7 @@ def _finish_reason_entries(value: Any) -> list[str]:
 
 def _log_finish_reasons(value: Any) -> None:
     """Log finish_reason for every decoded HTTP-200 completion response."""
-    _debug_print(f"⏺ Model finish_reason(s): {', '.join(_finish_reason_entries(value))}")
+    _debug_print(f"Model finish_reason(s): {', '.join(_finish_reason_entries(value))}")
 
 def _choice_output_diagnostic(value: Any) -> str:
     """Describe response output shape without dumping model content."""
@@ -607,25 +627,11 @@ def _resolve_model_snapshot(context: ExecutionContext, model_config: ModelConfig
         raise TypeError('model_config must be a ModelConfig')
     return model
 
-def call_api(
-    context: ExecutionContext,
-    messages: list[ChatMessage],
-    tools: dict[str, Tool],
-    sys_prompt: str,
-    reasoning_effort: str | None = None,
-    *,
-    model_config: ModelConfig | None = None,
-    request_timeout: float | None = None,
-    max_attempts: int | None = None,
-    initial_backoff: float | None = None,
-    max_backoff: float | None = None,
-    retry_interrupt: Callable[[], bool] | None = None,
-    memory_services: Iterable[object] | None = None,
-) -> dict[str, Any]:
+def call_api(model_call: ModelCall) -> dict[str, Any]:
     """
     Perform one OpenAI-compatible Chat Completions request.
 
-    ``model_config`` may provide a pre-resolved immutable model snapshot.
+    ``ModelCall.model_config`` may provide a pre-resolved immutable model snapshot.
     When omitted, the active model is resolved once before the request and
     reused for every retry attempt.
 
@@ -698,45 +704,9 @@ def call_api(
     retry slot.
 
     Args:
-        context:
-            Current execution context containing the selected model
-            configuration and authentication information.
-
-        messages:
-            Conversation messages to include after generated system
-            context.
-
-        tools:
-            Tools exposed to the model.
-
-        memory_services:
-            Optional complete retained-memory collection. When supplied, all
-            memory services contribute context even when this role cannot
-            mutate them through ``tools``.
-
-        reasoning_effort:
-            Optional model-specific reasoning effort setting.
-
-        request_timeout:
-            Timeout, in seconds, for each individual HTTP request.
-
-        max_attempts:
-            Maximum total number of ordinary attempts, including the initial
-            request. Defaults to the model retry configuration.
-
-        initial_backoff:
-            Initial retry delay in seconds before jitter.
-
-        max_backoff:
-            Maximum exponential backoff base in seconds. A
-            server-provided Retry-After value may exceed this value.
-
-        retry_interrupt:
-            Optional callback checked during retry backoff. Returning true
-            aborts the obsolete request so queued steering can rebuild it.
-
-        sys_prompt:
-            Optional system prompt for establishing constant system prompts.
+        model_call:
+            Immutable request snapshot containing context, conversation,
+            tools, model configuration, memory, and retry controls.
 
     Returns:
         The decoded JSON response from the model API.
@@ -749,7 +719,19 @@ def call_api(
         ValueError:
             If retry/request configuration is invalid.
     """
-    model = _resolve_model_snapshot(context, model_config)
+    context = model_call.context
+    messages = list(model_call.messages)
+    tools = dict(model_call.tools)
+    sys_prompt = model_call.system_prompt
+    reasoning_effort = model_call.reasoning_effort
+    request_timeout = model_call.request_timeout
+    max_attempts = model_call.max_attempts
+    initial_backoff = model_call.initial_backoff
+    max_backoff = model_call.max_backoff
+    retry_interrupt = model_call.retry_interrupt
+    memory_services = model_call.memory_services
+
+    model = _resolve_model_snapshot(context, model_call.model_config)
     retry_config = model.retry
     if max_attempts is None:
         max_attempts = retry_config.max_attempts
@@ -771,7 +753,7 @@ def call_api(
         raise ValueError('initial_backoff cannot exceed max_backoff.')
     system_messages: list[ChatCompletionSystemMessageParam] = [{'role': 'system', 'content': sys_prompt}]
     memory_context = build_memory_context(
-        tools if memory_services is None else memory_services
+        tools if not memory_services else memory_services
     )
     messages_to_merge: list[ChatMessage] = [*system_messages, *messages]
     request_messages = merge_consecutive_roles(messages_to_merge)
@@ -798,14 +780,19 @@ def call_api(
             recovery_request_pending = False
         else:
             request_label = 'model request'
-        _debug_print(f'⏺ Starting {request_label} (attempt {attempt}/{max_attempts}, model={model.id}, timeout={request_timeout:.1f}s)')
+        _debug_print(
+            f"Starting {request_label} (attempt {attempt}/{max_attempts}, "
+            f"model={model.id}, timeout={request_timeout:.1f}s)"
+        )
         started_at = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=request_timeout) as response:
                 raw_response = response.read().decode('utf-8', errors='replace')
                 response_status = response.status
             elapsed = time.monotonic() - started_at
-            _debug_print(f'⏺ Model HTTP {response_status} received in {elapsed:.2f}s')
+            _debug_print(
+                f"Model HTTP {response_status} received in {elapsed:.2f}s"
+            )
             try:
                 decoded = json.loads(raw_response)
                 decoded = normalize_model_response(decoded, tools=tools, model_id=model.id)
@@ -821,7 +808,10 @@ def call_api(
                 return decoded
             diagnostic = _choice_output_diagnostic(decoded)
             logger.warning('Model API returned HTTP 200 without usable assistant output: %s', diagnostic)
-            print(f'{YELLOW}⚠ Model API returned HTTP 200 without usable assistant output ({diagnostic}).{RESET}')
+            render_model_warning(
+                "Model API returned HTTP 200 without usable assistant output "
+                f"({diagnostic})."
+            )
             response_error = RuntimeError('Model API returned HTTP 200 without a usable choice.')
             _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=response_error, reason=f'returned an empty or malformed response ({diagnostic})', interrupt=retry_interrupt)
             attempt += 1
@@ -835,10 +825,16 @@ def call_api(
             gmicloud_balance_ignored = _is_gmicloud_insufficient_balance_error(error.code, body)
             if gmicloud_balance_ignored:
                 logger.warning('Ignoring GMICloud HTTP %d insufficient-balance response under retry policy.', error.code)
-                print(f"{YELLOW}⏺ Ignoring GMICloud HTTP {error.code} 'Insufficient balance' response; continuing with retry policy.{RESET}")
+                render_model_warning(
+                    f"Ignoring GMICloud HTTP {error.code} 'Insufficient balance' "
+                    "response; continuing with retry policy."
+                )
             else:
                 logger.error('Model API returned HTTP %d: %s', error.code, detail or error.reason)
-                print(f'{RED}✖ Model API returned HTTP {error.code}: {detail or error.reason}{RESET}')
+                render_model_error(
+                    f"Model API returned HTTP {error.code}: "
+                    f"{detail or error.reason}"
+                )
             if _is_stealth_continue_work_error(error.code, body):
                 if stealth_continue_used:
                     raise RuntimeError(f"Model API returned HTTP {error.code} after the one-time 'continue your work' recovery: {detail or error.reason}") from error
@@ -850,7 +846,11 @@ def call_api(
                 stealth_continue_used = True
                 recovery_request_pending = True
                 logger.warning('Stealth provider failure detected; issuing one continuation recovery request.')
-                print(f"{YELLOW}⏺ Stealth provider failure detected. Appending user message 'continue your work' and issuing one continuation recovery request.{RESET}")
+                render_model_warning(
+                    "Stealth provider failure detected. Appending user message "
+                    "'continue your work' and issuing one continuation recovery "
+                    "request."
+                )
                 continue
             if _should_retry_http_error(error.code, body):
                 retry_after = _get_retry_after(error, body)

@@ -11,6 +11,7 @@ behaviour is deterministic.
 """
 
 import os
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -26,13 +27,19 @@ os.environ["PYTHONPATH"] = os.path.abspath(_SRC)
 
 
 from citra.cli.input import (
+    _COMPOSER_BACKGROUND,
     _COMPOSER_BINDINGS,
+    _COMPOSER_STYLE,
+    _STATUS_BACKGROUND,
+    ComposerPrompt,
     TerminalInput,
     _IdleTimeout,
     _IdleWatchdog,
     _PredicateSatisfied,
     terminal_input,
+    terminal_ui_state,
 )
+from citra.cli.repl import _session_footer
 
 
 class FakeLoop:
@@ -193,6 +200,25 @@ class IdleWatchdogTests(unittest.TestCase):
 
 
 class TerminalInputApiTests(unittest.TestCase):
+    def test_composer_footer_identifies_model_source_workspace_and_process(self):
+        application = SimpleNamespace(
+            config=SimpleNamespace(
+                model=lambda: SimpleNamespace(name="fast", id="gpt-test")
+            ),
+            workspace=SimpleNamespace(
+                source_workspace=Path("/work/project"),
+                workspace=Path("/work/runtime"),
+                runtime_id="citra-process-12-abcd",
+            ),
+        )
+
+        footer = _session_footer(application).render()
+
+        self.assertIn("model: fast (gpt-test)", footer)
+        self.assertIn("source: /work/project", footer)
+        self.assertIn("workspace: /work/runtime", footer)
+        self.assertIn("process: citra-process-12-abcd", footer)
+
     def test_enter_submits_the_composer_buffer(self):
         buffer = mock.Mock()
         enter = next(
@@ -221,6 +247,7 @@ class TerminalInputApiTests(unittest.TestCase):
 
     def test_boxed_prompt_draws_a_composer_border(self):
         ti = TerminalInput()
+        terminal_ui_state.reset()
 
         with (
             mock.patch.object(ti._session, "prompt", return_value="hello") as prompt,
@@ -229,24 +256,51 @@ class TerminalInputApiTests(unittest.TestCase):
             result = ti.prompt(
                 "› ",
                 boxed=True,
-                footer="gpt-test default · ~/Code/Citra",
-            )
+                footer=(
+                    "model: default (gpt-test)  ·  source: ~/Code/Citra  ·  "
+                    "process: citra-process-12-abcd"
+                ),
+        )
 
         self.assertEqual(result, "hello")
-        self.assertTrue(prompt.call_args.args[0].value.startswith("\n  "))
-        self.assertEqual(
-            prompt.call_args.kwargs["bottom_toolbar"].value,
-            "  gpt-test default · ~/Code/Citra",
-        )
+        header = prompt.call_args.args[0]()
+        header_text = "".join(fragment[1] for fragment in header)
+        self.assertIn("• Ready", header_text)
+        self.assertIn("─" * 24, header_text)
+        placeholder = prompt.call_args.kwargs["placeholder"]
+        placeholder_text = "".join(fragment[1] for fragment in placeholder)
+        self.assertEqual(placeholder_text, "› ")
+        toolbar = prompt.call_args.kwargs["bottom_toolbar"]()
+        toolbar_text = "".join(fragment[1] for fragment in toolbar)
+        self.assertTrue(toolbar_text.startswith("│"))
+        self.assertIn("\n" + "─" * 24, toolbar_text)
+        self.assertIn("model: default (gpt-test)", toolbar_text)
+        self.assertTrue(toolbar_text.endswith("…"))
         self.assertNotIn("rprompt", prompt.call_args.kwargs)
         self.assertIn("style", prompt.call_args.kwargs)
         self.assertTrue(prompt.call_args.kwargs["multiline"])
         self.assertIn("key_bindings", prompt.call_args.kwargs)
-        self.assertEqual(prompt.call_args.kwargs["prompt_continuation"].value, "  · ")
-        self.assertEqual(output.call_count, 2)
-        self.assertTrue(output.call_args_list[0].args[0].plain.startswith("─"))
-        self.assertIn("gpt-test", output.call_args_list[1].args[0].plain)
-        self.assertIn("#222222", str(output.call_args_list[1].args[0].style))
+        continuation = prompt.call_args.kwargs["prompt_continuation"]
+        self.assertEqual("".join(fragment[1] for fragment in continuation), "│ · ")
+        self.assertEqual(output.call_count, 3)
+        self.assertTrue(output.call_args_list[0].args[0].plain.startswith("│"))
+        self.assertTrue(output.call_args_list[1].args[0].plain.startswith("─"))
+        self.assertNotIn(
+            _COMPOSER_BACKGROUND,
+            str(output.call_args_list[1].args[0].style),
+        )
+
+    def test_prompt_and_status_toolbar_have_distinct_backgrounds(self):
+        self.assertNotEqual(_COMPOSER_BACKGROUND, _STATUS_BACKGROUND)
+        toolbar = _COMPOSER_STYLE.get_attrs_for_style_str(
+            "class:bottom-toolbar"
+        )
+        composer = _COMPOSER_STYLE.get_attrs_for_style_str("")
+        margin = _COMPOSER_STYLE.get_attrs_for_style_str(
+            "class:composer-margin"
+        )
+        self.assertNotEqual(toolbar.bgcolor, composer.bgcolor)
+        self.assertEqual(margin.bgcolor, composer.bgcolor)
 
     def test_prompt_with_idle_timeout_returns_none_on_idle_timeout(self):
         """
@@ -277,6 +331,108 @@ class TerminalInputApiTests(unittest.TestCase):
             result = ti.prompt_until(lambda: True, "steer> ")
 
         self.assertIsNone(result)
+
+    def test_prompt_until_uses_the_same_boxed_composer(self):
+        ti = TerminalInput()
+
+        with (
+            mock.patch.object(
+                ti._session,
+                "prompt",
+                side_effect=_PredicateSatisfied(),
+            ) as prompt,
+            mock.patch("citra.cli.input._console.print"),
+        ):
+            result = ti.prompt_until(
+                lambda: True,
+                "› ",
+                boxed=True,
+                footer="model: test · source: /project · process: citra-process-1",
+            )
+
+        self.assertIsNone(result)
+        self.assertTrue(prompt.call_args.kwargs["multiline"])
+        toolbar = prompt.call_args.kwargs["bottom_toolbar"]()
+        toolbar_text = "".join(fragment[1] for fragment in toolbar)
+        self.assertIn("model: test", toolbar_text)
+
+    def test_dynamic_status_keeps_the_composer_bottom_height_fixed(self):
+        footer = "model: test · source: /project · workspace: /runtime"
+        terminal_ui_state.finish_working()
+        terminal_ui_state.record_tokens(input_tokens=12, output_tokens=4)
+        idle = "".join(
+            fragment[1]
+            for fragment in terminal_ui_state.composer_header(width=80)
+        )
+
+        terminal_ui_state.begin_working("Working")
+        active = "".join(
+            fragment[1]
+            for fragment in terminal_ui_state.composer_header(width=80)
+        )
+        terminal_ui_state.finish_working()
+
+        self.assertEqual(idle.count("\n"), active.count("\n"))
+        self.assertIn("in: 12 · out: 4", idle)
+        self.assertIn("Working for", active)
+
+    def test_initial_and_steering_use_the_same_composer_object(self):
+        initial = ComposerPrompt("/help or type your first message", "footer")
+        steering = ComposerPrompt("enter steering", "footer")
+
+        self.assertEqual(initial.footer, steering.footer)
+        self.assertEqual(initial.__class__, steering.__class__)
+
+    def test_mock_full_session_preserves_composer_shape_across_input_and_work(self):
+        ti = TerminalInput()
+        footer = "model: fast · source: /project · workspace: /runtime"
+        terminal_ui_state.finish_working()
+        terminal_ui_state.record_tokens(input_tokens=0, output_tokens=0)
+
+        with (
+            mock.patch.object(
+                ti._session,
+                "prompt",
+                side_effect=["Implement the feature", _PredicateSatisfied()],
+            ) as prompt,
+            mock.patch("citra.cli.input._console.print"),
+        ):
+            first_message = ti.prompt(
+                "/help or type your first message",
+                boxed=True,
+                footer=footer,
+            )
+            initial_header = prompt.call_args_list[0].args[0]()
+
+            terminal_ui_state.begin_working("Working")
+            terminal_ui_state.record_tokens(input_tokens=123, output_tokens=45)
+            working_header = prompt.call_args_list[0].args[0]()
+            terminal_ui_state.finish_working()
+
+            steering = ti.prompt_until(
+                lambda: True,
+                "enter steering",
+                boxed=True,
+                footer=footer,
+            )
+
+        initial = "".join(fragment[1] for fragment in initial_header)
+        active = "".join(fragment[1] for fragment in working_header)
+        self.assertEqual(first_message, "Implement the feature")
+        self.assertIsNone(steering)
+        first_placeholder = prompt.call_args_list[0].kwargs["placeholder"]
+        steering_placeholder = prompt.call_args_list[1].kwargs["placeholder"]
+        self.assertIn(
+            "/help or type your first message",
+            "".join(fragment[1] for fragment in first_placeholder),
+        )
+        self.assertIn(
+            "enter steering",
+            "".join(fragment[1] for fragment in steering_placeholder),
+        )
+        self.assertEqual(initial.count("\n"), active.count("\n"))
+        self.assertIn("Working for", active)
+        self.assertIn("in: 123 · out: 45", active)
 
 
 if __name__ == "__main__":

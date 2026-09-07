@@ -20,6 +20,7 @@ LEVELS = {
 
 LOG_DIRECTORY_NAME = "logs"
 LATEST_LOG_NAME = "latest.log"
+ERROR_LOG_NAME = "errors.log"
 
 
 def _resolve_log_config_directory(citra_root: str | Path | None = None) -> Path:

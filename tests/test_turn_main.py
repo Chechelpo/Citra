@@ -14,6 +14,7 @@ from citra.context import CitraConfig, ExecutionContext, WorkspaceContext
 from citra.tools.default_registry import TOOL_REGISTRY
 from citra.tools.session_memory import TodoTool
 from citra.tools.skills.skill_registry import SkillRegistry
+from citra.utils.chat_completions_api import ModelCall
 
 
 class LifecycleTests(unittest.TestCase):
@@ -64,11 +65,11 @@ permanent_workspace = "{self.source}"
         roots: list[Path] = []
         calls = 0
 
-        def fake_api(*, context, messages, tools):
+        def fake_api(model_call: ModelCall):
             nonlocal calls
             calls += 1
-            roots.append(context.workspace.root)
-            marker = context.workspace.workspace / "between-turns.txt"
+            roots.append(model_call.context.workspace.root)
+            marker = model_call.context.workspace.workspace / "between-turns.txt"
             if calls == 1:
                 marker.write_text("still here\n", encoding="utf-8")
             else:
@@ -93,7 +94,7 @@ permanent_workspace = "{self.source}"
         self.assertFalse(root.exists())
 
     def test_turn_failure_does_not_destroy_lifecycle_workspace(self) -> None:
-        def fail(**_):
+        def fail(_model_call: ModelCall):
             raise RuntimeError("provider failed")
 
         app = CitraApplication(

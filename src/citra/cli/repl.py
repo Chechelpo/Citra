@@ -18,8 +18,11 @@ from ..utils.chat_completions_api import call_api
 from ..utils.process_logging import process_log
 from ..utils.terminal import terminal_bell
 from ..workflows import Workflow, WorkflowRegistry
-from .input import terminal_input
+from .input import terminal_input, terminal_ui_state
 from .rendering import (
+    CliSessionLayout,
+    SessionHeader,
+    SessionFooter,
     console,
     print_header,
     render_notice,
@@ -38,6 +41,52 @@ def _compact_path(path: str | Path) -> str:
     except ValueError:
         return str(resolved)
     return "~" if not relative.parts else f"~/{relative.as_posix()}"
+
+
+def _session_footer(application: CitraApplication) -> SessionFooter:
+    """Build typed environment details for the persistent prompt footer."""
+    model = application.config.model()
+    model_selection = (
+        model.name
+        if model.name == model.id
+        else f"{model.name} ({model.id})"
+    )
+    source = _compact_path(application.workspace.source_workspace)
+    return SessionFooter(
+        model_selection=model_selection,
+        source_directory=source,
+        workspace_directory=_compact_path(application.workspace.workspace),
+        process_name=application.workspace.runtime_id,
+    )
+
+
+def _session_header(application: CitraApplication) -> SessionHeader:
+    """Build immutable workflow and sandbox information for the session header."""
+    model = application.config.model()
+    return SessionHeader(
+        workflow=application.workflow.name,
+        connection=f"{model.host} : {model.id}",
+        sandbox_mode=application.sandbox_config.mode,
+        workspace=application.workspace.workspace,
+    )
+
+
+def _session_layout(application: CitraApplication) -> CliSessionLayout:
+    """Build the static typed layout used by the current prompt and header."""
+    return CliSessionLayout(
+        header=_session_header(application),
+        footer=_session_footer(application),
+    )
+
+
+def _initial_prompt_text() -> str:
+    """Return the shared composer's first-message backdrop text."""
+    return "/help or type your first message"
+
+
+def _steering_prompt_text() -> str:
+    """Return the shared composer's concise steering backdrop text."""
+    return "enter steering"
 
 
 class HardShutdownRequested(RuntimeError):
@@ -103,6 +152,7 @@ def run_turn_with_steering(
     application: CitraApplication,
     *,
     input_service: Any = terminal_input,
+    status_footer: str = "",
 ) -> None:
     """Run one agent turn while the terminal remains a steering channel."""
     done = Event()
@@ -172,7 +222,9 @@ def run_turn_with_steering(
             try:
                 steering = input_service.prompt_until(
                     lambda: done.is_set() or application.interactions.has_pending(),
-                    message="↪ steer  ",
+                    message=_steering_prompt_text(),
+                    boxed=True,
+                    footer=status_footer,
                 )
             except KeyboardInterrupt:
                 handle_interrupt()
@@ -241,16 +293,16 @@ def _run_application(
 ) -> None:
     """Run and shut down an application under its process log handler."""
     try:
-        print_header(application.config, application.workspace.workspace)
+        terminal_ui_state.reset()
+        initial_layout = _session_layout(application)
+        print_header(initial_layout.header)
         while True:
             try:
+                layout = _session_layout(application)
                 user_input = input_service.prompt(
-                    "› ",
+                    _initial_prompt_text(),
                     boxed=True,
-                    footer=(
-                        f"{application.config.model().id} default · "
-                        f"{_compact_path(application.workspace.source_workspace)}"
-                    ),
+                    footer=layout.footer.render(),
                 ).strip()
                 if not user_input:
                     continue
@@ -263,6 +315,7 @@ def _run_application(
                     run_turn_with_steering(
                         application,
                         input_service=input_service,
+                        status_footer=layout.footer.render(),
                     )
                 else:
                     # Piped/headless invocations have no concurrent input

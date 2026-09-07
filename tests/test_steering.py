@@ -11,6 +11,7 @@ from citra.agent.interactions import UserInteractionBroker
 from citra.agent.runner import AgentRunEvent, AgentRunner
 from citra.cli.repl import run_turn_with_steering
 from citra.tools.default_registry import ToolSet
+from citra.utils.chat_completions_api import ModelCall
 
 
 def test_user_interaction_broker_round_trip() -> None:
@@ -61,10 +62,10 @@ def test_mid_turn_steering_cancels_unstarted_tool_calls() -> None:
     seen_messages = []
     call_count = 0
 
-    def fake_api(*, context, messages, tools):
+    def fake_api(model_call: ModelCall):
         nonlocal call_count
         call_count += 1
-        seen_messages.append(messages)
+        seen_messages.append(model_call.messages)
         if call_count == 1:
             entered.set()
             assert release.wait(2)
@@ -120,8 +121,8 @@ def test_steering_received_during_final_response_continues_the_turn() -> None:
     release = Event()
     seen_messages = []
 
-    def fake_api(*, context, messages, tools):
-        seen_messages.append(messages)
+    def fake_api(model_call: ModelCall):
+        seen_messages.append(model_call.messages)
         if len(seen_messages) == 1:
             entered.set()
             assert release.wait(2)
@@ -227,7 +228,7 @@ def test_runner_observer_captures_tool_activity_without_rendering() -> None:
     calls = 0
     events: list[AgentRunEvent] = []
 
-    def fake_api(**_: object) -> dict:
+    def fake_api(_model_call: ModelCall) -> dict:
         nonlocal calls
         calls += 1
         if calls == 1:

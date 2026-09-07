@@ -13,6 +13,7 @@ from citra.cli.repl import select_startup_workflow
 from citra.config import SandboxPolicy
 from citra.sandbox import SandboxMode, WorkspaceSandbox
 from citra.tools.session_memory import RequirementTool
+from citra.utils.chat_completions_api import ModelCall
 from citra.workflows.sys_prompt.sys_prompt import build_system_prompt
 from citra.workflows import (
     ChatWorkflow,
@@ -223,7 +224,7 @@ def test_runner_injects_workflow_steering_before_first_request(monkeypatch) -> N
     )
     session = AgentSession(memory_enabled=False)
     session.add_user_message("original request")
-    requests: list[dict] = []
+    requests: list[ModelCall] = []
 
     class _Registry:
         def __init__(self, **_kwargs) -> None:
@@ -246,14 +247,14 @@ def test_runner_injects_workflow_steering_before_first_request(monkeypatch) -> N
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
     monkeypatch.setattr("citra.agent.session.tokenize", lambda *_args, **_kwargs: 1)
 
-    def api_call(**kwargs) -> dict:
-        requests.append(kwargs)
+    def api_call(model_call: ModelCall) -> dict:
+        requests.append(model_call)
         return {"choices": [{"message": {"role": "assistant", "content": None}}]}
 
     AgentRunner(context, session, api_call=api_call).run_turn()
 
-    assert requests[0]["sys_prompt"] == "prompt:custom"
-    assert requests[0]["messages"][-1] == {
+    assert requests[0].system_prompt == "prompt:custom"
+    assert requests[0].messages[-1] == {
         "role": "user",
         "content": "workflow steering",
     }
@@ -280,7 +281,7 @@ def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> 
     session.add_user_message("original request")
     retained = object()
     session.memory.get_or_create("prior-role-record", lambda: retained)
-    requests: list[dict] = []
+    requests: list[ModelCall] = []
 
     class _Registry:
         """Provide an empty active tool set for request-boundary testing."""
@@ -305,9 +306,9 @@ def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> 
             """Return no model-facing tools."""
             return {}
 
-    def built_in_api(**kwargs) -> dict:
+    def built_in_api(model_call: ModelCall) -> dict:
         """Capture the request prepared for the built-in API boundary."""
-        requests.append(kwargs)
+        requests.append(model_call)
         return {"choices": [{"message": {"role": "assistant", "content": None}}]}
 
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
@@ -316,7 +317,7 @@ def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> 
 
     AgentRunner(context, session, api_call=built_in_api).run_turn()
 
-    assert requests[0]["memory_services"] == (retained,)
+    assert requests[0].memory_services == (retained,)
 
 
 def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -> None:
@@ -346,7 +347,7 @@ def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -
     retained.execute(
         {"action": "add", "content": "Preserve recorded state"}
     )
-    requests: list[dict] = []
+    requests: list[ModelCall] = []
 
     class _Registry:
         """Expose no tools to emulate a read-only downstream role."""
@@ -371,9 +372,9 @@ def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -
             """Return no model-facing tools."""
             return {}
 
-    def custom_api(**kwargs) -> dict:
-        """Capture the custom request without accepting memory services."""
-        requests.append(kwargs)
+    def custom_api(model_call: ModelCall) -> dict:
+        """Capture the typed custom-provider request."""
+        requests.append(model_call)
         return {"choices": [{"message": {"role": "assistant", "content": None}}]}
 
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
@@ -381,8 +382,8 @@ def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -
 
     AgentRunner(context, session, api_call=custom_api).run_turn()
 
-    assert "memory_services" not in requests[0]
-    assert "[R1] Preserve recorded state" in requests[0]["sys_prompt"]
+    assert requests[0].memory_services == (retained,)
+    assert requests[0].system_prompt == "prompt:custom"
 
 
 def test_builtin_single_mode_workflows_use_full_sandbox() -> None:

@@ -21,37 +21,66 @@ Design goals:
   the full timeout interval.
 * Callers may pass ANSI-styled prompt strings. This module converts
   them to ``prompt_toolkit`` formatted text before rendering.
+
+Expected TUI format:
+User prompt area:
+
+<Working animation> Worked for <time> seconds | in : <in_tokens> ; out: <out_tokens>s
+---
+
+|
+|   <placeholder text that disappears once user starts typing>
+|
+
+---
+<footer>
 """
 
 from __future__ import annotations
 
 from asyncio import TimerHandle
 from collections.abc import Callable
+from dataclasses import dataclass
+from threading import RLock
+from time import perf_counter
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.application import get_app
+from prompt_toolkit.application import get_app, get_app_or_none
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.styles import Style
 from rich.text import Text
 
-from .theme import SURFACE, console
+from .theme import BACKGROUND, SURFACE, console
 
 __all__ = [
+    "BottomStatus",
+    "ComposerPrompt",
     "TerminalInput",
+    "TerminalUiState",
     "terminal_input",
+    "terminal_ui_state",
 ]
 
 _console = console
 _COMPOSER_BACKGROUND = SURFACE
+_STATUS_BACKGROUND = BACKGROUND
+_PLACEHOLDER_FOREGROUND = "#343434"
 _COMPOSER_STYLE = Style.from_dict(
     {
         "": f"bg:{_COMPOSER_BACKGROUND}",
-        "bottom-toolbar": (f"bg:{_COMPOSER_BACKGROUND} #777777 noreverse"),
+        "bottom-toolbar": (f"bg:{_STATUS_BACKGROUND} #8a8a8a noreverse"),
+        "composer.activity": f"bg:{_STATUS_BACKGROUND} bold #7aa2f7",
+        "composer.body": f"bg:{_COMPOSER_BACKGROUND}",
+        "composer.divider": f"bg:{_STATUS_BACKGROUND} #555555",
+        "composer.footer": f"bg:{_STATUS_BACKGROUND} #8a8a8a",
+        "composer.placeholder": (
+            f"bg:{_COMPOSER_BACKGROUND} {_PLACEHOLDER_FOREGROUND}"
+        ),
         "selection": "bg:#3b4261 #ffffff",
         "prompt": f"bg:{_COMPOSER_BACKGROUND} bold #7aa2f7",
     }
@@ -74,6 +103,142 @@ def _composer_bindings() -> KeyBindings:
 
 
 _COMPOSER_BINDINGS = _composer_bindings()
+
+
+@dataclass(frozen=True)
+class BottomStatus:
+    """Represent stable model activity and token counts below the composer."""
+
+    working_label: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    started_at: float | None = None
+    elapsed_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class ComposerPrompt:
+    """Describe one stable prompt composer without mode-specific UI code."""
+
+    placeholder: str
+    footer: str
+
+
+class TerminalUiState:
+    """Own the prompt-toolkit bottom area while model work runs in another thread."""
+
+    def __init__(self) -> None:
+        """Initialize an idle bottom status with no model token accounting."""
+        self._lock = RLock()
+        self._status = BottomStatus()
+
+    def begin_working(self, label: str) -> None:
+        """Show a stable working indicator without a terminal refresh loop."""
+        with self._lock:
+            self._status = BottomStatus(
+                working_label=label,
+                input_tokens=self._status.input_tokens,
+                output_tokens=self._status.output_tokens,
+                started_at=perf_counter(),
+            )
+        self._invalidate()
+
+    def reset(self) -> None:
+        """Reset activity and token accounting for a newly rendered session."""
+        with self._lock:
+            self._status = BottomStatus()
+        self._invalidate()
+
+    def finish_working(self) -> None:
+        """Clear the model-working indicator after a request completes."""
+        with self._lock:
+            elapsed_seconds = (
+                perf_counter() - self._status.started_at
+                if self._status.started_at is not None
+                else self._status.elapsed_seconds
+            )
+            self._status = BottomStatus(
+                input_tokens=self._status.input_tokens,
+                output_tokens=self._status.output_tokens,
+                elapsed_seconds=elapsed_seconds,
+            )
+        self._invalidate()
+
+    def record_tokens(self, *, input_tokens: int, output_tokens: int) -> None:
+        """Replace the latest model request's visible input/output token counts."""
+        with self._lock:
+            self._status = BottomStatus(
+                working_label=self._status.working_label,
+                input_tokens=max(0, input_tokens),
+                output_tokens=max(0, output_tokens),
+                started_at=self._status.started_at,
+                elapsed_seconds=self._status.elapsed_seconds,
+            )
+        self._invalidate()
+
+    def composer_header(self, *, width: int) -> FormattedText:
+        """Render dynamic activity above the fixed-height composer body."""
+        with self._lock:
+            status = self._status
+        activity = self._activity_text(status)
+        tokens = f"in: {status.input_tokens:,} · out: {status.output_tokens:,}"
+        status_line = _fit_toolbar_line(f"  {activity}  |  {tokens}", width)
+        divider = "─" * width
+        return FormattedText(
+            (
+                ("class:composer.activity", status_line + "\n"),
+                ("class:composer.divider", divider + "\n"),
+                ("class:composer.body", "│" + " " * (width - 1) + "\n"),
+                ("class:composer.body", "│   "),
+            )
+        )
+
+    def composer_footer(self, footer: str, *, width: int) -> FormattedText:
+        """Render the bottom margin, divider, and environment footer."""
+        return FormattedText(
+            (
+                ("class:composer.body", "│" + " " * (width - 1) + "\n"),
+                ("class:composer.divider", "─" * width + "\n"),
+                ("class:composer.footer", _fit_toolbar_line(f"  {footer}", width)),
+            )
+        )
+
+    @staticmethod
+    def _activity_text(status: BottomStatus) -> str:
+        """Describe live or most-recent work while keeping one text row."""
+        if status.working_label is not None and status.started_at is not None:
+            frame = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[
+                int(perf_counter() * 8) % 10
+            ]
+            elapsed = _format_elapsed(perf_counter() - status.started_at)
+            return f"{frame} {status.working_label} for {elapsed}"
+        if status.elapsed_seconds is not None:
+            return f"• Worked for {_format_elapsed(status.elapsed_seconds)}"
+        return "• Ready"
+
+    @staticmethod
+    def _invalidate() -> None:
+        """Request a safe prompt-toolkit redraw when an interactive app exists."""
+        application = get_app_or_none()
+        if application is not None:
+            application.invalidate()
+
+
+terminal_ui_state = TerminalUiState()
+
+
+def _fit_toolbar_line(text: str, width: int) -> str:
+    """Keep dynamic toolbar text on one row so its compositor height is fixed."""
+    if len(text) <= width:
+        return text
+    return text[: max(0, width - 1)] + "…"
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format a compact duration for the model activity row."""
+    total = max(0, round(seconds))
+    minutes, remainder = divmod(total, 60)
+    return f"{minutes}m {remainder}s" if minutes else f"{remainder}s"
 
 
 class TerminalInput:
@@ -119,26 +284,50 @@ class TerminalInput:
                 handle_sigint=True,
             )
 
+        return self._prompt_composer(ComposerPrompt(message, footer))
+
+    def _prompt_composer(
+        self,
+        composer: ComposerPrompt,
+        *,
+        pre_run: Callable[[], None] | None = None,
+    ) -> str:
+        """Read from the shared boxed composer with a distinct status toolbar."""
         width = max(24, _console.size.width)
-        rule = "─" * width
+        result = self._session.prompt(
+            lambda: terminal_ui_state.composer_header(width=width),
+            placeholder=FormattedText(
+                (("class:composer.placeholder", composer.placeholder),)
+            ),
+            bottom_toolbar=lambda: terminal_ui_state.composer_footer(
+                composer.footer,
+                width=width,
+            ),
+            style=_COMPOSER_STYLE,
+            multiline=True,
+            key_bindings=_COMPOSER_BINDINGS,
+            prompt_continuation=FormattedText((("class:composer.body", "│ · "),)),
+            refresh_interval=0.125,
+            wrap_lines=False,
+            pre_run=pre_run,
+            handle_sigint=True,
+        )
+        self._render_submitted_composer_footer(composer.footer, width=width)
+        return result
+
+    @staticmethod
+    def _render_submitted_composer_footer(footer: str, *, width: int) -> None:
+        """Preserve the lower composer margin after prompt-toolkit accepts input."""
         surface_style = f"on {_COMPOSER_BACKGROUND}"
-        _console.print(Text(rule, style=f"#555555 {surface_style}"), soft_wrap=True)
-        try:
-            return self._session.prompt(
-                ANSI("\n  " + message),
-                bottom_toolbar=ANSI(f"  {footer}"),
-                style=_COMPOSER_STYLE,
-                multiline=True,
-                key_bindings=_COMPOSER_BINDINGS,
-                prompt_continuation=ANSI("  · "),
-                handle_sigint=True,
-            )
-        finally:
-            if footer:
-                _console.print(
-                    Text(f"  {footer}", style=f"dim {surface_style}"),
-                    soft_wrap=True,
-                )
+        _console.print(
+            Text("│" + " " * (width - 1), style=surface_style),
+            soft_wrap=True,
+        )
+        _console.print(Text("─" * width, style="#555555"), soft_wrap=True)
+        _console.print(
+            Text(_fit_toolbar_line(f"  {footer}", width), style="dim"),
+            soft_wrap=True,
+        )
 
     def prompt_with_idle_timeout(
         self,
@@ -203,6 +392,8 @@ class TerminalInput:
         message: str = "",
         *,
         poll_interval: float = 0.1,
+        boxed: bool = False,
+        footer: str = "",
     ) -> str | None:
         """Read a line, or return ``None`` once ``predicate`` is true.
 
@@ -217,6 +408,11 @@ class TerminalInput:
             interval=poll_interval,
         )
         try:
+            if boxed:
+                return self._prompt_composer(
+                    ComposerPrompt(message, footer),
+                    pre_run=watcher.start,
+                )
             return self._session.prompt(
                 ANSI(message),
                 pre_run=watcher.start,
@@ -262,7 +458,10 @@ class _PredicateWatchdog:
         if self._predicate():
             get_app().exit(exception=_PredicateSatisfied())
             return
-        self._handle = get_app().loop.call_later(
+        loop = get_app().loop
+        if loop is None:
+            raise RuntimeError("Prompt event loop is unavailable.")
+        self._handle = loop.call_later(
             self._interval,
             self._check,
         )
@@ -300,6 +499,8 @@ class _IdleWatchdog:
         app = get_app()
 
         self._buffer = app.layout.current_buffer
+        if self._buffer is None:
+            raise RuntimeError("Prompt input buffer is unavailable.")
         self._buffer.on_text_changed += self._on_text_changed
 
         self._record_activity()
@@ -345,6 +546,8 @@ class _IdleWatchdog:
             self._handle.cancel()
 
         loop = get_app().loop
+        if loop is None:
+            raise RuntimeError("Prompt event loop is unavailable.")
 
         self._handle = loop.call_later(
             self._timeout,

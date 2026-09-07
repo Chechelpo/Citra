@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import json
 from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
@@ -11,28 +12,29 @@ from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 from citra.logging import Logger
 
 from ..cli.rendering import (
+    ToolCallRenderState,
     render_assistant_text,
     render_notice,
-    render_tool_call_result,
-    render_tool_call_start,
     working_animation,
 )
+from ..cli.input import terminal_ui_state
 from ..context import ExecutionContext
 from ..tools.enable_tools import EnableTools
 from ..tools.session_memory import RequirementTool, TodoTool
 from ..tools.tool_registry import ToolRegistry
 from ..utils.chat_completions_api import (
+    ModelCall,
     ModelRequestInterrupted,
-    build_memory_context,
     call_api,
 )
+from ..utils.model_tokenizer import tokenize
 from .response import execute_tool_call, get_assistant_message
 from .session import AgentSession
 
 _logger = Logger("agent_runner.py")
 
 
-ApiCall = Callable[..., dict]
+ApiCall = Callable[[ModelCall], dict[str, Any]]
 _CANCELLED_BY_STEERING = (
     "cancelled: user steering instructions were received before this tool call executed"
 )
@@ -119,6 +121,7 @@ class AgentRunner:
         )
 
         enabled_tool_ids: set[str] = set()
+        tool_render_state = ToolCallRenderState()
 
         while True:
             if self._runtime_is_closing():
@@ -160,41 +163,24 @@ class AgentRunner:
             model_id = model_config.id
             max_input_tokens = model_config.max_input_tokens
             memory_services = self.session.memory.values()
-            request_prompt = prompt
-            if self.api_call is not call_api:
-                memory_context = build_memory_context(memory_services)
-                if memory_context:
-                    request_prompt = "\n\n".join(
-                        section
-                        for section in (request_prompt, memory_context)
-                        if section
-                    )
-                    _logger.debug(
-                        "Projected retained memory into custom API prompt",
-                        services=len(memory_services),
-                    )
 
-            api_arguments: dict[str, Any] = {
-                "context": self.context,
-                "messages": self.session.get_last_messages_up_to_tokenLength(
+            request_messages = tuple(
+                self.session.get_last_messages_up_to_tokenLength(
                     model_id=model_id,
                     length=max_input_tokens,
-                ),
-                "tools": tools,
-            }
-
-            reasoning_effort = model_config.reasoning_effort
-
-            if reasoning_effort is not None:
-                api_arguments["reasoning_effort"] = reasoning_effort
-
-            if self.api_call is call_api:
-                api_arguments["model_config"] = model_config
-                api_arguments["retry_interrupt"] = self.session.steering.has_pending
-                api_arguments["memory_services"] = memory_services
-
-            if request_prompt:
-                api_arguments["sys_prompt"] = request_prompt
+                )
+            )
+            input_tokens = _token_count(model_id, request_messages)
+            model_call = ModelCall(
+                context=self.context,
+                messages=request_messages,
+                tools=tools,
+                system_prompt=prompt,
+                reasoning_effort=model_config.reasoning_effort,
+                model_config=model_config,
+                retry_interrupt=self.session.steering.has_pending,
+                memory_services=memory_services,
+            )
 
             _logger.debug(
                 "Calling model",
@@ -205,9 +191,9 @@ class AgentRunner:
             try:
                 if self.render_output:
                     with working_animation():
-                        response = self.api_call(**api_arguments)
+                        response = self.api_call(model_call)
                 else:
-                    response = self.api_call(**api_arguments)
+                    response = self.api_call(model_call)
 
             except ModelRequestInterrupted:
                 _logger.info("Model request interrupted by steering")
@@ -218,6 +204,12 @@ class AgentRunner:
                 return
 
             assistant = get_assistant_message(response)
+
+            if self.render_output:
+                terminal_ui_state.record_tokens(
+                    input_tokens=input_tokens,
+                    output_tokens=_token_count(model_id, assistant),
+                )
 
             text = assistant.get("content")
 
@@ -335,7 +327,7 @@ class AgentRunner:
                 )
 
                 if self.render_output:
-                    render_tool_call_start(
+                    tool_render_state.render_start(
                         tool_call,
                         tools.get(tool_name),
                     )
@@ -366,7 +358,7 @@ class AgentRunner:
                 )
 
                 if self.render_output:
-                    render_tool_call_result(
+                    tool_render_state.render_result(
                         result,
                         tools.get(tool_name),
                     )
@@ -416,6 +408,15 @@ def _configured_tools(
     )
 
     return core_tool_ids, deferred_catalog
+
+
+def _token_count(model_id: str, value: object) -> int:
+    """Return a best-effort count without allowing UI accounting to fail a turn."""
+    try:
+        serialized = json.dumps(value, ensure_ascii=False, default=str)
+        return tokenize(model_id=model_id, text=serialized)
+    except (RuntimeError, TypeError, ValueError, OSError):
+        return 0
 
 
 def run_agent_turn(

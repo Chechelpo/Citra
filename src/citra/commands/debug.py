@@ -25,22 +25,22 @@ class DebugCommand(Command):
         action = args.strip().lower()
 
         if action == "on":
-            chat_completions_api.DEBUG_PRINTING = True
+            chat_completions_api.set_debug_printing(True)
         elif action == "off":
-            chat_completions_api.DEBUG_PRINTING = False
+            chat_completions_api.set_debug_printing(False)
         elif action:
             return CommandResult(
                 f"Unknown debug action: {action}\n\n"
                 f"{self._usage()}"
             )
         else:
-            chat_completions_api.DEBUG_PRINTING = (
-                not chat_completions_api.DEBUG_PRINTING
+            chat_completions_api.set_debug_printing(
+                not chat_completions_api.debug_printing_enabled()
             )
 
         state = (
             "enabled"
-            if chat_completions_api.DEBUG_PRINTING
+            if chat_completions_api.debug_printing_enabled()
             else "disabled"
         )
         return CommandResult(output=f"Debug printing {state}.")

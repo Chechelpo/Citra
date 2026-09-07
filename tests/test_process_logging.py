@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from citra.logging import Logger
+from citra.logging import ERROR_LOG_NAME, Logger
 from citra.sandbox import SandboxResult, SandboxedFilesystem
 from citra.sandbox.filesystem_ops import (
     EditInput,
@@ -94,6 +94,39 @@ class ProcessLoggingTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(log_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(log_path.stat().st_mode), 0o600)
             self.assertFalse((log_directory / ".gitignore").exists())
+            self.assertFalse((log_directory / ERROR_LOG_NAME).exists())
+
+    def test_error_log_is_created_lazily_and_includes_prior_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log_directory = Path(temporary) / "logs"
+
+            with process_log(log_directory):
+                error_path = log_directory / ERROR_LOG_NAME
+                logging.getLogger("citra.test").warning("warning marker")
+                self.assertFalse(error_path.exists())
+                logging.getLogger("citra.test").error("error marker")
+                self.assertTrue(error_path.exists())
+                logging.getLogger("citra.test").warning("later warning")
+                logging.getLogger("citra.test").info("excluded info")
+
+            contents = error_path.read_text(encoding="utf-8")
+            self.assertIn("warning marker", contents)
+            self.assertIn("error marker", contents)
+            self.assertIn("later warning", contents)
+            self.assertNotIn("excluded info", contents)
+            self.assertEqual(stat.S_IMODE(error_path.stat().st_mode), 0o600)
+
+    def test_warning_only_run_removes_stale_error_log(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log_directory = Path(temporary) / "logs"
+            log_directory.mkdir()
+            error_path = log_directory / ERROR_LOG_NAME
+            error_path.write_text("stale error\n", encoding="utf-8")
+
+            with process_log(log_directory):
+                logging.getLogger("citra.test").warning("warning only")
+
+            self.assertFalse(error_path.exists())
 
     def test_process_log_records_unhandled_exception(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -106,6 +139,10 @@ class ProcessLoggingTests(unittest.TestCase):
             self.assertIn("Citra process terminated unexpectedly", contents)
             self.assertIn("RuntimeError: failure marker", contents)
             self.assertIn("Traceback (most recent call last)", contents)
+            error_contents = (log_directory / ERROR_LOG_NAME).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("RuntimeError: failure marker", error_contents)
 
     def test_installation_logs_only_supply_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
