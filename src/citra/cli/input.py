@@ -294,40 +294,48 @@ class TerminalInput:
     ) -> str:
         """Read from the shared boxed composer with a distinct status toolbar."""
         width = max(24, _console.size.width)
-        result = self._session.prompt(
-            lambda: terminal_ui_state.composer_header(width=width),
-            placeholder=FormattedText(
-                (("class:composer.placeholder", composer.placeholder),)
-            ),
-            bottom_toolbar=lambda: terminal_ui_state.composer_footer(
-                composer.footer,
-                width=width,
-            ),
-            style=_COMPOSER_STYLE,
-            multiline=True,
-            key_bindings=_COMPOSER_BINDINGS,
-            prompt_continuation=FormattedText((("class:composer.body", "│ · "),)),
-            refresh_interval=0.125,
-            wrap_lines=False,
-            pre_run=pre_run,
-            handle_sigint=True,
-        )
-        self._render_submitted_composer_footer(composer.footer, width=width)
+        previous_erase_when_done = self._session.app.erase_when_done
+        self._session.app.erase_when_done = True
+        try:
+            result = self._session.prompt(
+                lambda: terminal_ui_state.composer_header(width=width),
+                placeholder=FormattedText(
+                    (("class:composer.placeholder", composer.placeholder),)
+                ),
+                bottom_toolbar=lambda: terminal_ui_state.composer_footer(
+                    composer.footer,
+                    width=width,
+                ),
+                style=_COMPOSER_STYLE,
+                multiline=True,
+                key_bindings=_COMPOSER_BINDINGS,
+                prompt_continuation=FormattedText(
+                    (("class:composer.body", "│ · "),)
+                ),
+                refresh_interval=0.125,
+                wrap_lines=False,
+                pre_run=pre_run,
+                handle_sigint=True,
+            )
+        finally:
+            self._session.app.erase_when_done = previous_erase_when_done
+        self._render_submitted_section(result, width=width)
         return result
 
     @staticmethod
-    def _render_submitted_composer_footer(footer: str, *, width: int) -> None:
-        """Preserve the lower composer margin after prompt-toolkit accepts input."""
+    def _render_submitted_section(content: str, *, width: int) -> None:
+        """Persist only an accepted prompt's body after its live area is erased."""
         surface_style = f"on {_COMPOSER_BACKGROUND}"
         _console.print(
             Text("│" + " " * (width - 1), style=surface_style),
             soft_wrap=True,
         )
-        _console.print(Text("─" * width, style="#555555"), soft_wrap=True)
-        _console.print(
-            Text(_fit_toolbar_line(f"  {footer}", width), style="dim"),
-            soft_wrap=True,
-        )
+        for line in content.splitlines() or [""]:
+            _console.print(
+                Text(_fit_toolbar_line(f"│   {line}", width), style=surface_style),
+                soft_wrap=True,
+            )
+        _console.print(Text("│" + " " * (width - 1), style=surface_style))
 
     def prompt_with_idle_timeout(
         self,

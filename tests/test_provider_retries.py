@@ -8,6 +8,13 @@ import urllib.error
 
 import pytest
 
+from citra.agent import (
+    AssistantMessage,
+    ReasoningMetadata,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
 from citra.config import ModelConfig, RetryConfig
 from citra.context import ExecutionContext
 from citra.utils.chat_completions_api import ModelCall, call_api
@@ -118,7 +125,7 @@ def test_model_call_detaches_mutable_request_containers() -> None:
     tools: dict[str, Any] = {}
     request = ModelCall(
         context=_context(),
-        messages=({"role": "user", "content": "hello"},),
+        messages=(UserMessage("hello"),),
         tools=tools,
         system_prompt="system",
         model_config=_model_config(),
@@ -174,6 +181,59 @@ def test_call_api_retries_openrouter_provider_400(monkeypatch) -> None:
     result = call_api(_model_call())
     assert result.assistant.content == "ok"
     assert calls == 2
+
+
+def test_call_api_serializes_typed_history_at_wire_boundary(monkeypatch) -> None:
+    captured_payload: dict[str, Any] = {}
+
+    def urlopen(request, **_keywords) -> _Response:
+        captured_payload.update(json.loads(request.data))
+        return _Response(
+            {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        )
+
+    monkeypatch.setattr(
+        "citra.utils.chat_completions_api.persistent_requests.urllib.request.urlopen",
+        urlopen,
+    )
+    request = ModelCall(
+        context=_context(),
+        messages=(
+            UserMessage("inspect"),
+            AssistantMessage(
+                tool_calls=(ToolCall("call-1", "read", '{"path":"README.md"}'),),
+                reasoning=ReasoningMetadata(details=({"type": "summary"},)),
+            ),
+            ToolResultMessage("call-1", "contents"),
+        ),
+        tools={},
+        system_prompt="system",
+        model_config=_model_config(),
+    )
+
+    response = call_api(request)
+
+    assert response.assistant == AssistantMessage(content="ok")
+    assert captured_payload["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "inspect"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "arguments": '{"path":"README.md"}',
+                    },
+                }
+            ],
+            "reasoning_details": [{"type": "summary"}],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "contents"},
+    ]
 
 
 def test_call_api_does_not_retry_permanent_bad_request(monkeypatch) -> None:

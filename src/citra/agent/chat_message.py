@@ -18,7 +18,7 @@ def freeze_json(value: object) -> JsonValue:
         return value
     if isinstance(value, list | tuple):
         return tuple(freeze_json(item) for item in value)
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("JSON object keys must be strings.")
         return MappingProxyType(
@@ -34,6 +34,12 @@ class ReasoningMetadata:
     reasoning: JsonValue = None
     content: JsonValue = None
     details: JsonValue = None
+
+    def __post_init__(self) -> None:
+        """Validate and detach provider metadata supplied by direct callers."""
+        object.__setattr__(self, "reasoning", freeze_json(self.reasoning))
+        object.__setattr__(self, "content", freeze_json(self.content))
+        object.__setattr__(self, "details", freeze_json(self.details))
 
     @property
     def is_empty(self) -> bool:

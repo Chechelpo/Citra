@@ -772,7 +772,7 @@ def call_api(model_call: ModelCall) -> ModelResponse:
             tools, model configuration, memory, and retry controls.
 
     Returns:
-        The decoded JSON response from the model API.
+        A validated, provider-independent model response.
 
     Raises:
         RuntimeError:

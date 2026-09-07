@@ -71,9 +71,13 @@ def _parse_tool_calls(value: object) -> tuple[ToolCall, ...]:
         raise ModelResponseParseError("Assistant tool_calls must be a list.")
 
     parsed: list[ToolCall] = []
+    seen_ids: set[str] = set()
     for index, raw_call in enumerate(value):
         call = _object(raw_call, f"tool call {index}")
         call_id = _required_string(call.get("id"), f"tool call {index} id")
+        if call_id in seen_ids:
+            raise ModelResponseParseError(f"Duplicate tool call id {call_id!r}.")
+        seen_ids.add(call_id)
         function = _object(call.get("function"), f"tool call {index} function")
         parsed.append(
             ToolCall(

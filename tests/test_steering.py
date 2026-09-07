@@ -6,12 +6,16 @@ from threading import Event, Thread
 from types import SimpleNamespace
 from unittest import mock
 
-from citra.agent import AgentSession
+from citra.agent import AgentSession, ToolResultMessage, UserMessage
 from citra.agent.interactions import UserInteractionBroker
 from citra.agent.runner import AgentRunEvent, AgentRunner
 from citra.cli.repl import run_turn_with_steering
 from citra.tools.default_registry import ToolSet
-from citra.utils.chat_completions_api import ModelCall
+from citra.utils.chat_completions_api import (
+    ModelCall,
+    ModelResponse,
+    parse_model_response,
+)
 
 
 def test_user_interaction_broker_round_trip() -> None:
@@ -54,50 +58,82 @@ def test_user_typing_extends_broker_handoff_deadline() -> None:
     assert result == ["still here"]
 
 
-def test_mid_turn_steering_cancels_unstarted_tool_calls() -> None:
+def _runner_context() -> SimpleNamespace:
+    model = SimpleNamespace(
+        id="test-model",
+        max_input_tokens=100_000,
+        reasoning_effort=None,
+    )
+    workflow = SimpleNamespace(
+        tool_set=ToolSet(core_tools=(), deferred_tools=()),
+        get_task_steering=lambda *_arguments: None,
+        get_system_prompt=lambda *_arguments: "",
+        is_serial=False,
+    )
+    return SimpleNamespace(
+        ensure_active=lambda: None,
+        workspace=SimpleNamespace(disabled_tool_ids=(), is_closing=False),
+        workflow=workflow,
+        config=SimpleNamespace(model=lambda: model),
+    )
+
+
+def test_mid_turn_steering_waits_until_next_model_call(monkeypatch) -> None:
     session = AgentSession()
     session.add_user_message("start")
     entered = Event()
     release = Event()
     seen_messages = []
-    call_count = 0
+    executed: list[str] = []
 
-    def fake_api(model_call: ModelCall):
-        nonlocal call_count
-        call_count += 1
+    def fake_api(model_call: ModelCall) -> ModelResponse:
         seen_messages.append(model_call.messages)
-        if call_count == 1:
+        if len(seen_messages) == 1:
             entered.set()
             assert release.wait(2)
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call-1",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "write",
-                                        "arguments": '{"path":"should-not-exist","content":"x"}',
+            return parse_model_response(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "function": {
+                                            "name": "first",
+                                            "arguments": "{}",
+                                        },
                                     },
-                                }
-                            ],
+                                    {
+                                        "id": "call-2",
+                                        "function": {
+                                            "name": "second",
+                                            "arguments": "{}",
+                                        },
+                                    },
+                                ],
+                            }
                         }
-                    }
-                ]
-            }
-        return {"choices": [{"message": {"role": "assistant", "content": "stopped"}}]}
-
-    context = SimpleNamespace(
-        config=SimpleNamespace(
-            message_context=SimpleNamespace(uncompressed_messages=20),
-            model=SimpleNamespace(reasoning_effort=None),
+                    ]
+                }
+            )
+        return parse_model_response(
+            {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
         )
+
+    def execute(_tools, tool_call, **_keywords) -> str:
+        executed.append(tool_call.id)
+        return f"completed {tool_call.id}"
+
+    monkeypatch.setattr("citra.agent.runner.execute_tool_call", execute)
+    runner = AgentRunner(
+        _runner_context(),
+        session,
+        api_call=fake_api,
+        render_output=False,
     )
-    runner = AgentRunner(context, session, api_call=fake_api)
     thread = Thread(target=runner.run_turn)
     thread.start()
     assert entered.wait(2)
@@ -105,13 +141,15 @@ def test_mid_turn_steering_cancels_unstarted_tool_calls() -> None:
     release.set()
     thread.join(timeout=2)
     assert not thread.is_alive()
-    assert call_count == 2
-    assert any(
-        message.get("role") == "user"
-        and "Do not write" in str(message.get("content"))
+    assert len(seen_messages) == 2
+    assert executed == ["call-1", "call-2"]
+    assert isinstance(seen_messages[1][-1], UserMessage)
+    assert "Do not write" in seen_messages[1][-1].content
+    assert [
+        message.content
         for message in seen_messages[1]
-    )
-    assert "cancelled: user steering" in session.get_messages()[2]["content"]
+        if isinstance(message, ToolResultMessage)
+    ] == ["completed call-1", "completed call-2"]
 
 
 def test_steering_received_during_final_response_continues_the_turn() -> None:
@@ -121,29 +159,32 @@ def test_steering_received_during_final_response_continues_the_turn() -> None:
     release = Event()
     seen_messages = []
 
-    def fake_api(model_call: ModelCall):
+    def fake_api(model_call: ModelCall) -> ModelResponse:
         seen_messages.append(model_call.messages)
         if len(seen_messages) == 1:
             entered.set()
             assert release.wait(2)
-            return {
+            return parse_model_response(
+                {
+                    "choices": [
+                        {"message": {"role": "assistant", "content": "stale answer"}}
+                    ]
+                }
+            )
+        return parse_model_response(
+            {
                 "choices": [
-                    {"message": {"role": "assistant", "content": "stale answer"}}
+                    {"message": {"role": "assistant", "content": "corrected answer"}}
                 ]
             }
-        return {
-            "choices": [
-                {"message": {"role": "assistant", "content": "corrected answer"}}
-            ]
-        }
-
-    context = SimpleNamespace(
-        config=SimpleNamespace(
-            message_context=SimpleNamespace(uncompressed_messages=20),
-            model=SimpleNamespace(reasoning_effort=None),
         )
+
+    runner = AgentRunner(
+        _runner_context(),
+        session,
+        api_call=fake_api,
+        render_output=False,
     )
-    runner = AgentRunner(context, session, api_call=fake_api)
     thread = Thread(target=runner.run_turn)
     thread.start()
     assert entered.wait(2)
@@ -152,11 +193,71 @@ def test_steering_received_during_final_response_continues_the_turn() -> None:
     thread.join(timeout=2)
     assert not thread.is_alive()
     assert len(seen_messages) == 2
-    assert any(
-        message.get("role") == "user"
-        and "other implementation" in str(message.get("content"))
-        for message in seen_messages[1]
+    assert isinstance(seen_messages[1][-1], UserMessage)
+    assert "other implementation" in seen_messages[1][-1].content
+
+
+def test_hard_stop_interrupts_an_active_model_wait() -> None:
+    session = AgentSession()
+    session.add_user_message("start")
+    entered = Event()
+    release = Event()
+
+    def blocked_api(_model_call: ModelCall) -> ModelResponse:
+        entered.set()
+        release.wait(5)
+        return parse_model_response(
+            {"choices": [{"message": {"role": "assistant", "content": "late"}}]}
+        )
+
+    runner = AgentRunner(
+        _runner_context(),
+        session,
+        api_call=blocked_api,
+        render_output=False,
     )
+    thread = Thread(target=runner.run_turn)
+    thread.start()
+    assert entered.wait(1)
+
+    started = time.monotonic()
+    runner.request_stop()
+    thread.join(timeout=1)
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert not thread.is_alive()
+    assert elapsed < 0.5
+    assert session.get_messages() == [UserMessage("start")]
+
+
+def test_second_interrupt_stops_agent_without_closing_repl_turn() -> None:
+    release = Event()
+    soft_stops: list[bool] = []
+    hard_stops: list[bool] = []
+
+    class InterruptTwice:
+        calls = 0
+
+        def prompt_until(self, *_arguments, **_keywords) -> None:
+            self.calls += 1
+            raise KeyboardInterrupt
+
+    application = SimpleNamespace(
+        run_agent_turn=lambda: release.wait(5),
+        interactions=SimpleNamespace(take=lambda: None, has_pending=lambda: False),
+        request_soft_stop=lambda: soft_stops.append(True),
+        request_hard_shutdown=lambda: hard_stops.append(True),
+    )
+    started = time.monotonic()
+    try:
+        run_turn_with_steering(application, input_service=InterruptTwice())
+    finally:
+        release.set()
+
+    assert time.monotonic() - started < 0.5
+    assert soft_stops == [True]
+    assert hard_stops == [True]
 
 
 def test_closed_input_does_not_spin_while_agent_finishes() -> None:
@@ -228,45 +329,46 @@ def test_runner_observer_captures_tool_activity_without_rendering() -> None:
     calls = 0
     events: list[AgentRunEvent] = []
 
-    def fake_api(_model_call: ModelCall) -> dict:
+    def fake_api(_model_call: ModelCall) -> ModelResponse:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call-1",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "missing_tool",
-                                        "arguments": '{"path":"x"}',
+            return parse_model_response(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "missing_tool",
+                                            "arguments": '{"path":"x"}',
+                                        },
                                     },
-                                }
-                            ],
+                                ],
+                            }
                         }
-                    }
-                ]
-            }
-        return {
-            "choices": [
-                {"message": {"role": "assistant", "content": "done"}}
-            ]
-        }
+                    ]
+                }
+            )
+        return parse_model_response(
+            {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+        )
 
     model = SimpleNamespace(
         id="test-model",
         max_input_tokens=100_000,
         reasoning_effort=None,
     )
-    mode = SimpleNamespace(
+    workflow = SimpleNamespace(
         tool_set=ToolSet(core_tools=(), deferred_tools=()),
         get_task_steering=lambda *_: None,
         get_system_prompt=lambda *_: "",
+        is_serial=False,
     )
     context = SimpleNamespace(
         ensure_active=lambda: None,
@@ -274,7 +376,7 @@ def test_runner_observer_captures_tool_activity_without_rendering() -> None:
             disabled_tool_ids=(),
             is_closing=False,
         ),
-        mode=mode,
+        workflow=workflow,
         config=SimpleNamespace(
             model=lambda: model,
             memory=SimpleNamespace(enabled=False),

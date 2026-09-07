@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
 
 from citra import application as application_module
-from citra.agent import AgentSession, AssistantMessage
+from citra.agent import AgentSession, AssistantMessage, UserMessage
 from citra.application import CitraApplication
 from citra.config import SandboxPolicy
 from citra.context import WorkspaceContext
@@ -299,7 +300,7 @@ def test_application_uses_fresh_session_per_serial_role(
         def run_turn(self) -> None:
             phase = application.workflow_runtime.active_run.current_step.step_id
             executed.append((phase, self.session))
-                role_inputs.append(self.session.get_messages()[0].content)
+            role_inputs.append(self.session.get_messages()[0].content)
             checkpoint = self.session.memory.get_or_create(
                 FakeCheckpoint.TOOL_ID,
                 FakeCheckpoint,
@@ -308,9 +309,9 @@ def test_application_uses_fresh_session_per_serial_role(
             checkpoint.current_checkpoint = SimpleNamespace(
                 next_step=transitions[phase],
             )
-                self.session.add_assistant_message(
-                    AssistantMessage(content=f"Assistant message from {phase}")
-                )
+            self.session.add_assistant_message(
+                AssistantMessage(content=f"Assistant message from {phase}")
+            )
 
     class FakeWorkflowRuntime:
         active_run = None
@@ -335,6 +336,8 @@ def test_application_uses_fresh_session_per_serial_role(
     application._api_call = object()
     application.workflow_runtime = FakeWorkflowRuntime()
     application._skills_root = lambda: tmp_path
+    application._agent_stop_lock = Lock()
+    application._agent_stop_generation = 0
 
     application.prepare_user_turn("Implement the feature")
     application.run_agent_turn()
@@ -356,6 +359,49 @@ def test_application_uses_fresh_session_per_serial_role(
     assert "Assistant message from explore" not in role_inputs[2]
     assert "Assistant message from plan" in role_inputs[2]
     assert application.workflow_run.snapshot().completed
+
+
+def test_hard_stop_preserves_active_serial_workflow_step() -> None:
+    workflow = SerialRolesWorkflow()
+    run = workflow.create_run("Implement the feature")
+    application = CitraApplication.__new__(CitraApplication)
+    application.workflow = workflow
+    application.workflow_runtime = SimpleNamespace(active_run=run)
+    application.workspace = SimpleNamespace(ensure_active=lambda: None)
+    application.session = AgentSession(memory=run.memory, memory_enabled=True)
+    application._hard_shutdown = Event()
+    application._agent_stop_lock = Lock()
+    application._agent_stop_generation = 0
+
+    class StoppingRunner:
+        stopped = False
+
+        def run_turn(self) -> None:
+            application.request_hard_shutdown()
+
+        def request_stop(self) -> None:
+            self.stopped = True
+
+    runner = StoppingRunner()
+    application.runner = runner
+
+    application.run_agent_turn()
+
+    snapshot = run.snapshot()
+    assert runner.stopped
+    assert snapshot.current_step == "explore"
+    assert not snapshot.completed
+    assert not snapshot.cancelled
+    assert snapshot.handoffs == ()
+
+    previous_session = application.session
+    application.prepare_user_turn("Continue with the revised constraint")
+
+    assert application.workflow_runtime.active_run is run
+    assert application.session is previous_session
+    assert application.session.get_messages()[-1] == UserMessage(
+        "Continue with the revised constraint"
+    )
 
 
 def test_subagent_ownership_paths_cannot_overlap(tmp_path: Path) -> None:

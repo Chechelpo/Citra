@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -150,6 +150,15 @@ class ToolCallRenderState:
 
     active_group: ToolCallGroup | None = None
     active_arguments: dict[str, Any] | None = None
+
+    def render_batch(
+        self,
+        calls: Iterable[tuple[ToolCall, Tool | None, str]],
+    ) -> None:
+        """Render a completed assistant tool-call batch in execution order."""
+        for tool_call, tool, result in calls:
+            self.render_start(tool_call, tool)
+            self.render_result(result, tool)
 
     def render_start(
         self,

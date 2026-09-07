@@ -90,7 +90,7 @@ def _steering_prompt_text() -> str:
 
 
 class HardShutdownRequested(RuntimeError):
-    """The second interrupt requested bounded application shutdown."""
+    """Legacy compatibility exception; hard stops no longer close the app."""
 
 
 def select_startup_workflow(
@@ -173,21 +173,21 @@ def run_turn_with_steering(
     input_closed = False
     soft_stop_requested = False
 
-    def handle_interrupt() -> None:
+    def handle_interrupt() -> bool:
         """Handle handle interrupt."""
         nonlocal soft_stop_requested
         if not soft_stop_requested:
             soft_stop_requested = True
             application.request_soft_stop()
-            render_notice("Stop queued. Press Ctrl+C again to exit.", level="warning")
-            return
+            render_notice(
+                "Stop queued. Press Ctrl+C again to stop agent calls now.",
+                level="warning",
+            )
+            return False
 
-        render_notice("Hard shutdown requested.", level="warning")
-        try:
-            application.request_hard_shutdown()
-        except Exception as error:
-            raise HardShutdownRequested(str(error)) from error
-        raise HardShutdownRequested()
+        application.request_hard_shutdown()
+        render_notice("Agent calls stopped.", level="warning")
+        return True
 
     with patch_stdout(raw=True):
         while not done.is_set():
@@ -205,7 +205,8 @@ def run_turn_with_steering(
                     )
                 except KeyboardInterrupt:
                     application.interactions.respond(request.id, None)
-                    handle_interrupt()
+                    if handle_interrupt():
+                        return
                 except EOFError:
                     application.interactions.respond(request.id, None)
                     application.session.queue_steering(
@@ -227,7 +228,8 @@ def run_turn_with_steering(
                     footer=status_footer,
                 )
             except KeyboardInterrupt:
-                handle_interrupt()
+                if handle_interrupt():
+                    return
                 continue
             except EOFError:
                 application.session.queue_steering(
@@ -324,20 +326,12 @@ def _run_application(
                 console.print()
             except (KeyboardInterrupt, EOFError):
                 break
-            except HardShutdownRequested as error:
-                if str(error):
-                    logger.error(
-                        "Hard shutdown failed: %s",
-                        error,
-                    )
-                    render_notice(f"Hard shutdown error: {error}", level="error")
-                break
             except Exception as error:
                 logger.exception("Agent turn failed")
                 render_notice(f"Error: {error}", level="error")
     finally:
         project = application.workspace.workspace
-        application.close(force=application.hard_shutdown_requested)
+        application.close()
         if project.is_dir():
             render_notice(
                 f"Project checkout preserved at {project}. Review and commit it when ready.",

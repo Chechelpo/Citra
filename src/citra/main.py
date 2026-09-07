@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+from .agent import AssistantMessage
 from .agent.response import (
     execute_tool_call,
-    get_assistant_message,
     serialize_tool_result,
 )
 from .agent.runner import AgentRunner, run_agent_turn
@@ -20,7 +20,12 @@ from .cli.rendering import (
 from .cli.repl import is_command
 from .cli.repl import main as _repl_main
 from .context import ExecutionContext, WorkspaceContext
-from .utils.chat_completions_api import call_api
+from .utils.chat_completions_api import call_api, parse_model_response
+
+
+def get_assistant_message(response: object) -> AssistantMessage:
+    """Compatibility facade returning the typed assistant response."""
+    return parse_model_response(response).assistant
 
 
 def main() -> None:

@@ -65,7 +65,7 @@ memory: ConversationMemory
 turn_number: int
 ```
 
-`message_groups` contains the OpenAI-compatible conversation history without
+`message_groups` contains provider-independent typed conversation history without
 ever splitting an assistant tool-call message from its tool results.
 
 `steering` contains user instructions queued for later insertion.
@@ -110,56 +110,44 @@ Available operations:
 
 ## `ChatMessage`
 
-`ChatMessage` is currently:
+`ChatMessage` is a closed union of immutable message dataclasses:
 
 ```python
-ChatMessage = dict[str, Any]
+ChatMessage = UserMessage | SystemMessage | AssistantMessage | ToolResultMessage
 ```
 
-It represents an OpenAI-compatible message object.
+The chat-completions transport is solely responsible for converting these
+objects into OpenAI-compatible wire dictionaries. Provider response dictionaries
+must be parsed into `ModelResponse` before they reach the runner or session.
 
 Typical message shapes include:
 
 ### User
 
 ```python
-{
-    "role": "user",
-    "content": "Fix the failing test.",
-}
+UserMessage(content="Fix the failing test.")
 ```
 
 ### Assistant
 
 ```python
-{
-    "role": "assistant",
-    "content": "...",
-}
+AssistantMessage(content="...")
 ```
 
 or:
 
 ```python
-{
-    "role": "assistant",
-    "content": None,
-    "tool_calls": [...],
-}
+AssistantMessage(content=None, tool_calls=(ToolCall(...),))
 ```
 
 ### Tool
 
 ```python
-{
-    "role": "tool",
-    "tool_call_id": "...",
-    "content": "...",
-}
+ToolResultMessage(tool_call_id="...", content="...")
 ```
 
-Do not invent an incompatible internal conversation format unless the
-model API layer is migrated at the same time.
+Do not store provider wire dictionaries in session history or let raw response
+dictionaries cross the model API boundary.
 
 ---
 
@@ -186,6 +174,11 @@ A critical invariant is:
 > If an assistant message contains tool calls, all corresponding tool
 > result messages must be appended before queued steering messages are
 > flushed into conversation history.
+
+A hard stop interrupts the active agent run without cancelling its workflow
+run or closing application services. If it stops a tool batch, synthetic tool
+results close every unexecuted call so the persisted step remains protocol-safe
+and can be resumed on the next user turn.
 
 For example, this ordering is valid:
 

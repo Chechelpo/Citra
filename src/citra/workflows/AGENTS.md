@@ -20,6 +20,9 @@ sandbox policy.
 - Loops are valid and bounded by `max_executions`.
 - Lifecycle transitions and rejection paths use level-appropriate logs whose
   logger/source identifies the originating module.
+- A hard agent stop preserves the active run, current step, role session, and
+  task-scoped memory. The next user turn resumes that step instead of creating
+  or cancelling a workflow run.
 
 ## Built-ins and modular discovery
 

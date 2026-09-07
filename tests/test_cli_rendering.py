@@ -271,14 +271,19 @@ def test_adjacent_tool_calls_share_semantic_group_until_category_changes(
         for name in ("grep", "find", "bash", "glob")
     }
 
-    for index, name in enumerate(("grep", "find", "bash", "glob"), 1):
-        call = ToolCall(
-            f"call-{index}",
-            name,
-            json.dumps({"path": f"src/{name}.py"}),
+    calls = [
+        (
+            ToolCall(
+                f"call-{index}",
+                name,
+                json.dumps({"path": f"src/{name}.py"}),
+            ),
+            tools[name],
+            "ok",
         )
-        state.render_start(call, tools[name])
-        state.render_result("ok", tools[name])
+        for index, name in enumerate(("grep", "find", "bash", "glob"), 1)
+    ]
+    state.render_batch(calls)
 
     rendered = output.export_text()
     assert rendered.count("• Explored") == 2
@@ -287,6 +292,84 @@ def test_adjacent_tool_calls_share_semantic_group_until_category_changes(
     assert "  └ Find" in rendered
     assert "  └ Bash" in rendered
     assert "  └ Glob" in rendered
+
+
+def test_runner_renders_tool_batch_only_after_every_call_completes(
+    monkeypatch,
+) -> None:
+    session = AgentSession(memory_enabled=False)
+    session.add_user_message("inspect")
+    responses = iter(
+        (
+            parse_model_response(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "function": {
+                                            "name": "grep",
+                                            "arguments": "{}",
+                                        },
+                                    },
+                                    {
+                                        "id": "call-2",
+                                        "function": {
+                                            "name": "find",
+                                            "arguments": "{}",
+                                        },
+                                    },
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ),
+            _text_response("done"),
+        )
+    )
+    activity: list[str] = []
+
+    def execute(*_arguments, **_keywords) -> str:
+        activity.append("execute")
+        assert "render" not in activity
+        return "ok"
+
+    def render_batch(self, calls) -> None:
+        del self
+        materialized = list(calls)
+        activity.append("render")
+        assert [call.id for call, _tool, _result in materialized] == [
+            "call-1",
+            "call-2",
+        ]
+
+    monkeypatch.setattr("citra.agent.runner.execute_tool_call", execute)
+    monkeypatch.setattr(rendering.ToolCallRenderState, "render_batch", render_batch)
+    model = SimpleNamespace(
+        id="test-model",
+        max_input_tokens=100_000,
+        reasoning_effort=None,
+    )
+    workflow = SimpleNamespace(
+        tool_set=ToolSet(core_tools=(), deferred_tools=()),
+        get_task_steering=lambda *_arguments: None,
+        get_system_prompt=lambda *_arguments: "",
+        is_serial=False,
+    )
+    context = SimpleNamespace(
+        ensure_active=lambda: None,
+        workspace=SimpleNamespace(disabled_tool_ids=(), is_closing=False),
+        workflow=workflow,
+        config=SimpleNamespace(model=lambda: model),
+    )
+
+    AgentRunner(context, session, api_call=lambda _call: next(responses)).run_turn()
+
+    assert activity == ["execute", "execute", "render"]
 
 
 def test_two_runner_turns_group_calls_across_model_cycles(monkeypatch) -> None:

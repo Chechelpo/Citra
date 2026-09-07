@@ -5,18 +5,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+from queue import Empty, Queue
+from threading import Lock, Thread
 from citra.logging import Logger
 
 from ..cli.rendering import (
     ToolCallRenderState,
     render_assistant_text,
-    render_notice,
     working_animation,
 )
 from ..cli.input import terminal_ui_state
 from ..context import ExecutionContext
 from ..tools.enable_tools import EnableTools
 from ..tools.session_memory import RequirementTool, TodoTool
+from ..tools.tool import Tool
 from ..tools.tool_registry import ToolRegistry
 from ..utils.chat_completions_api import (
     ModelCall,
@@ -25,6 +27,7 @@ from ..utils.chat_completions_api import (
     call_api,
 )
 from ..utils.model_tokenizer import tokenize
+from .chat_message import ToolCall
 from .response import execute_tool_call
 from .session import AgentSession
 
@@ -32,9 +35,7 @@ _logger = Logger("agent_runner.py")
 
 
 ApiCall = Callable[[ModelCall], ModelResponse]
-_CANCELLED_BY_STEERING = (
-    "cancelled: user steering instructions were received before this tool call executed"
-)
+_CANCELLED_BY_HARD_STOP = "cancelled: hard stop requested before execution"
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class AgentRunner:
         self.api_call = api_call
         self.event_sink = event_sink
         self.render_output = render_output
+        self._stop_lock = Lock()
+        self._stop_generation = 0
 
         _logger.debug(
             "AgentRunner initialized",
@@ -77,6 +80,7 @@ class AgentRunner:
     def run_turn(self) -> None:
         """Execute the run turn operation."""
         self.context.ensure_active()
+        stop_generation = self._current_stop_generation()
 
         turn_number = self.session.begin_turn()
 
@@ -121,8 +125,8 @@ class AgentRunner:
         tool_render_state = ToolCallRenderState()
 
         while True:
-            if self._runtime_is_closing():
-                _logger.warning("Runtime closing; stopping agent loop")
+            if self._should_stop(stop_generation):
+                _logger.info("Agent stop requested; stopping model loop")
                 return
 
             self.session.flush_steering()
@@ -175,7 +179,10 @@ class AgentRunner:
                 system_prompt=prompt,
                 reasoning_effort=model_config.reasoning_effort,
                 model_config=model_config,
-                retry_interrupt=self.session.steering.has_pending,
+                retry_interrupt=lambda: (
+                    self.session.steering.has_pending()
+                    or self._should_stop(stop_generation)
+                ),
                 memory_services=memory_services,
             )
 
@@ -188,16 +195,19 @@ class AgentRunner:
             try:
                 if self.render_output:
                     with working_animation():
-                        response = self.api_call(model_call)
+                        response = self._call_model(model_call, stop_generation)
                 else:
-                    response = self.api_call(model_call)
+                    response = self._call_model(model_call, stop_generation)
 
             except ModelRequestInterrupted:
+                if self._should_stop(stop_generation):
+                    _logger.info("Model request interrupted by agent stop")
+                    return
                 _logger.info("Model request interrupted by steering")
                 continue
 
-            if self._runtime_is_closing():
-                _logger.warning("Runtime closed after model response")
+            if response is None or self._should_stop(stop_generation):
+                _logger.info("Discarding model response after agent stop")
                 return
 
             assistant = response.assistant
@@ -283,25 +293,35 @@ class AgentRunner:
 
                 return
 
-            cancel_remaining = False
+            completed_tool_calls: list[tuple[ToolCall, Tool | None, str]] = []
 
-            for tool_call in tool_calls:
-                if self._runtime_is_closing():
-                    _logger.warning("Runtime closing during tool execution")
+            for index, tool_call in enumerate(tool_calls):
+                if self._should_stop(stop_generation):
+                    _logger.info("Agent stop requested during tool batch")
+                    for pending_call in tool_calls[index:]:
+                        result = _CANCELLED_BY_HARD_STOP
+                        self.session.add_tool_result(pending_call.id, result)
+                        self._emit(
+                            AgentRunEvent(
+                                kind="tool-result",
+                                role="tool",
+                                content=result,
+                                tool=pending_call.name,
+                            )
+                        )
+                        if self.render_output:
+                            completed_tool_calls.append(
+                                (
+                                    pending_call,
+                                    tools.get(pending_call.name),
+                                    result,
+                                )
+                            )
+                    if self.render_output:
+                        tool_render_state.render_batch(completed_tool_calls)
                     return
 
                 call_id = tool_call.id
-
-                if not cancel_remaining and self.session.steering.has_pending():
-                    cancel_remaining = True
-
-                    _logger.info("Cancelling remaining tools due to steering")
-
-                    if self.render_output:
-                        render_notice(
-                            "Steering received; cancelling remaining tool calls.",
-                            level="warning",
-                        )
 
                 tool_name = tool_call.name
 
@@ -319,20 +339,10 @@ class AgentRunner:
                     )
                 )
 
-                if self.render_output:
-                    tool_render_state.render_start(
-                        tool_call,
-                        tools.get(tool_name),
-                    )
-
-                result = (
-                    _CANCELLED_BY_STEERING
-                    if cancel_remaining
-                    else execute_tool_call(
-                        tools,
-                        tool_call,
-                        session=self.session,
-                    )
+                result = execute_tool_call(
+                    tools,
+                    tool_call,
+                    session=self.session,
                 )
 
                 _logger.debug(
@@ -351,15 +361,17 @@ class AgentRunner:
                 )
 
                 if self.render_output:
-                    tool_render_state.render_result(
-                        result,
-                        tools.get(tool_name),
+                    completed_tool_calls.append(
+                        (tool_call, tools.get(tool_name), result)
                     )
 
                 self.session.add_tool_result(
                     call_id,
                     result,
                 )
+
+            if self.render_output:
+                tool_render_state.render_batch(completed_tool_calls)
 
     def _emit(self, event: AgentRunEvent) -> None:
         """Handle emit."""
@@ -368,9 +380,46 @@ class AgentRunner:
         if sink is not None:
             sink(event)
 
-    def _runtime_is_closing(self) -> bool:
-        """Handle runtime is closing."""
-        return self.context.workspace.is_closing
+    def request_stop(self) -> None:
+        """Interrupt the active run without closing lifecycle services."""
+        with self._stop_lock:
+            self._stop_generation += 1
+
+    def _current_stop_generation(self) -> int:
+        """Return the generation captured by a newly starting run."""
+        with self._stop_lock:
+            return self._stop_generation
+
+    def _should_stop(self, generation: int) -> bool:
+        """Return whether this run was stopped or its workspace is closing."""
+        with self._stop_lock:
+            stopped = generation != self._stop_generation
+        return stopped or self.context.workspace.is_closing
+
+    def _call_model(
+        self,
+        model_call: ModelCall,
+        stop_generation: int,
+    ) -> ModelResponse | None:
+        """Wait interruptibly for a synchronous provider call."""
+        completed: Queue[ModelResponse | BaseException] = Queue(maxsize=1)
+
+        def invoke() -> None:
+            try:
+                completed.put(self.api_call(model_call))
+            except BaseException as error:  # noqa: BLE001 - re-raised by caller
+                completed.put(error)
+
+        Thread(target=invoke, name="citra-model-call", daemon=True).start()
+        while not self._should_stop(stop_generation):
+            try:
+                result = completed.get(timeout=0.05)
+            except Empty:
+                continue
+            if isinstance(result, BaseException):
+                raise result
+            return result
+        return None
 
     def _is_serial_role_turn(self) -> bool:
         """Return whether TODOs may survive this isolated role boundary."""

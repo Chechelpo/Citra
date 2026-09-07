@@ -87,6 +87,8 @@ class CitraApplication:
         self._closing = False
         self._closed = False
         self._hard_shutdown = Event()
+        self._agent_stop_lock = Lock()
+        self._agent_stop_generation = 0
         self.workspace = WorkspaceContext.create(
             workspace=self.source_workspace,
             temporary_workspace=config.sandbox_policy.workspace_parent,
@@ -200,6 +202,16 @@ class CitraApplication:
             _logger.debug("Prepared persistent user turn")
             return
 
+        active_run = self.workflow_runtime.active_run
+        if active_run is not None and not active_run.is_terminal:
+            self.session.add_user_message(content)
+            _logger.info(
+                "Resuming serial user turn",
+                workflow=self.workflow.name,
+                step=active_run.current_step.step_id,
+            )
+            return
+
         self.workflow_runtime.start_run(content)
         _logger.info("Started serial user turn", workflow=self.workflow.name)
         try:
@@ -211,6 +223,7 @@ class CitraApplication:
     def run_agent_turn(self, user_input: str | None = None) -> None:
         """Execute the run agent turn operation."""
         self.workspace.ensure_active()
+        stop_generation = self._current_agent_stop_generation()
         if user_input is not None:
             self.prepare_user_turn(user_input)
         if not self.workflow.is_serial:
@@ -233,6 +246,9 @@ class CitraApplication:
             checkpoint_revision = self._checkpoint_revision()
             render_notice(f"Workflow phase: {step.step_id}", level="info")
             self.runner.run_turn()
+            if self._agent_stop_requested(stop_generation):
+                _logger.info("Serial workflow paused by agent stop", step=step.step_id)
+                return
             if run.is_terminal:
                 break
             handoff_error = self._submit_serial_handoff(
@@ -253,6 +269,12 @@ class CitraApplication:
                     "self-contained final assistant message for the next role."
                 )
                 self.runner.run_turn()
+                if self._agent_stop_requested(stop_generation):
+                    _logger.info(
+                        "Serial workflow paused during handoff correction",
+                        step=step.step_id,
+                    )
+                    return
             if run.is_terminal:
                 break
             if handoff_error is not None:
@@ -493,16 +515,27 @@ class CitraApplication:
         return self._hard_shutdown.is_set()
 
     def request_hard_shutdown(self) -> None:
-        """Close lifecycle services without waiting for the agent thread."""
+        """Stop active agent calls without closing the application."""
         self._hard_shutdown.set()
-        self.close(force=True)
+        with self._agent_stop_lock:
+            self._agent_stop_generation += 1
+        self.runner.request_stop()
 
     def request_soft_stop(self) -> None:
-        """Stop a serial macro after the active model turn reaches safety."""
-        self.workflow_runtime.cancel_run()
+        """Ask the model to finish at its next protocol-safe boundary."""
         self.session.queue_steering(
             "Stop the current work safely and return control to the user."
         )
+
+    def _current_agent_stop_generation(self) -> int:
+        """Return the stop generation captured by a newly starting turn."""
+        with self._agent_stop_lock:
+            return self._agent_stop_generation
+
+    def _agent_stop_requested(self, generation: int) -> bool:
+        """Return whether a hard stop targeted the active turn."""
+        with self._agent_stop_lock:
+            return generation != self._agent_stop_generation
 
     def close(self, *, force: bool = False) -> None:
         """Handle close."""

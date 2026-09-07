@@ -248,9 +248,14 @@ class TerminalInputApiTests(unittest.TestCase):
     def test_boxed_prompt_draws_a_composer_border(self):
         ti = TerminalInput()
         terminal_ui_state.reset()
+        erase_values = []
+
+        def submit(*_arguments, **_keywords):
+            erase_values.append(ti._session.app.erase_when_done)
+            return "hello"
 
         with (
-            mock.patch.object(ti._session, "prompt", return_value="hello") as prompt,
+            mock.patch.object(ti._session, "prompt", side_effect=submit) as prompt,
             mock.patch("citra.cli.input._console.print") as output,
         ):
             result = ti.prompt(
@@ -279,16 +284,18 @@ class TerminalInputApiTests(unittest.TestCase):
         self.assertNotIn("rprompt", prompt.call_args.kwargs)
         self.assertIn("style", prompt.call_args.kwargs)
         self.assertTrue(prompt.call_args.kwargs["multiline"])
+        self.assertEqual(erase_values, [True])
+        self.assertFalse(ti._session.app.erase_when_done)
         self.assertIn("key_bindings", prompt.call_args.kwargs)
         continuation = prompt.call_args.kwargs["prompt_continuation"]
         self.assertEqual("".join(fragment[1] for fragment in continuation), "│ · ")
         self.assertEqual(output.call_count, 3)
         self.assertTrue(output.call_args_list[0].args[0].plain.startswith("│"))
-        self.assertTrue(output.call_args_list[1].args[0].plain.startswith("─"))
-        self.assertNotIn(
-            _COMPOSER_BACKGROUND,
-            str(output.call_args_list[1].args[0].style),
-        )
+        self.assertEqual(output.call_args_list[1].args[0].plain.strip(), "│   hello")
+        self.assertTrue(output.call_args_list[2].args[0].plain.startswith("│"))
+        submitted = "\n".join(call.args[0].plain for call in output.call_args_list)
+        self.assertNotIn("model: default", submitted)
+        self.assertNotIn("─", submitted)
 
     def test_prompt_and_status_toolbar_have_distinct_backgrounds(self):
         self.assertNotEqual(_COMPOSER_BACKGROUND, _STATUS_BACKGROUND)
