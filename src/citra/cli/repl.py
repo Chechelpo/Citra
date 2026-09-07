@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
@@ -15,23 +16,28 @@ from ..agent.runner import ApiCall
 from ..application import CitraApplication
 from ..utils.chat_completions_api import call_api
 from ..utils.process_logging import process_log
-from ..utils.terminal import (
-    BLUE,
-    BOLD,
-    CYAN,
-    DIM,
-    GREEN,
-    RED,
-    RESET,
-    YELLOW,
-    separator,
-    terminal_bell,
-)
-from ..utils.terminal_input import terminal_input
+from ..utils.terminal import terminal_bell
 from ..workflows import Workflow, WorkflowRegistry
-from .rendering import print_header
+from .input import terminal_input
+from .rendering import (
+    console,
+    print_header,
+    render_notice,
+    render_question,
+    render_workflow_picker,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _compact_path(path: str | Path) -> str:
+    """Render home-relative paths with Codex-style ``~/`` notation."""
+    resolved = Path(path).expanduser().resolve()
+    try:
+        relative = resolved.relative_to(Path.home().resolve())
+    except ValueError:
+        return str(resolved)
+    return "~" if not relative.parts else f"~/{relative.as_posix()}"
 
 
 class HardShutdownRequested(RuntimeError):
@@ -44,29 +50,23 @@ def select_startup_workflow(
     input_service: Any = terminal_input,
 ) -> Workflow:
     """Select the sandbox-owning workflow before provisioning starts."""
-    print(f"{BOLD}Select a Citra workflow:{RESET}")
-    for index, workflow in enumerate(registry.workflows, 1):
-        description = (
-            f" — {workflow.description}" if workflow.description else ""
-        )
-        default = (
-            f" {GREEN}(default){RESET}"
-            if workflow is registry.default_workflow
-            else ""
-        )
-        print(
-            f"  {DIM}{index}.{RESET} {workflow.name}"
-            f"{description}{default}"
-        )
+    render_workflow_picker(
+        [
+            (
+                workflow.name,
+                workflow.description or "",
+                workflow is registry.default_workflow,
+            )
+            for workflow in registry.workflows
+        ]
+    )
 
     while True:
-        selection = input_service.prompt(
-            f"{BOLD}{BLUE}workflow❯{RESET} "
-        ).strip()
+        selection = input_service.prompt("workflow › ").strip()
         try:
             return registry.select(selection)
         except (KeyError, ValueError) as error:
-            print(f"{RED}⏺ {error}{RESET}")
+            render_notice(str(error), level="error")
 
 
 def is_command(user_input: str) -> bool:
@@ -83,24 +83,18 @@ def _answer_model_prompt(
     """Handle answer model prompt."""
     if application.config.notifications.prompt_bell:
         terminal_bell()
-    print()
-    print(f"{CYAN}⏺{RESET} {BOLD}{request.question}{RESET}")
-    if request.options:
-        for index, option in enumerate(request.options, 1):
-            print(f"  {DIM}{index}.{RESET} {option}")
-        print(f"\n{DIM}Type a number or a free-form answer.{RESET}")
-    else:
-        print(f"{DIM}(open-ended question){RESET}")
+    console.print()
+    render_question(request.question, request.options)
     application.interactions.record_activity(request.id)
     answer = input_service.prompt_with_idle_timeout(
         timeout=request.timeout,
-        message=f"{BOLD}{BLUE}❯{RESET} ",
+        message="› ",
         on_activity=lambda: application.interactions.record_activity(request.id),
     )
     if answer is None:
-        print(
-            f"{YELLOW}⏺ (no response within {request.timeout:g}s — "
-            f"proceeding as user-unavailable){RESET}"
+        render_notice(
+            f"No response within {request.timeout:g}s; continuing without user input.",
+            level="warning",
         )
     application.interactions.respond(request.id, answer)
 
@@ -118,7 +112,7 @@ def run_turn_with_steering(
         """Handle worker."""
         try:
             application.run_agent_turn()
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - re-raised on foreground thread
             errors.append(error)
         finally:
             done.set()
@@ -135,10 +129,10 @@ def run_turn_with_steering(
         if not soft_stop_requested:
             soft_stop_requested = True
             application.request_soft_stop()
-            print(f"{YELLOW}⏺ Stop instruction queued. Press Ctrl+C again to exit.{RESET}")
+            render_notice("Stop queued. Press Ctrl+C again to exit.", level="warning")
             return
 
-        print(f"{YELLOW}⏺ Hard shutdown requested.{RESET}")
+        render_notice("Hard shutdown requested.", level="warning")
         try:
             application.request_hard_shutdown()
         except Exception as error:
@@ -178,7 +172,7 @@ def run_turn_with_steering(
             try:
                 steering = input_service.prompt_until(
                     lambda: done.is_set() or application.interactions.has_pending(),
-                    message=f"{BOLD}{BLUE}↪ steer{RESET} {DIM}(Enter to send){RESET} ",
+                    message="↪ steer  ",
                 )
             except KeyboardInterrupt:
                 handle_interrupt()
@@ -195,14 +189,13 @@ def run_turn_with_steering(
                 if command_id in {"agent", "memory", "workflow"}:
                     application.handle_command(steering)
                 else:
-                    print(
-                        f"{YELLOW}⏺ Only /agent, /memory, and /workflow "
-                        f"commands are "
-                        f"available while a turn is running.{RESET}"
+                    render_notice(
+                        "Only /agent, /memory, and /workflow are available during a turn.",
+                        level="warning",
                     )
                 continue
             if steering is not None and application.session.queue_steering(steering):
-                print(f"{GREEN}⏺ Steering queued.{RESET}")
+                render_notice("Steering queued.", level="success")
 
     thread.join()
     if errors:
@@ -251,12 +244,14 @@ def _run_application(
         print_header(application.config, application.workspace.workspace)
         while True:
             try:
-                print(separator())
                 user_input = input_service.prompt(
-                    f"{BOLD}{BLUE}›{RESET} ",
+                    "› ",
                     boxed=True,
+                    footer=(
+                        f"{application.config.model().id} default · "
+                        f"{_compact_path(application.workspace.source_workspace)}"
+                    ),
                 ).strip()
-                print(separator())
                 if not user_input:
                     continue
                 if is_command(user_input):
@@ -273,7 +268,7 @@ def _run_application(
                     # Piped/headless invocations have no concurrent input
                     # channel, but retain the same lifecycle and agent runner.
                     application.run_agent_turn()
-                print()
+                console.print()
             except (KeyboardInterrupt, EOFError):
                 break
             except HardShutdownRequested as error:
@@ -282,16 +277,16 @@ def _run_application(
                         "Hard shutdown failed: %s",
                         error,
                     )
-                    print(f"{RED}⏺ Hard shutdown error: {error}{RESET}")
+                    render_notice(f"Hard shutdown error: {error}", level="error")
                 break
             except Exception as error:
-                logger.exception("Agent turn failed: %s", error)
-                print(f"{RED}⏺ Error: {error}{RESET}")
+                logger.exception("Agent turn failed")
+                render_notice(f"Error: {error}", level="error")
     finally:
         project = application.workspace.workspace
         application.close(force=application.hard_shutdown_requested)
         if project.is_dir():
-            print(
-                f"{GREEN}⏺ Project checkout preserved at {project}. "
-                f"Review and commit it when ready.{RESET}"
+            render_notice(
+                f"Project checkout preserved at {project}. Review and commit it when ready.",
+                level="success",
             )

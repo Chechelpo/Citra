@@ -163,6 +163,44 @@ def test_apply_cancellation_is_non_mutating(tmp_path: Path) -> None:
     assert _git(source, "diff", "--cached") == ""
 
 
+def test_force_apply_mirrors_entire_workspace_and_overwrites_source(
+    tmp_path: Path,
+) -> None:
+    source, checkout, baseline = _repositories(tmp_path)
+    (source / "tracked.py").write_text("external edit\n", encoding="utf-8")
+    (source / "source-only.txt").write_text("delete me\n", encoding="utf-8")
+    (checkout / "tracked.py").write_text("checkout wins\n", encoding="utf-8")
+    (checkout / "ignored.txt").write_text("copy ignored too\n", encoding="utf-8")
+
+    with mock.patch("builtins.input", return_value="yes"):
+        result = _command(source, checkout, baseline).run("--force")
+
+    assert (source / "tracked.py").read_text(encoding="utf-8") == "checkout wins\n"
+    assert not (source / "source-only.txt").exists()
+    assert (source / "ignored.txt").read_text(encoding="utf-8") == (
+        "copy ignored too\n"
+    )
+    assert (source / ".git").is_dir()
+    assert "Force-applied the complete workspace" in result.output
+
+
+def test_force_apply_requires_explicit_confirmation(tmp_path: Path) -> None:
+    source, checkout, baseline = _plain_workspaces(tmp_path)
+    (checkout / "changed.txt").write_text("checkout\n", encoding="utf-8")
+
+    with mock.patch("builtins.input", return_value=""):
+        result = _command(source, checkout, baseline).run("--force")
+
+    assert "cancelled" in result.output
+    assert (source / "changed.txt").read_text(encoding="utf-8") == "before\n"
+
+
+def test_force_apply_rejects_other_arguments(tmp_path: Path) -> None:
+    source, checkout, baseline = _plain_workspaces(tmp_path)
+    result = _command(source, checkout, baseline).run("--force changed.txt")
+    assert "cannot be combined" in result.output
+
+
 def test_apply_preserves_source_file_created_after_checkout(
     tmp_path: Path,
 ) -> None:

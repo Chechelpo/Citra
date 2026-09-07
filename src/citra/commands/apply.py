@@ -12,6 +12,8 @@ from pathlib import Path
 from citra.context.source_baseline import (
     MISSING_SOURCE_ENTRY,
     SourceEntry,
+    capture_source_baseline,
+    filesystem_project_inventory,
     git_repository_root,
     normalize_project_path,
     project_entry_path,
@@ -34,9 +36,16 @@ class ApplyCommand(Command):
     def _run(self, args: str) -> CommandResult:
         """Preview and apply selected checkout changes after confirmation."""
         _logger.info("Starting source apply command", arguments=args)
-        include_dirty, force_conflicts, requested = self._parse_args(args)
+        include_dirty, force_conflicts, force_dump, requested = self._parse_args(args)
         source, checkout = self._roots()
         repository_root = git_repository_root(source)
+
+        if force_dump:
+            return self._force_workspace_dump(
+                source=source,
+                checkout=checkout,
+                repository_root=repository_root,
+            )
 
         baseline = self.context.workspace.source_baseline
         if baseline is None:
@@ -253,7 +262,7 @@ class ApplyCommand(Command):
         return source, checkout
 
     @staticmethod
-    def _parse_args(args: str) -> tuple[bool, bool, tuple[str, ...]]:
+    def _parse_args(args: str) -> tuple[bool, bool, bool, tuple[str, ...]]:
         """Parse safety flags and exact project-relative path selections."""
         try:
             tokens = shlex.split(args)
@@ -261,27 +270,77 @@ class ApplyCommand(Command):
             raise ValueError(f"Invalid arguments: {error}") from error
         include_dirty = False
         force_conflicts = False
+        force_dump = False
         paths: list[str] = []
         for token in tokens:
             if token == "--include-dirty":
                 include_dirty = True
             elif token == "--force-conflicts":
                 force_conflicts = True
+            elif token == "--force":
+                force_dump = True
             elif token.startswith("--"):
                 raise ValueError(
-                    "Usage: /apply [--include-dirty] [--force-conflicts] "
+                    "Usage: /apply [--force | --include-dirty] "
+                    "[--force-conflicts] "
                     "[path ...]"
                 )
             else:
                 paths.append(normalize_project_path(token))
         requested = tuple(dict.fromkeys(paths))
+        if force_dump and (include_dirty or force_conflicts or requested):
+            raise ValueError("/apply --force cannot be combined with other arguments.")
         _logger.trace(
             "Parsed source apply arguments",
             include_dirty=include_dirty,
             force_conflicts=force_conflicts,
+            force_dump=force_dump,
             paths=requested,
         )
-        return include_dirty, force_conflicts, requested
+        return include_dirty, force_conflicts, force_dump, requested
+
+    def _force_workspace_dump(
+        self,
+        *,
+        source: Path,
+        checkout: Path,
+        repository_root: Path | None,
+    ) -> CommandResult:
+        """Replace all project entries in source with the checkout contents."""
+        selected = tuple(
+            sorted(
+                set(filesystem_project_inventory(source))
+                | set(filesystem_project_inventory(checkout))
+            )
+        )
+        print("\nFORCED FULL WORKSPACE APPLY\n")
+        print(f"Checkout: {checkout}")
+        print(f"Original: {source}")
+        print(f"Entries to overwrite or delete: {len(selected)}\n")
+        if not self._confirm(
+            "Overwrite the entire original workspace with the checkout? [y/N] ",
+            default_yes=False,
+        ):
+            return CommandResult(output="Forced apply cancelled; no files were changed.")
+        self._apply_transaction(source=source, checkout=checkout, selected=selected)
+        baseline = self.context.workspace.source_baseline
+        if baseline is not None:
+            baseline.clear()
+            baseline.update(capture_source_baseline(checkout))
+        self.context.workspace.mark_source_apply_completed()
+        staged = 0
+        if repository_root is not None:
+            self._git_text(source, "add", "--all", "--", ".")
+            staged = len(selected)
+        lines = [
+            f"Force-applied the complete workspace to: {source}",
+            f"Overwrote or deleted {len(selected)} project entry(s).",
+        ]
+        if repository_root is not None:
+            lines.append(f"Updated Git staging for the workspace ({staged} entries).")
+        else:
+            lines.append("Git staging was skipped because no worktree was found.")
+        return CommandResult(output="\n".join(lines))
 
     def _changed_paths(
         self,
@@ -552,14 +611,14 @@ class ApplyCommand(Command):
             temporary.unlink(missing_ok=True)
 
     @staticmethod
-    def _confirm(prompt: str) -> bool:
+    def _confirm(prompt: str, *, default_yes: bool = True) -> bool:
         """Request an affirmative terminal confirmation from the user."""
         try:
             answer = input(prompt).strip().casefold()
         except (EOFError, KeyboardInterrupt):
             _logger.warning("Source apply confirmation was interrupted")
             return False
-        return answer in {"", "y", "yes"}
+        return answer in {"y", "yes"} or (default_yes and answer == "")
 
     @staticmethod
     def _git(

@@ -259,6 +259,11 @@ def _filesystem_project_inventory(root: Path) -> tuple[str, ...]:
     return tuple(discovered)
 
 
+def filesystem_project_inventory(root: Path) -> tuple[str, ...]:
+    """Return every project entry, including Git-ignored files."""
+    return _filesystem_project_inventory(root)
+
+
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     """Run a non-interactive Git command for controller-side discovery."""
     environment = os.environ.copy()
@@ -279,6 +284,7 @@ __all__ = [
     "MISSING_SOURCE_ENTRY",
     "SourceEntry",
     "capture_source_baseline",
+    "filesystem_project_inventory",
     "git_repository_root",
     "normalize_project_path",
     "project_entry_path",

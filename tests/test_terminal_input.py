@@ -12,7 +12,10 @@ behaviour is deterministic.
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest import mock
+
+from prompt_toolkit.keys import Keys
 
 _SRC = os.path.join(
     os.path.dirname(__file__),
@@ -22,7 +25,8 @@ _SRC = os.path.join(
 os.environ["PYTHONPATH"] = os.path.abspath(_SRC)
 
 
-from citra.utils.terminal_input import (
+from citra.cli.input import (
+    _COMPOSER_BINDINGS,
     TerminalInput,
     _IdleTimeout,
     _IdleWatchdog,
@@ -48,9 +52,7 @@ class FakeLoop:
     def call_later(self, delay, callback):
         self._seq += 1
         handle = FakeHandle()
-        self._scheduled.append(
-            (self.now + delay, self._seq, handle.seq, callback)
-        )
+        self._scheduled.append((self.now + delay, self._seq, handle.seq, callback))
         handle._cancel = lambda: None
         handle._callback = callback
         return handle
@@ -61,11 +63,10 @@ class FakeLoop:
         if not due:
             return False
         due.sort(key=lambda s: (s[0], s[1]))
-        t, seq, hseq, cb = due[0]
+        _time, _sequence, hseq, cb = due[0]
         # Mark as fired by setting handle seq to None in the record.
         self._scheduled = [
-            (a, b, None if c is hseq else c, d)
-            for (a, b, c, d) in self._scheduled
+            (a, b, None if c is hseq else c, d) for (a, b, c, d) in self._scheduled
         ]
         cb()
         return True
@@ -126,7 +127,7 @@ def _make_watchdog(timeout):
     app = FakeApp()
     wd = _IdleWatchdog(timeout=timeout)
     patcher = mock.patch(
-        "citra.utils.terminal_input.get_app",
+        "citra.cli.input.get_app",
         return_value=app,
     )
     patcher.start()
@@ -143,7 +144,7 @@ class IdleWatchdogTests(unittest.TestCase):
         app = FakeApp()
         watchdog = _IdleWatchdog(timeout=1.0, on_activity=activity)
         with mock.patch(
-            "citra.utils.terminal_input.get_app",
+            "citra.cli.input.get_app",
             return_value=app,
         ):
             watchdog.start()
@@ -192,19 +193,60 @@ class IdleWatchdogTests(unittest.TestCase):
 
 
 class TerminalInputApiTests(unittest.TestCase):
+    def test_enter_submits_the_composer_buffer(self):
+        buffer = mock.Mock()
+        enter = next(
+            binding
+            for binding in _COMPOSER_BINDINGS.bindings
+            if binding.keys == (Keys.ControlM,)
+        )
+
+        enter.handler(SimpleNamespace(current_buffer=buffer))
+
+        buffer.validate_and_handle.assert_called_once_with()
+        buffer.insert_text.assert_not_called()
+
+    def test_escape_enter_inserts_a_newline(self):
+        buffer = mock.Mock()
+        escape_enter = next(
+            binding
+            for binding in _COMPOSER_BINDINGS.bindings
+            if binding.keys == (Keys.Escape, Keys.ControlM)
+        )
+
+        escape_enter.handler(SimpleNamespace(current_buffer=buffer))
+
+        buffer.insert_text.assert_called_once_with("\n")
+        buffer.validate_and_handle.assert_not_called()
+
     def test_boxed_prompt_draws_a_composer_border(self):
         ti = TerminalInput()
 
-        with mock.patch.object(
-            ti._session, "prompt", return_value="hello"
-        ) as prompt, mock.patch("builtins.print") as output:
-            result = ti.prompt("› ", boxed=True)
+        with (
+            mock.patch.object(ti._session, "prompt", return_value="hello") as prompt,
+            mock.patch("citra.cli.input._console.print") as output,
+        ):
+            result = ti.prompt(
+                "› ",
+                boxed=True,
+                footer="gpt-test default · ~/Code/Citra",
+            )
 
         self.assertEqual(result, "hello")
-        self.assertTrue(prompt.call_args.args[0].value.startswith("│ "))
+        self.assertTrue(prompt.call_args.args[0].value.startswith("\n  "))
+        self.assertEqual(
+            prompt.call_args.kwargs["bottom_toolbar"].value,
+            "  gpt-test default · ~/Code/Citra",
+        )
+        self.assertNotIn("rprompt", prompt.call_args.kwargs)
+        self.assertIn("style", prompt.call_args.kwargs)
+        self.assertTrue(prompt.call_args.kwargs["multiline"])
+        self.assertIn("key_bindings", prompt.call_args.kwargs)
+        self.assertEqual(prompt.call_args.kwargs["prompt_continuation"].value, "  · ")
         self.assertEqual(output.call_count, 2)
-        self.assertTrue(output.call_args_list[0].args[0].startswith("╭"))
-        self.assertTrue(output.call_args_list[1].args[0].startswith("╰"))
+        self.assertTrue(output.call_args_list[0].args[0].plain.startswith("─"))
+        self.assertIn("gpt-test", output.call_args_list[1].args[0].plain)
+        self.assertIn("#222222", str(output.call_args_list[1].args[0].style))
 
     def test_prompt_with_idle_timeout_returns_none_on_idle_timeout(self):
         """
@@ -216,9 +258,7 @@ class TerminalInputApiTests(unittest.TestCase):
         def fake_prompt(*args, **kwargs):
             raise _IdleTimeout()
 
-        with mock.patch.object(
-            ti._session, "prompt", side_effect=fake_prompt
-        ):
+        with mock.patch.object(ti._session, "prompt", side_effect=fake_prompt):
             result = ti.prompt_with_idle_timeout(1.0, "q> ")
 
         self.assertIsNone(result)

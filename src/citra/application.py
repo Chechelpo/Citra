@@ -13,6 +13,7 @@ from citra.utils.lsp import LspConfig, LspManager
 from .agent import AgentSession, UserInteractionBroker
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
+from .cli.rendering import render_command_output, render_notice
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
 from .tools.session_memory import (
     AcceptanceCriteriaTool,
@@ -26,7 +27,6 @@ from .tools.session_memory import (
 from .tools.skills.skill_registry import SkillRegistry
 from .tools.subagent import SubagentSupervisor
 from .utils.chat_completions_api import call_api
-from .utils.terminal import RESET, YELLOW
 from .workflows import (
     SingleModeWorkflow,
     Workflow,
@@ -226,7 +226,7 @@ class CitraApplication:
         while not run.is_terminal:
             step = run.begin_step()
             checkpoint_revision = self._checkpoint_revision()
-            print(f"\n{YELLOW}⏺ Workflow phase: {step.step_id}{RESET}")
+            render_notice(f"Workflow phase: {step.step_id}", level="info")
             self.runner.run_turn()
             if run.is_terminal:
                 break
@@ -465,14 +465,14 @@ class CitraApplication:
             command_id = "q"
         command = COMMAND_REGISTRY.instantiate(command_id, self.context)
         if command is None:
-            print(
-                f"{YELLOW}⏺ Unknown command: /{command_id}. "
-                f"Type /help for available commands.{RESET}"
+            render_notice(
+                f"Unknown command: /{command_id}. Type /help for available commands.",
+                level="warning",
             )
             return True
         result = command.run(args)
         if result.output:
-            print(f"\n{result.output}")
+            render_command_output(result.output)
         if result.clear_messages:
             self.session.clear_history(clear_memory=True)
         return not result.exit

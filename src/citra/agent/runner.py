@@ -12,6 +12,7 @@ from citra.logging import Logger
 
 from ..cli.rendering import (
     render_assistant_text,
+    render_notice,
     render_tool_call_result,
     render_tool_call_start,
     working_animation,
@@ -25,7 +26,6 @@ from ..utils.chat_completions_api import (
     build_memory_context,
     call_api,
 )
-from ..utils.terminal import RESET, YELLOW
 from .response import execute_tool_call, get_assistant_message
 from .session import AgentSession
 
@@ -72,7 +72,7 @@ class AgentRunner:
 
         _logger.debug(
             "AgentRunner initialized",
-            workflow=context.workflow.__class__.__name__,
+            workflow=getattr(context, "workflow", None).__class__.__name__,
         )
 
     def run_turn(self) -> None:
@@ -149,9 +149,7 @@ class AgentRunner:
                 )
             )
 
-            tools = tool_registry.index_by_model_name(
-                tools_by_id.values()
-            )
+            tools = tool_registry.index_by_model_name(tools_by_id.values())
 
             _logger.trace(
                 "Resolved tools for model request",
@@ -192,9 +190,7 @@ class AgentRunner:
 
             if self.api_call is call_api:
                 api_arguments["model_config"] = model_config
-                api_arguments["retry_interrupt"] = (
-                    self.session.steering.has_pending
-                )
+                api_arguments["retry_interrupt"] = self.session.steering.has_pending
                 api_arguments["memory_services"] = memory_services
 
             if request_prompt:
@@ -214,15 +210,11 @@ class AgentRunner:
                     response = self.api_call(**api_arguments)
 
             except ModelRequestInterrupted:
-                _logger.info(
-                    "Model request interrupted by steering"
-                )
+                _logger.info("Model request interrupted by steering")
                 continue
 
             if self._runtime_is_closing():
-                _logger.warning(
-                    "Runtime closed after model response"
-                )
+                _logger.warning("Runtime closed after model response")
                 return
 
             assistant = get_assistant_message(response)
@@ -260,9 +252,7 @@ class AgentRunner:
 
             if not tool_calls:
                 if self.session.steering.has_pending():
-                    _logger.debug(
-                        "Steering pending after final response; continuing"
-                    )
+                    _logger.debug("Steering pending after final response; continuing")
                     continue
 
                 todo_tool = tools_by_id.get(TodoTool.TOOL_ID)
@@ -273,9 +263,7 @@ class AgentRunner:
                     and requirement_tool.has_unsatisfied_requirements()
                     and not self._is_serial_role_turn()
                 ):
-                    _logger.info(
-                        "Continuing due to unsatisfied requirements"
-                    )
+                    _logger.info("Continuing due to unsatisfied requirements")
 
                     self.session.add_user_message(
                         "Continue: valid task requirements remain unsatisfied. "
@@ -289,9 +277,7 @@ class AgentRunner:
                     and todo_tool.has_outstanding_todos()
                     and not self._is_serial_role_turn()
                 ):
-                    _logger.info(
-                        "Continuing due to outstanding TODOs"
-                    )
+                    _logger.info("Continuing due to outstanding TODOs")
 
                     self.session.add_user_message(
                         "Continue: valid conversation TODOs remain outstanding. "
@@ -311,32 +297,24 @@ class AgentRunner:
 
             for tool_call in tool_calls:
                 if self._runtime_is_closing():
-                    _logger.warning(
-                        "Runtime closing during tool execution"
-                    )
+                    _logger.warning("Runtime closing during tool execution")
                     return
 
                 call_id = tool_call.get("id")
 
                 if not call_id:
-                    _logger.error(
-                        "Tool call missing id"
-                    )
-                    raise RuntimeError(
-                        "Model returned a tool call without an id."
-                    )
+                    _logger.error("Tool call missing id")
+                    raise RuntimeError("Model returned a tool call without an id.")
 
                 if not cancel_remaining and self.session.steering.has_pending():
                     cancel_remaining = True
 
-                    _logger.info(
-                        "Cancelling remaining tools due to steering"
-                    )
+                    _logger.info("Cancelling remaining tools due to steering")
 
                     if self.render_output:
-                        print(
-                            f"\n{YELLOW}⏺ Steering received. "
-                            f"Cancelling remaining tool calls.{RESET}"
+                        render_notice(
+                            "Steering received; cancelling remaining tool calls.",
+                            level="warning",
                         )
 
                 function = tool_call["function"]
@@ -397,7 +375,6 @@ class AgentRunner:
                     call_id,
                     result,
                 )
-
 
     def _emit(self, event: AgentRunEvent) -> None:
         """Handle emit."""

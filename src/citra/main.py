@@ -10,6 +10,7 @@ from .agent.response import (
 )
 from .agent.runner import AgentRunner, run_agent_turn
 from .application import CitraApplication
+from .cli.input import terminal_input
 from .cli.rendering import (
     argument_preview,
     print_header,
@@ -20,7 +21,6 @@ from .cli.repl import is_command
 from .cli.repl import main as _repl_main
 from .context import ExecutionContext, WorkspaceContext
 from .utils.chat_completions_api import call_api
-from .utils.terminal_input import terminal_input
 
 
 def main() -> None:

@@ -2,15 +2,24 @@
 Tool for prompting the user for clarification, decisions, or approval.
 """
 from __future__ import annotations
+
 import json
 from typing import Any, override
+
 from ...agent.interactions import UserInteractionBroker
+from ...cli.input import terminal_input
+from ...cli.rendering import render_notice, render_question
 from ...context import ExecutionContext
+from ...utils.json_schema import (
+    ChatCompletionTool,
+    FunctionDefinition,
+    JsonProperty,
+    JsonSchema,
+)
+from ...utils.terminal import terminal_bell
 from ..capabilities import ToolCapabilities
 from ..tool import Tool, ToolDefinition
-from ...utils.json_schema import ChatCompletionTool, FunctionDefinition, JsonProperty, JsonSchema
-from ...utils.terminal import BLUE, BOLD, CYAN, DIM, RESET, YELLOW, terminal_bell
-from ...utils.terminal_input import terminal_input
+
 USER_UNAVAILABLE_MESSAGE = 'user-unavailable: no response was received within the timeout period. The user may be away. Pick the best answer yourself based on the question you asked.'
 OPTION_SCHEMA = JsonSchema.object(properties=(JsonProperty(name='label', schema=JsonSchema.string(description='Short user-facing option label.')), JsonProperty(name='description', schema=JsonSchema.string(description='Short explanation of the option or its trade-offs.'))), additional_properties=False)
 CLAUDE_QUESTION_SCHEMA = JsonSchema.object(properties=(JsonProperty(name='question', schema=JsonSchema.string(description='Complete question to ask the user.')), JsonProperty(name='header', schema=JsonSchema.string(description='Short UI label for the question.')), JsonProperty(name='options', schema=JsonSchema.array(OPTION_SCHEMA, description='Available choices.')), JsonProperty(name='multiSelect', schema=JsonSchema.boolean(description='Allow selecting multiple choices.'))), additional_properties=False)
@@ -99,22 +108,14 @@ class PromptUser(Tool):
         else:
             if self.context.config.notifications.prompt_bell:
                 terminal_bell()
-            print()
-            print(f'{CYAN}⏺{RESET} {BOLD}{question}{RESET}')
-            if options:
-                for index, option in enumerate(options, start=1):
-                    print(f'  {DIM}{index}.{RESET} {option}')
-                if multiple:
-                    hint = 'Type a choice, or type your own answer containing multiple selections.'
-                else:
-                    hint = 'Type a number to select an option, or type your own answer.'
-                print(f'\n{DIM}{hint}{RESET}')
-            else:
-                print(f'{DIM}(open-ended question){RESET}')
-            answer = terminal_input.prompt_with_idle_timeout(timeout=timeout, message=f'{BOLD}{BLUE}❯{RESET} ')
+            render_question(question, options)
+            answer = terminal_input.prompt_with_idle_timeout(timeout=timeout, message='› ')
         if answer is None:
             if not isinstance(broker, UserInteractionBroker):
-                print(f'{YELLOW}⏺ (no response within {timeout}s — proceeding as user-unavailable){RESET}')
+                render_notice(
+                    f'No response within {timeout}s; continuing without user input.',
+                    level='warning',
+                )
             return USER_UNAVAILABLE_MESSAGE
         answer = answer.strip()
         if not answer:
