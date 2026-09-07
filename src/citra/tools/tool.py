@@ -612,6 +612,20 @@ class Tool(ABC):
     # Execution
     # -------------------------------------------------------------------------
 
+    def parse_arguments(self, raw_arguments: str) -> dict[str, Any]:
+        """Parse this tool's model-emitted argument payload."""
+        try:
+            arguments = json.loads(raw_arguments or "{}")
+        except json.JSONDecodeError as error:
+            raise InvalidToolArguments(
+                f"Invalid JSON arguments for tool '{self.model_name}': {error}"
+            ) from error
+        if not isinstance(arguments, dict):
+            raise InvalidToolArguments(
+                f"Arguments for tool '{self.model_name}' must be a JSON object."
+            )
+        return arguments
+
     @final
     def execute(
         self,

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from rich.console import Console
 
+from citra.agent.chat_message import ToolCall, UserMessage
 from citra.agent.runner import AgentRunner
 from citra.agent.session import AgentSession
 from citra.cli import rendering
@@ -13,7 +14,12 @@ from citra.cli.rendering import SessionHeader, format_elapsed
 from citra.cli.theme import CITRA_THEME
 from citra.sandbox import SandboxMode
 from citra.tools.default_registry import ToolSet
-from citra.utils.chat_completions_api import ModelCall
+from citra.tools.tool import InvalidToolArguments
+from citra.utils.chat_completions_api import (
+    ModelCall,
+    ModelResponse,
+    parse_model_response,
+)
 
 
 def test_format_elapsed_uses_seconds_for_short_work() -> None:
@@ -81,13 +87,10 @@ def test_edit_tool_call_displays_an_actual_diff(monkeypatch) -> None:
     monkeypatch.setattr(rendering, "console", output)
     tool = SimpleNamespace(
         id="edit",
+        parse_arguments=json.loads,
         format_call_log=lambda _arguments: "--- a/app.py\n+++ b/app.py\n@@\n-old\n+new",
     )
-    call = {
-        "id": "call-1",
-        "type": "function",
-        "function": {"name": "edit", "arguments": json.dumps({"path": "app.py"})},
-    }
+    call = ToolCall("call-1", "edit", json.dumps({"path": "app.py"}))
 
     rendering.render_tool_call_start(call, tool)
     rendered = output.export_text()
@@ -102,13 +105,10 @@ def test_read_tool_call_is_a_compact_file_list(monkeypatch) -> None:
     monkeypatch.setattr(rendering, "console", output)
     tool = SimpleNamespace(
         id="read",
+        parse_arguments=json.loads,
         format_call_log=lambda _arguments: "src/app.py\ntests/test_app.py",
     )
-    call = {
-        "id": "call-2",
-        "type": "function",
-        "function": {"name": "read", "arguments": "{}"},
-    }
+    call = ToolCall("call-2", "read", "{}")
 
     rendering.render_tool_call_start(call, tool)
     rendered = output.export_text()
@@ -137,13 +137,10 @@ def test_multiline_shell_call_is_not_mislabeled_as_files(monkeypatch) -> None:
     monkeypatch.setattr(rendering, "console", output)
     tool = SimpleNamespace(
         id="bash",
+        parse_arguments=json.loads,
         format_call_log=lambda _arguments: "$ printf 'one\\ntwo'\\ncwd=.",
     )
-    call = {
-        "id": "call-shell",
-        "type": "function",
-        "function": {"name": "bash", "arguments": json.dumps({"cmd": "printf"})},
-    }
+    call = ToolCall("call-shell", "bash", json.dumps({"cmd": "printf"}))
 
     rendering.render_tool_call_start(call, tool)
     rendered = output.export_text()
@@ -161,15 +158,16 @@ def test_broken_tool_formatters_do_not_break_rendering(monkeypatch) -> None:
     def fail(_value):
         raise RuntimeError("formatter bug")
 
-    tool = SimpleNamespace(id="custom", format_call_log=fail)
-    call = {
-        "id": "call-custom",
-        "type": "function",
-        "function": {
-            "name": "custom",
-            "arguments": json.dumps({"path": "src/app.py", "line": 4}),
-        },
-    }
+    tool = SimpleNamespace(
+        id="custom",
+        parse_arguments=json.loads,
+        format_call_log=fail,
+    )
+    call = ToolCall(
+        "call-custom",
+        "custom",
+        json.dumps({"path": "src/app.py", "line": 4}),
+    )
 
     rendering.render_tool_call_start(call, tool)
     rendering.render_tool_call_result("first line\nsecond line", tool)
@@ -182,14 +180,14 @@ def test_broken_tool_formatters_do_not_break_rendering(monkeypatch) -> None:
 def test_invalid_json_is_identified_instead_of_shown_as_arguments(monkeypatch) -> None:
     output = _recording_console()
     monkeypatch.setattr(rendering, "console", output)
-    call = {
-        "id": "call-bad",
-        "type": "function",
-        "function": {"name": "read", "arguments": '{"path":'},
-    }
+    def reject(_raw: str) -> dict[str, object]:
+        raise InvalidToolArguments("Invalid JSON arguments for tool 'read'")
 
-    assert rendering.render_tool_call_start(call) is None
-    assert "Invalid JSON" in output.export_text()
+    tool = SimpleNamespace(id="read", parse_arguments=reject)
+    call = ToolCall("call-bad", "read", '{"path":')
+
+    assert rendering.render_tool_call_start(call, tool) is None
+    assert "Invalid JSON arguments" in output.export_text()
 
 
 def test_multiline_result_keeps_continuation_lines_indented(monkeypatch) -> None:
@@ -267,20 +265,18 @@ def test_adjacent_tool_calls_share_semantic_group_until_category_changes(
     tools = {
         name: SimpleNamespace(
             id=name,
+            parse_arguments=json.loads,
             format_call_log=lambda arguments: str(arguments.get("path", "run")),
         )
         for name in ("grep", "find", "bash", "glob")
     }
 
     for index, name in enumerate(("grep", "find", "bash", "glob"), 1):
-        call = {
-            "id": f"call-{index}",
-            "type": "function",
-            "function": {
-                "name": name,
-                "arguments": json.dumps({"path": f"src/{name}.py"}),
-            },
-        }
+        call = ToolCall(
+            f"call-{index}",
+            name,
+            json.dumps({"path": f"src/{name}.py"}),
+        )
         state.render_start(call, tools[name])
         state.render_result("ok", tools[name])
 
@@ -309,7 +305,7 @@ def test_two_runner_turns_group_calls_across_model_cycles(monkeypatch) -> None:
     )
     requests: list[ModelCall] = []
 
-    def fake_api(model_call: ModelCall) -> dict[str, object]:
+    def fake_api(model_call: ModelCall) -> ModelResponse:
         requests.append(model_call)
         return next(responses)
 
@@ -345,12 +341,12 @@ def test_two_runner_turns_group_calls_across_model_cycles(monkeypatch) -> None:
     assert "Second turn complete." in rendered
     assert requests
     assert all(isinstance(request, ModelCall) for request in requests)
-    assert requests[0].messages[-1]["content"] == "First simulated turn"
+    assert requests[0].messages[-1] == UserMessage("First simulated turn")
 
 
-def _tool_response(name: str, call_id: str) -> dict[str, object]:
+def _tool_response(name: str, call_id: str) -> ModelResponse:
     """Build one simulated model response containing a tool call."""
-    return {
+    return parse_model_response({
         "choices": [
             {
                 "message": {
@@ -366,9 +362,11 @@ def _tool_response(name: str, call_id: str) -> dict[str, object]:
                 }
             }
         ]
-    }
+    })
 
 
-def _text_response(content: str) -> dict[str, object]:
+def _text_response(content: str) -> ModelResponse:
     """Build one simulated model response containing final assistant prose."""
-    return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+    return parse_model_response(
+        {"choices": [{"message": {"role": "assistant", "content": content}}]}
+    )

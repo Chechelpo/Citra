@@ -16,23 +16,20 @@ instructions through ``steering``.
 from __future__ import annotations
 
 import json
-from citra.utils.model_tokenizer import tokenize
-
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
 
-from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionMessageParam,
-    ChatCompletionToolMessageParam,
-    ChatCompletionUserMessageParam,
+from citra.utils.model_tokenizer import tokenize
+
+from .chat_message import (
+    AssistantMessage,
+    ChatMessage,
+    ToolResultMessage,
+    UserMessage,
 )
-
-from .steering import SteeringInbox
-from .conversation_memory import ConversationMemory
 from citra.agent.model_context_policies.model_context_policy import apply_history_policy
-from citra.agent.chat_message import ChatMessage
+from .conversation_memory import ConversationMemory
+from .steering import SteeringInbox
 
 __all__ = [
     "AgentSession",
@@ -236,11 +233,7 @@ class AgentSession:
                 ),
             )
 
-            group_text = json.dumps(
-                projected,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            group_text = repr(projected)
 
             tokens = tokenize(
                 model_id,
@@ -286,20 +279,15 @@ class AgentSession:
         if not content:
             return
 
-        message: ChatCompletionUserMessageParam = {
-            "role": "user",
-            "content": content,
-        }
-
         self.message_groups.append(
             MessageGroup(
-                messages=[message],
+                messages=[UserMessage(content=content)],
             )
         )
 
     def add_assistant_message(
         self,
-        message: ChatCompletionAssistantMessageParam,
+        message: AssistantMessage,
     ) -> None:
         """
         Append an assistant message as a new message group.
@@ -336,17 +324,12 @@ class AgentSession:
 
         message = group.messages[0]
 
-        if message["role"] != "assistant":
+        if not isinstance(message, AssistantMessage):
             raise ValueError(
                 "Tool result must follow an assistant message."
             )
 
-        assistant_message = cast(
-            ChatCompletionAssistantMessageParam,
-            message,
-        )
-
-        tool_calls = assistant_message.get("tool_calls")
+        tool_calls = message.tool_calls
 
         if not tool_calls:
             raise ValueError(
@@ -355,7 +338,7 @@ class AgentSession:
             )
 
         expected_ids = {
-            tool_call["id"]
+            tool_call.id
             for tool_call in tool_calls
         }
 
@@ -365,9 +348,9 @@ class AgentSession:
             )
 
         existing_ids = {
-            message["tool_call_id"]
-            for message in group.messages[1:]
-            if message["role"] == "tool"
+            candidate.tool_call_id
+            for candidate in group.messages[1:]
+            if isinstance(candidate, ToolResultMessage)
         }
 
         if tool_call_id in existing_ids:
@@ -376,13 +359,12 @@ class AgentSession:
                 "has already been added."
             )
 
-        tool_message: ChatCompletionToolMessageParam = {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": result,
-        }
-
-        group.messages.append(tool_message)
+        group.messages.append(
+            ToolResultMessage(
+                tool_call_id=tool_call_id,
+                content=result,
+            )
+        )
 
     def has_pending_tool_results(self) -> bool:
         """
@@ -399,28 +381,23 @@ class AgentSession:
 
         message = group.messages[0]
 
-        if message["role"] != "assistant":
+        if not isinstance(message, AssistantMessage):
             return False
 
-        assistant_message = cast(
-            ChatCompletionAssistantMessageParam,
-            message,
-        )
-
-        tool_calls = assistant_message.get("tool_calls")
+        tool_calls = message.tool_calls
 
         if not tool_calls:
             return False
 
         expected_ids = {
-            tool_call["id"]
+            tool_call.id
             for tool_call in tool_calls
         }
 
         received_ids = {
-            message["tool_call_id"]
-            for message in group.messages[1:]
-            if message["role"] == "tool"
+            candidate.tool_call_id
+            for candidate in group.messages[1:]
+            if isinstance(candidate, ToolResultMessage)
         }
 
         return expected_ids != received_ids

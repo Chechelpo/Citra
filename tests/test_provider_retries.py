@@ -172,7 +172,7 @@ def test_call_api_retries_openrouter_provider_400(monkeypatch) -> None:
         urlopen,
     )
     result = call_api(_model_call())
-    assert result["choices"][0]["message"]["content"] == "ok"
+    assert result.assistant.content == "ok"
     assert calls == 2
 
 

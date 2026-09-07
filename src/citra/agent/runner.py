@@ -5,10 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
-from typing import Any, cast
-
-from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
-
 from citra.logging import Logger
 
 from ..cli.rendering import (
@@ -25,16 +21,17 @@ from ..tools.tool_registry import ToolRegistry
 from ..utils.chat_completions_api import (
     ModelCall,
     ModelRequestInterrupted,
+    ModelResponse,
     call_api,
 )
 from ..utils.model_tokenizer import tokenize
-from .response import execute_tool_call, get_assistant_message
+from .response import execute_tool_call
 from .session import AgentSession
 
 _logger = Logger("agent_runner.py")
 
 
-ApiCall = Callable[[ModelCall], dict[str, Any]]
+ApiCall = Callable[[ModelCall], ModelResponse]
 _CANCELLED_BY_STEERING = (
     "cancelled: user steering instructions were received before this tool call executed"
 )
@@ -203,15 +200,19 @@ class AgentRunner:
                 _logger.warning("Runtime closed after model response")
                 return
 
-            assistant = get_assistant_message(response)
+            assistant = response.assistant
 
             if self.render_output:
                 terminal_ui_state.record_tokens(
-                    input_tokens=input_tokens,
-                    output_tokens=_token_count(model_id, assistant),
+                    input_tokens=response.usage.input_tokens or input_tokens,
+                    output_tokens=(
+                        response.usage.output_tokens
+                        if response.usage.output_tokens is not None
+                        else _token_count(model_id, assistant)
+                    ),
                 )
 
-            text = assistant.get("content")
+            text = assistant.content
 
             if isinstance(text, str) and text:
                 _logger.trace(
@@ -230,10 +231,7 @@ class AgentRunner:
                 if self.render_output:
                     render_assistant_text(text)
 
-            tool_calls = cast(
-                list[ChatCompletionMessageFunctionToolCallParam],
-                assistant.get("tool_calls") or [],
-            )
+            tool_calls = assistant.tool_calls
 
             _logger.debug(
                 "Assistant response processed",
@@ -292,11 +290,7 @@ class AgentRunner:
                     _logger.warning("Runtime closing during tool execution")
                     return
 
-                call_id = tool_call.get("id")
-
-                if not call_id:
-                    _logger.error("Tool call missing id")
-                    raise RuntimeError("Model returned a tool call without an id.")
+                call_id = tool_call.id
 
                 if not cancel_remaining and self.session.steering.has_pending():
                     cancel_remaining = True
@@ -309,8 +303,7 @@ class AgentRunner:
                             level="warning",
                         )
 
-                function = tool_call["function"]
-                tool_name = str(function.get("name") or "unknown")
+                tool_name = tool_call.name
 
                 _logger.debug(
                     "Executing tool call",
@@ -321,7 +314,7 @@ class AgentRunner:
                     AgentRunEvent(
                         kind="tool-call",
                         role="assistant",
-                        content=str(function.get("arguments") or "{}"),
+                        content=tool_call.arguments,
                         tool=tool_name,
                     )
                 )

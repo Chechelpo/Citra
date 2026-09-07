@@ -11,7 +11,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 from rich import box
 from rich.console import Group, RenderableType
 from citra.sandbox import SandboxMode
@@ -23,7 +22,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
-from ..tools.tool import Tool
+from ..agent.chat_message import ToolCall
+from ..tools.tool import InvalidToolArguments, Tool
 from .theme import console
 from .input import terminal_ui_state
 
@@ -153,7 +153,7 @@ class ToolCallRenderState:
 
     def render_start(
         self,
-        tool_call: ChatCompletionMessageFunctionToolCallParam,
+        tool_call: ToolCall,
         tool: Tool | None = None,
     ) -> dict[str, Any] | None:
         """Render a grouped call and return its decoded argument object, if valid."""
@@ -184,12 +184,11 @@ def _panel_width() -> int:
 
 
 def tool_call_group(
-    tool_call: ChatCompletionMessageFunctionToolCallParam,
+    tool_call: ToolCall,
     tool: Tool | None = None,
 ) -> ToolCallGroup:
     """Map a model-facing call to its semantic UI activity category."""
-    function = tool_call["function"]
-    model_name = str(function.get("name", "unknown"))
+    model_name = tool_call.name
     semantic_name = str(getattr(tool, "id", model_name)).lower()
     return _TOOL_GROUPS.get(semantic_name, ToolCallGroup.USED_TOOLS)
 
@@ -366,24 +365,23 @@ def _tool_details(name: str, preview: str) -> RenderableType:
 
 
 def render_tool_call_start(
-    tool_call: ChatCompletionMessageFunctionToolCallParam,
+    tool_call: ToolCall,
     tool: Tool | None = None,
     *,
     nested: bool = False,
 ) -> dict[str, Any] | None:
     """Render one tool invocation and return decoded object arguments when valid."""
-    function = tool_call["function"]
-    name = str(function.get("name", "unknown"))
-    raw = str(function.get("arguments", "{}"))
-    try:
-        decoded = json.loads(raw)
-        arguments = decoded if isinstance(decoded, dict) else None
-    except json.JSONDecodeError:
-        arguments = None
-    if arguments is not None:
-        preview = _safe_call_preview(tool, arguments)
+    name = tool_call.name
+    raw = tool_call.arguments
+    arguments: dict[str, Any] | None = None
+    if tool is None:
+        preview = raw[:_MAX_FALLBACK_PREVIEW_LENGTH]
     else:
-        preview = f"Invalid JSON: {raw[:120]}"
+        try:
+            arguments = tool.parse_arguments(raw)
+            preview = _safe_call_preview(tool, arguments)
+        except InvalidToolArguments as error:
+            preview = str(error)
 
     title = name.replace("_", " ").capitalize()
     if not nested:

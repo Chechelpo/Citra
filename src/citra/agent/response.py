@@ -4,15 +4,11 @@ from __future__ import annotations
 import json
 import time
 import traceback
-from typing import Any, cast
+from typing import Any
 
-from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionMessageFunctionToolCallParam,
-)
-
+from .chat_message import ToolCall
 from .session import AgentSession
-from ..tools.tool import Tool
+from ..tools.tool import InvalidToolArguments, Tool
 from citra.logging import Logger
 
 
@@ -22,101 +18,6 @@ _CACHE_HIT_TEMPLATE = (
     "unchanged since previous identical {tool_id} call this turn; "
     "reuse the earlier result"
 )
-
-
-def get_assistant_message(
-    response: dict[str, Any],
-) -> ChatCompletionAssistantMessageParam:
-    """Return assistant message."""
-
-    _logger.debug(
-        "Parsing assistant response",
-        response=response,
-    )
-
-    try:
-        raw = response["choices"][0]["message"]
-
-    except (KeyError, IndexError, TypeError) as error:
-        _logger.error(
-            "Model returned invalid Chat Completions response",
-            error=str(error),
-            error_type=type(error).__name__,
-            traceback=traceback.format_exc(),
-        )
-        raise RuntimeError(
-            "Model returned an invalid Chat Completions response."
-        ) from error
-
-    if not isinstance(raw, dict):
-        _logger.error(
-            "Assistant message payload is not an object",
-            payload_type=type(raw).__name__,
-            payload=raw,
-        )
-        raise RuntimeError(
-            "Model returned an invalid Chat Completions response."
-        )
-
-    content = raw.get("content")
-
-    if content is not None and not isinstance(content, str):
-        _logger.error(
-            "Assistant content is not a string",
-            content_type=type(content).__name__,
-            content=content,
-        )
-        raise RuntimeError(
-            "Model returned invalid assistant content."
-        )
-
-    message: dict[str, Any] = {
-        "role": "assistant",
-        "content": content,
-    }
-
-    tool_calls = raw.get("tool_calls")
-
-    if tool_calls is not None:
-        if not isinstance(tool_calls, list):
-            _logger.error(
-                "Assistant tool_calls field is not a list",
-                value=tool_calls,
-            )
-            raise RuntimeError(
-                "Model returned invalid tool calls."
-            )
-
-        _logger.info(
-            "Assistant response contains tool calls",
-            count=len(tool_calls),
-            tool_calls=tool_calls,
-        )
-
-        message["tool_calls"] = tool_calls
-
-    for field in (
-        "reasoning_details",
-        "reasoning",
-        "reasoning_content",
-    ):
-        if field in raw:
-            _logger.trace(
-                "Preserving provider reasoning field",
-                field=field,
-                value=raw[field],
-            )
-            message[field] = raw[field]
-
-    _logger.debug(
-        "Assistant message parsed",
-        message=message,
-    )
-
-    return cast(
-        ChatCompletionAssistantMessageParam,
-        message,
-    )
 
 
 def serialize_tool_result(result: Any) -> str:
@@ -144,7 +45,7 @@ def serialize_tool_result(result: Any) -> str:
 
 def execute_tool_call(
     tools: dict[str, Tool],
-    tool_call: ChatCompletionMessageFunctionToolCallParam,
+    tool_call: ToolCall,
     *,
     session: AgentSession | None = None,
 ) -> str:
@@ -152,10 +53,8 @@ def execute_tool_call(
 
     started = time.monotonic()
 
-    function = tool_call["function"]
-
-    tool_name = function.get("name")
-    call_id = tool_call.get("id")
+    tool_name = tool_call.name
+    call_id = tool_call.id
 
     _logger.info(
         "Starting tool execution",
@@ -163,14 +62,6 @@ def execute_tool_call(
         call_id=call_id,
         tool_call=tool_call,
     )
-
-    if not tool_name:
-        _logger.warning(
-            "Tool call missing function name",
-            call_id=call_id,
-            tool_call=tool_call,
-        )
-        return "error: tool call does not contain a function name"
 
     tool = tools.get(tool_name)
 
@@ -182,7 +73,7 @@ def execute_tool_call(
         )
         return f"error: unknown tool '{tool_name}'"
 
-    raw_arguments = function.get("arguments", "{}")
+    raw_arguments = tool_call.arguments
 
     _logger.debug(
         "Raw tool arguments received",
@@ -192,25 +83,15 @@ def execute_tool_call(
     )
 
     try:
-        arguments = json.loads(raw_arguments)
-
-    except json.JSONDecodeError as error:
+        arguments = tool.parse_arguments(raw_arguments)
+    except InvalidToolArguments as error:
         _logger.warning(
-            "Tool arguments are invalid JSON",
+            "Tool rejected model arguments",
             tool=tool.id,
             arguments=raw_arguments,
             error=str(error),
-            traceback=traceback.format_exc(),
         )
-        return f"error: invalid tool arguments JSON: {error}"
-
-    if not isinstance(arguments, dict):
-        _logger.warning(
-            "Tool arguments are not an object",
-            tool=tool.id,
-            arguments=arguments,
-        )
-        return "error: tool arguments must be a JSON object"
+        return f"error: {error}"
 
     _logger.debug(
         "Parsed tool arguments",

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from citra import application as application_module
-from citra.agent import AgentSession
+from citra.agent import AgentSession, AssistantMessage
 from citra.application import CitraApplication
 from citra.config import SandboxPolicy
 from citra.context import WorkspaceContext
@@ -299,7 +299,7 @@ def test_application_uses_fresh_session_per_serial_role(
         def run_turn(self) -> None:
             phase = application.workflow_runtime.active_run.current_step.step_id
             executed.append((phase, self.session))
-            role_inputs.append(str(self.session.get_messages()[0]["content"]))
+                role_inputs.append(self.session.get_messages()[0].content)
             checkpoint = self.session.memory.get_or_create(
                 FakeCheckpoint.TOOL_ID,
                 FakeCheckpoint,
@@ -308,12 +308,9 @@ def test_application_uses_fresh_session_per_serial_role(
             checkpoint.current_checkpoint = SimpleNamespace(
                 next_step=transitions[phase],
             )
-            self.session.add_assistant_message(
-                {
-                    "role": "assistant",
-                    "content": f"Assistant message from {phase}",
-                }
-            )
+                self.session.add_assistant_message(
+                    AssistantMessage(content=f"Assistant message from {phase}")
+                )
 
     class FakeWorkflowRuntime:
         active_run = None

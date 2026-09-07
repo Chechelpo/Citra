@@ -8,17 +8,23 @@ import random
 import socket
 import ssl
 import time
-from typing import Any, Callable, cast
+from typing import Any, Callable
 import urllib.error
 import urllib.request
-from openai.types.chat import ChatCompletionSystemMessageParam
 from ...cli.rendering import (
     render_model_debug,
     render_model_error,
     render_model_retry,
     render_model_warning,
 )
-from ...agent import ChatMessage
+from ...agent.chat_message import (
+    AssistantMessage,
+    ChatMessage,
+    JsonValue,
+    SystemMessage,
+    ToolResultMessage,
+    UserMessage,
+)
 from ...config import ModelConfig
 from ...context import ExecutionContext
 from ...tools.session_memory import MemoryTool
@@ -26,10 +32,16 @@ from ...tools.tool import Tool
 from ..api import chat_completions_url
 from .model_call import ModelCall
 from .model_normalization import normalize_model_response
+from .model_response import (
+    ModelResponse,
+    ModelResponseParseError,
+    parse_model_response,
+)
 logger = logging.getLogger(__name__)
 RETRY_ON_RATE_LIMIT: bool = True
 DEBUG_PRINTING: bool = True
 DEFAULT_MAX_RETRIES: int = 12
+WireMessage = dict[str, Any]
 
 def debug_printing_enabled() -> bool:
     """Return whether model-request diagnostics are rendered in the CLI."""
@@ -50,16 +62,16 @@ class ModelRequestInterrupted(RuntimeError):
     """A pending retry was superseded by newly queued user steering."""
 _RETRYABLE_CLIENT_HTTP_STATUS_CODES: frozenset[int] = frozenset({408, 409, 421, 423, 424, 425})
 
-def merge_consecutive_roles(messages: list[ChatMessage]) -> list[ChatMessage]:
+def merge_consecutive_roles(messages: list[WireMessage]) -> list[WireMessage]:
     """
     Merge adjacent plain-text messages with the same role.
 
     Protocol-bearing messages such as assistant tool calls and tool
     results are preserved exactly.
     """
-    merged: list[ChatMessage] = []
+    merged: list[WireMessage] = []
     for message in messages:
-        current = cast(ChatMessage, dict(message))
+        current = dict(message)
         if not merged:
             merged.append(current)
             continue
@@ -69,16 +81,15 @@ def merge_consecutive_roles(messages: list[ChatMessage]) -> list[ChatMessage]:
             continue
         previous_content = previous.get('content')
         current_content = current.get('content')
-        previous_dict = cast(dict[str, Any], previous)
         if not previous_content:
-            previous_dict['content'] = current_content
+            previous['content'] = current_content
             continue
         if not current_content:
             continue
-        previous_dict['content'] = f'{previous_content}\n\n{current_content}'
+        previous['content'] = f'{previous_content}\n\n{current_content}'
     return merged
 
-def _messages_are_mergeable(first: ChatMessage, second: ChatMessage) -> bool:
+def _messages_are_mergeable(first: WireMessage, second: WireMessage) -> bool:
     """Handle messages are mergeable."""
     role = first.get('role')
     if role != second.get('role'):
@@ -411,7 +422,7 @@ def _is_retryable_url_error(error: urllib.error.URLError) -> bool:
         return True
     return False
 
-def validate_tool_history(messages: list[ChatMessage]) -> None:
+def validate_tool_history(messages: list[WireMessage]) -> None:
     """Handle validate tool history."""
     pending: set[str] = set()
     for index, message in enumerate(messages):
@@ -610,11 +621,63 @@ def _is_stealth_continue_work_error(status: int, body: str) -> bool:
     detail = ' '.join((value for _, value in fields)).casefold()
     return '[stealth] error' in detail
 
-def _append_continue_work_message(messages: list[ChatMessage]) -> list[ChatMessage]:
+def _append_continue_work_message(messages: list[WireMessage]) -> list[WireMessage]:
     """Return a copied request history with an explicit continuation turn."""
     continued = list(messages)
-    continued.append(cast(ChatMessage, {'role': 'user', 'content': 'continue your work'}))
+    continued.append({'role': 'user', 'content': 'continue your work'})
     return continued
+
+
+def _serialize_message(message: ChatMessage) -> WireMessage:
+    """Convert typed Citra history into an OpenAI-compatible wire object."""
+    if isinstance(message, UserMessage):
+        return {'role': 'user', 'content': message.content}
+    if isinstance(message, SystemMessage):
+        return {'role': 'system', 'content': message.content}
+    if isinstance(message, ToolResultMessage):
+        return {
+            'role': 'tool',
+            'tool_call_id': message.tool_call_id,
+            'content': message.content,
+        }
+    if isinstance(message, AssistantMessage):
+        serialized: WireMessage = {
+            'role': 'assistant',
+            'content': message.content,
+        }
+        if message.tool_calls:
+            serialized['tool_calls'] = [
+                {
+                    'id': tool_call.id,
+                    'type': 'function',
+                    'function': {
+                        'name': tool_call.name,
+                        'arguments': tool_call.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+        if message.reasoning.reasoning is not None:
+            serialized['reasoning'] = _thaw_json(message.reasoning.reasoning)
+        if message.reasoning.content is not None:
+            serialized['reasoning_content'] = _thaw_json(
+                message.reasoning.content
+            )
+        if message.reasoning.details is not None:
+            serialized['reasoning_details'] = _thaw_json(
+                message.reasoning.details
+            )
+        return serialized
+    raise TypeError(f"Unsupported chat message: {type(message).__name__}")
+
+
+def _thaw_json(value: JsonValue) -> object:
+    """Convert immutable reasoning JSON into request-serializable containers."""
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    return value
 
 def _resolve_model_snapshot(context: ExecutionContext, model_config: ModelConfig | None) -> ModelConfig:
     """Resolve the model once for the lifetime of one HTTP request.
@@ -627,7 +690,7 @@ def _resolve_model_snapshot(context: ExecutionContext, model_config: ModelConfig
         raise TypeError('model_config must be a ModelConfig')
     return model
 
-def call_api(model_call: ModelCall) -> dict[str, Any]:
+def call_api(model_call: ModelCall) -> ModelResponse:
     """
     Perform one OpenAI-compatible Chat Completions request.
 
@@ -751,11 +814,16 @@ def call_api(model_call: ModelCall) -> dict[str, Any]:
         raise ValueError('max_backoff cannot be negative.')
     if initial_backoff > max_backoff:
         raise ValueError('initial_backoff cannot exceed max_backoff.')
-    system_messages: list[ChatCompletionSystemMessageParam] = [{'role': 'system', 'content': sys_prompt}]
+    system_messages: list[WireMessage] = [
+        {'role': 'system', 'content': sys_prompt}
+    ]
     memory_context = build_memory_context(
         tools if not memory_services else memory_services
     )
-    messages_to_merge: list[ChatMessage] = [*system_messages, *messages]
+    messages_to_merge: list[WireMessage] = [
+        *system_messages,
+        *(_serialize_message(message) for message in messages),
+    ]
     request_messages = merge_consecutive_roles(messages_to_merge)
     request_messages = insert_memory_context(request_messages, memory_context)
     request_messages = normalize_message_content(request_messages)
@@ -798,14 +866,24 @@ def call_api(model_call: ModelCall) -> dict[str, Any]:
                 decoded = normalize_model_response(decoded, tools=tools, model_id=model.id)
                 _log_finish_reasons(decoded)
                 if _has_usable_choice(decoded):
-                    return decoded
+                    try:
+                        return parse_model_response(decoded)
+                    except ModelResponseParseError as error:
+                        _retry_after_error(
+                            attempt=attempt,
+                            max_attempts=max_attempts,
+                            initial_backoff=initial_backoff,
+                            max_backoff=max_backoff,
+                            error=error,
+                            reason="returned an invalid response contract",
+                            interrupt=retry_interrupt,
+                        )
+                        attempt += 1
+                        continue
             except json.JSONDecodeError as error:
                 _retry_after_error(attempt=attempt, max_attempts=max_attempts, initial_backoff=initial_backoff, max_backoff=max_backoff, error=error, reason='received an invalid JSON response', interrupt=retry_interrupt)
                 attempt += 1
                 continue
-            _log_finish_reasons(decoded)
-            if _has_usable_choice(decoded):
-                return decoded
             diagnostic = _choice_output_diagnostic(decoded)
             logger.warning('Model API returned HTTP 200 without usable assistant output: %s', diagnostic)
             render_model_warning(
@@ -907,7 +985,7 @@ def build_memory_context(
     )
     return '\n\n'.join(('# Conversation Memory', 'The following state is owned by this conversation and survives agent turns and dropped older messages. Treat it as active working memory. Update it through the corresponding memory tools when it becomes completed, stale, invalid, or otherwise changes.', *sections))
 
-def insert_memory_context(messages: list[ChatMessage], memory_context: str | None) -> list[ChatMessage]:
+def insert_memory_context(messages: list[WireMessage], memory_context: str | None) -> list[WireMessage]:
     """
     Insert mutable conversation memory late in the prompt to maximize
     reusable prompt-cache prefix length.
@@ -920,7 +998,7 @@ def insert_memory_context(messages: list[ChatMessage], memory_context: str | Non
     """
     if not memory_context:
         return list(messages)
-    memory_message = cast(ChatMessage, {'role': 'system', 'content': memory_context})
+    memory_message: WireMessage = {'role': 'system', 'content': memory_context}
     result = list(messages)
     for index in range(len(result) - 1, -1, -1):
         message = result[index]
@@ -934,7 +1012,7 @@ def insert_memory_context(messages: list[ChatMessage], memory_context: str | Non
     result.append(memory_message)
     return result
 
-def normalize_message_content(messages: list[ChatMessage]) -> list[ChatMessage]:
+def normalize_message_content(messages: list[WireMessage]) -> list[WireMessage]:
     """
     Normalize OpenAI-compatible message content for stricter providers.
 
@@ -942,9 +1020,9 @@ def normalize_message_content(messages: list[ChatMessage]) -> list[ChatMessage]:
     null, despite the OpenAI protocol permitting omitted/null content
     when tool_calls are present.
     """
-    normalized: list[ChatMessage] = []
+    normalized: list[WireMessage] = []
     for index, message in enumerate(messages):
-        current = cast(dict[str, Any], dict(message))
+        current = dict(message)
         content = current.get('content')
         role = current.get('role')
         if content is None:
@@ -954,5 +1032,5 @@ def normalize_message_content(messages: list[ChatMessage]) -> list[ChatMessage]:
                 raise ValueError(f'Message {index} with role {role!r} has null or missing content.')
         elif not isinstance(content, (str, list)):
             raise ValueError(f'Message {index} with role {role!r} has invalid content type {type(content).__name__!r}.')
-        normalized.append(cast(ChatMessage, current))
+        normalized.append(current)
     return normalized

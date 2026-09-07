@@ -10,7 +10,12 @@ from threading import Event, Lock
 from citra.logging import Logger
 from citra.utils.lsp import LspConfig, LspManager
 
-from .agent import AgentSession, UserInteractionBroker
+from .agent import (
+    AgentSession,
+    AssistantMessage,
+    UserInteractionBroker,
+    UserMessage,
+)
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
 from .cli.rendering import render_command_output, render_notice
@@ -418,11 +423,11 @@ class CitraApplication:
     def _latest_assistant_handoff(self) -> str | None:
         """Handle latest assistant handoff."""
         for message in reversed(self.session.get_messages()):
-            if message.get("role") != "assistant":
+            if not isinstance(message, AssistantMessage):
                 continue
-            if message.get("tool_calls"):
+            if message.tool_calls:
                 continue
-            content = message.get("content")
+            content = message.content
             if isinstance(content, str) and content.strip():
                 return content.strip()
         return None
@@ -442,17 +447,16 @@ class CitraApplication:
     def _latest_user_message(self) -> str | None:
         """Handle latest user message."""
         for message in reversed(self.session.get_messages()):
-            if message.get("role") == "user":
-                content = message.get("content")
-                if isinstance(content, str) and content.strip():
-                    normalized = content.strip()
-                    if normalized.startswith("# Workflow task"):
-                        continue
-                    if normalized.startswith(
-                        "The workflow controller rejected phase completion:"
-                    ):
-                        continue
-                    return normalized
+            if not isinstance(message, UserMessage) or not message.content.strip():
+                continue
+            normalized = message.content.strip()
+            if normalized.startswith("# Workflow task"):
+                continue
+            if normalized.startswith(
+                "The workflow controller rejected phase completion:"
+            ):
+                continue
+            return normalized
         return None
 
     def handle_command(self, user_input: str) -> bool:

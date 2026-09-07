@@ -118,23 +118,20 @@ unchanged.
 """
 
 import re
+from collections.abc import Callable
+from dataclasses import replace
 
-from collections.abc import Callable, Iterable
-
-from citra.agent.chat_message import ChatMessage
+from citra.agent.chat_message import (
+    AssistantMessage,
+    ChatMessage,
+    ReasoningMetadata,
+)
 
 
 HistoryPolicy = Callable[
     [list[ChatMessage], bool],
     list[ChatMessage],
 ]
-
-
-_REASONING_FIELDS = (
-    "reasoning",
-    "reasoning_content",
-    "reasoning_details",
-)
 
 
 def _default_policy(
@@ -146,26 +143,16 @@ def _default_policy(
     return list(messages)
 
 
-def _strip_assistant_fields(
+def _strip_assistant_reasoning(
     messages: list[ChatMessage],
-    fields: Iterable[str],
 ) -> list[ChatMessage]:
-    """
-    Return a shallow copy of the message list with selected fields removed
-    from assistant messages.
-
-    Individual message mappings are copied before modification, so the stored
-    conversation is never mutated by a history policy.
-    """
-    fields = tuple(fields)
-    result: list[ChatMessage] = []
-    for message in messages:
-        current = dict(message)
-        if current.get("role") == "assistant":
-            for field in fields:
-                current.pop(field, None)
-        result.append(current)  # type: ignore[arg-type]
-    return result
+    """Return typed history with assistant reasoning metadata removed."""
+    return [
+        replace(message, reasoning=ReasoningMetadata())
+        if isinstance(message, AssistantMessage)
+        else message
+        for message in messages
+    ]
 
 
 def _kimi_k2_policy(
@@ -178,10 +165,7 @@ def _kimi_k2_policy(
     """
     if current_turn:
         return list(messages)
-    return _strip_assistant_fields(
-        messages,
-        _REASONING_FIELDS,
-    )
+    return _strip_assistant_reasoning(messages)
 
 
 def _glm_5_policy(

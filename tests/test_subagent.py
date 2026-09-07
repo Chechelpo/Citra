@@ -17,6 +17,7 @@ from typing import Any, Callable, cast
 
 import pytest
 
+from citra.agent import UserMessage
 from citra.tools.subagent.spec import (
     SubagentSpec,
     SubagentStatus,
@@ -406,7 +407,7 @@ def test_supervisor_seeds_worker_task_and_records_runner_events(
     import citra.tools.subagent.supervisor as supervisor_module
 
     supervisor, _ = _make_supervisor(tmp_path)
-    seen_messages: list[dict[str, Any]] = []
+    seen_messages: list[Any] = []
 
     class _ObservedRunner:
         def __init__(
@@ -454,8 +455,8 @@ def test_supervisor_seeds_worker_task_and_records_runner_events(
     statuses = supervisor.wait((subagent_id,), timeout=5.0)
     assert statuses[subagent_id] == SubagentStatus.COMPLETED
     assert any(
-        message.get("role") == "user"
-        and message.get("content") == "implement component"
+        isinstance(message, UserMessage)
+        and message.content == "implement component"
         for message in seen_messages
     )
     snapshot = supervisor.snapshot(subagent_id)
