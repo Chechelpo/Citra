@@ -8,19 +8,12 @@ from pathlib import Path
 from threading import Event, Lock
 
 from citra.logging import Logger
+from citra.utils.lsp import LspConfig, LspManager
 
 from .agent import AgentSession, UserInteractionBroker
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
-from .workflows import (
-    SingleModeWorkflow,
-    Workflow,
-    WorkflowRegistry,
-    WorkflowRun,
-    WorkflowRuntime,
-)
-from citra.utils.lsp import LspConfig, LspManager
 from .tools.session_memory import (
     AcceptanceCriteriaTool,
     CheckpointTool,
@@ -34,7 +27,13 @@ from .tools.skills.skill_registry import SkillRegistry
 from .tools.subagent import SubagentSupervisor
 from .utils.chat_completions_api import call_api
 from .utils.terminal import RESET, YELLOW
-
+from .workflows import (
+    SingleModeWorkflow,
+    Workflow,
+    WorkflowRegistry,
+    WorkflowRun,
+    WorkflowRuntime,
+)
 
 _logger = Logger(__name__)
 
@@ -140,6 +139,7 @@ class CitraApplication:
                 lsp_manager=self.lsp_manager,
                 user_interactions=self.interactions,
                 subagents=self.subagent_supervisor,
+                session=self.session,
             )
             self.runner = AgentRunner(
                 self.context,
@@ -289,6 +289,7 @@ class CitraApplication:
             skills_root=self._skills_root(),
         )
         self.session = session
+        object.__setattr__(self.context, "session", session)
         self.skills = skills
         self.context.activate_workflow(
             workflow,
@@ -522,9 +523,12 @@ class CitraApplication:
             except BaseException as error:
                 errors.append(error)
             try:
+                preserve_workspace = not (
+                    self.workspace.can_discard_applied_workspace()
+                )
                 self.workspace.cleanup(
                     force=force,
-                    preserve_workspace=True,
+                    preserve_workspace=preserve_workspace,
                 )
             except BaseException as error:
                 errors.append(error)

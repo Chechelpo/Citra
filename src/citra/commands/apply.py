@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 from citra.context.source_baseline import (
     MISSING_SOURCE_ENTRY,
@@ -21,7 +21,6 @@ from citra.context.source_baseline import (
 from citra.logging import Logger
 
 from .command import Command, CommandResult
-
 
 _logger = Logger(__name__)
 
@@ -149,6 +148,7 @@ class ApplyCommand(Command):
             checkout=checkout,
             selected=selected,
         )
+        self.context.workspace.mark_source_apply_completed()
 
         staged_count = 0
         staging_error: str | None = None

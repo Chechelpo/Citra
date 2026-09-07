@@ -10,6 +10,7 @@ from .glob import Glob
 from .grep import Grep
 from .lsp import Lsp
 from .prompt_user import PromptUser
+from .python import Python
 from .read import Read
 from .read_image import ReadImage
 from .skill_tool import SkillTool
@@ -32,6 +33,7 @@ __all__ = [
     "Grep",
     "Lsp",
     "PromptUser",
+    "Python",
     "Read",
     "ReadImage",
     "SkillTool",

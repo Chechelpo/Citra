@@ -130,6 +130,7 @@ class WorkspaceContext:
     env_soft_limit_bytes: int
     cache_soft_limit_bytes: int
     tmp_soft_limit_bytes: int
+    source_apply_completed: bool = False
 
     @classmethod
     def create(cls, workspace: str | Path, *, temporary_workspace: str | Path | None=None, library: str | Path | None=None, tool_definitions: Sequence[ToolDefinition] | None=None, runtime_assets: Sequence[RuntimeAsset] | None=None, browser_path: str | Path | None=None, sandbox_mode: SandboxMode=SandboxMode.FULL_SANDBOX, provisioning_copy_budget_bytes: int=_DEFAULT_PROVISIONING_COPY_BUDGET_BYTES, remove_stale_process_roots: bool=True, aggressive_environment_normalization: bool=True, environment_overrides: Mapping[str, str] | None=None, env_soft_limit_bytes: int=_DEFAULT_ENV_SOFT_LIMIT_BYTES, cache_soft_limit_bytes: int=_DEFAULT_CACHE_SOFT_LIMIT_BYTES, tmp_soft_limit_bytes: int=_DEFAULT_TMP_SOFT_LIMIT_BYTES) -> WorkspaceContext:
@@ -255,6 +256,21 @@ class WorkspaceContext:
         began = self._lifecycle.begin_closing()
         self.processes.begin_closing()
         return began
+
+    def mark_source_apply_completed(self) -> None:
+        """Record that checkout changes were successfully copied to source."""
+        object.__setattr__(self, "source_apply_completed", True)
+
+    def can_discard_applied_workspace(self) -> bool:
+        """Return whether shutdown can delete the fully applied checkout."""
+        if not self.source_apply_completed or self.source_baseline is None:
+            return False
+        try:
+            return capture_source_baseline(self.workspace) == self.source_baseline
+        except (OSError, RuntimeError, ValueError):
+            # Cleanup must favor preserving user work whenever inventory cannot
+            # prove that the checkout still matches the last applied baseline.
+            return False
 
     @property
     def disabled_tool_ids(self) -> frozenset[str]:
@@ -686,7 +702,20 @@ def _copy_regular_file(source: Path, destination: Path) -> None:
     destination.chmod(stat.S_IMODE(destination.stat().st_mode) | stat.S_IRUSR | stat.S_IWUSR)
 
 def _create_dependency_environment(env_root: Path, provisioning: RuntimeProvisioning) -> list[str]:
-    """Create the shared Python dependency environment when Python exists."""
+    """Create the shared Python dependency environment when Python exists.
+
+    This bootstrap is a prerequisite for the model-facing ``python`` tool
+    (:class:`citra.tools.transient.python.Python`). The tool re-uses this
+    venv for status, ``select_version``, install/uninstall, and sync; it
+    must not duplicate the venv bootstrap or run ``uv pip install`` here.
+
+    The ``python`` and ``python3`` entry points inside the venv are
+    registered as staged runtime commands so Bash, Subprocess, and direct
+    ``sandbox.run`` calls resolve them through the isolated runtime layer
+    (Requirement R4). The :class:`citra.tools.transient.python.Python`
+    tool re-registers the entry points after every ``select_version`` or
+    ``install``/``uninstall`` so version changes keep the redirect.
+    """
     warnings: list[str] = []
     if not (provisioning.has_command('python3') or provisioning.has_command('python')):
         return warnings
@@ -695,6 +724,20 @@ def _create_dependency_environment(env_root: Path, provisioning: RuntimeProvisio
         venv.EnvBuilder(system_site_packages=True, clear=False, symlinks=True, with_pip=False).create(destination)
     except Exception as error:
         warnings.append(f'Could not create shared Python environment: {error}')
+        return warnings
+    bin_dir = destination / 'bin'
+    for command in ('python', 'python3'):
+        candidate = bin_dir / command
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            provisioning.register_staged_command(command, candidate)
+            logger.info(
+                'Registered agent-managed Python command',
+                extra={
+                    'origin': __name__,
+                    'command': command,
+                    'path': str(candidate),
+                },
+            )
     return warnings
 
 def _directory_size(root: Path) -> int:

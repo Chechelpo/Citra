@@ -10,6 +10,10 @@ host_url = "http://localhost"
 
 [bash]
 
+[python]
+always_allow_network = true
+permission_timeout = 41
+
 [subprocess]
 
 [browser]
@@ -26,4 +30,6 @@ def test_homogenous_load(tmp_path):
 
     assert tools.web_search.host_url == 'http://localhost'
     assert tools.bash.permission_timeout == 30
+    assert tools.python.always_allow_network is True
+    assert tools.python.permission_timeout == 41
     assert sandbox.extra_ro_binds[0].name == 'test'

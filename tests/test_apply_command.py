@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from citra.commands.apply import ApplyCommand
 from citra.commands.default_registry import COMMAND_REGISTRY
 from citra.context.source_baseline import SourceEntry, capture_source_baseline
+from citra.context.workspace_context import WorkspaceContext
 
 
 def _git(project: Path, *arguments: str) -> str:
@@ -43,11 +44,13 @@ def _command(
     checkout: Path,
     baseline: dict[str, SourceEntry],
 ) -> ApplyCommand:
+    applied: list[bool] = []
     context = SimpleNamespace(
         workspace=SimpleNamespace(
             source_workspace=source,
             workspace=checkout,
             source_baseline=baseline,
+            mark_source_apply_completed=lambda: applied.append(True),
         )
     )
     return ApplyCommand(context)
@@ -67,6 +70,29 @@ def _plain_workspaces(
 
 def test_apply_command_is_registered() -> None:
     assert COMMAND_REGISTRY.contains("apply")
+
+
+def test_applied_workspace_is_discardable_until_changed_again(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout-state"
+    checkout.mkdir()
+    (checkout / "file.txt").write_text("applied\n", encoding="utf-8")
+    workspace = WorkspaceContext.__new__(WorkspaceContext)
+    object.__setattr__(workspace, "workspace", checkout)
+    object.__setattr__(
+        workspace,
+        "source_baseline",
+        capture_source_baseline(checkout),
+    )
+    object.__setattr__(workspace, "source_apply_completed", False)
+
+    assert workspace.can_discard_applied_workspace() is False
+    workspace.mark_source_apply_completed()
+    assert workspace.can_discard_applied_workspace() is True
+
+    (checkout / "file.txt").write_text("new unapplied edit\n", encoding="utf-8")
+    assert workspace.can_discard_applied_workspace() is False
 
 
 def test_apply_previews_copies_and_stages_nonignored_changes(

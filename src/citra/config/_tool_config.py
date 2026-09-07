@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import tomllib
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
 from citra.config._constants import TOOLS_CONFIG_FILE
 from citra.config._file_config import TomlConfig
+
 
 @dataclass(frozen=True)
 class WebSearchConfig:
@@ -51,6 +52,35 @@ class BashConfig:
                 raw,
                 "permission_timeout",
                 section="bash",
+                default=30,
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class PythonConfig:
+    """Configure network approval for the managed Python tool."""
+
+    always_allow_network: bool = False
+    permission_timeout: int = 30
+
+    @classmethod
+    def create(
+        cls,
+        raw: dict[str, Any],
+    ) -> PythonConfig:
+        """Build Python tool configuration from its TOML table."""
+        return cls(
+            always_allow_network=_bool(
+                raw,
+                "always_allow_network",
+                section="python",
+                default=False,
+            ),
+            permission_timeout=_positive_int(
+                raw,
+                "permission_timeout",
+                section="python",
                 default=30,
             ),
         )
@@ -154,6 +184,7 @@ class ToolConfigs(TomlConfig):
     """Represent ToolConfigs."""
     web_search: WebSearchConfig
     bash: BashConfig
+    python: PythonConfig
     subprocess: SubprocessConfig
     browser: BrowserConfig
 
@@ -189,6 +220,7 @@ class ToolConfigs(TomlConfig):
         allowed = {
             "web-search",
             "bash",
+            "python",
             "subprocess",
             "browser",
             "lsp",
@@ -210,6 +242,9 @@ class ToolConfigs(TomlConfig):
             ),
             bash=BashConfig.create(
                 _table(raw, "bash"),
+            ),
+            python=PythonConfig.create(
+                _table(raw, "python"),
             ),
             subprocess=SubprocessConfig.create(
                 _table(raw, "subprocess"),

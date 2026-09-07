@@ -71,6 +71,13 @@
     always_allow_network = false
     permission_timeout = 30
 
+[python]
+    # When false, managed uv operations that may download packages or Python
+    # runtimes require explicit terminal approval. Status and uninstall are
+    # always local-only and never prompt.
+    always_allow_network = false
+    permission_timeout = 30
+
 [subprocess]
     # Applies only to subprocesses started with network=true.
     always_allow_network = false

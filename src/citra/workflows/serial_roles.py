@@ -447,7 +447,7 @@ Complete TODOs only when the described outcome exists and can be verified.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(SubagentTool, WebSearch),
+        deferred_tools=(SubagentTool, WebSearch, Python),
     )
 
 
@@ -497,7 +497,7 @@ Failures become issues routed to the phase capable of correction.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(Browser, Subprocess, WebSearch),
+        deferred_tools=(Browser, Subprocess, WebSearch, Python),
     )
 
 

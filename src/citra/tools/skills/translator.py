@@ -21,7 +21,7 @@ class Translator(Skill):
         """Initialize the instance."""
         super().__init__(
             "media-translator",
-            "Reverse-engineer how a game stores, references, assembles, and displays translatable text. Use Python managed with uv to build diagnostic and extraction tools, recover localization context, produce a structured translation corpus, and create a model-agnostic LLM translation runner with deterministic validation.",
+            "Reverse-engineer how a game stores, references, assembles, and displays translatable text. Use the `python` tool (uv-managed `env/python` venv) to build diagnostic and extraction scripts, recover localization context, produce a structured translation corpus, and create a model-agnostic LLM translation runner with deterministic validation. `uv` is the only supported package manager; `python` and `python3` from Bash already resolve to the agent-managed interpreter.",
             Path(),
         )
 

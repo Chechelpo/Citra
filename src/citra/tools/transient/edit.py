@@ -1,17 +1,18 @@
-from citra.sandbox.filesystem_ops import EditInput
+from difflib import unified_diff
 from typing import Any, override
 
+from citra.sandbox.filesystem_ops import EditInput
+
 from ...context import ExecutionContext
-from ..capabilities import ToolCapabilities
-from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
+from ..tool import Tool, ToolDefinition
 from ._post_edit import post_edit_result
-
 
 _TRUNCATE_LENGTH = 120
 
@@ -480,10 +481,6 @@ class Edit(Tool):
             "",
         )
 
-        parts = [
-            f"path={path}",
-        ]
-
         old = normalized.get("old")
         new = normalized.get("new")
         line = normalized.get("line")
@@ -492,29 +489,25 @@ class Edit(Tool):
             False,
         )
 
-        if line is not None:
-            parts.append(
-                f"insert@line={line}"
+        old_text = "" if old is None else str(old)
+        new_text = "" if new is None else str(new)
+        diff = "\n".join(
+            unified_diff(
+                old_text.splitlines(),
+                new_text.splitlines(),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+                lineterm="",
             )
-
-        elif old is not None:
-            parts.append(
-                f"old={self._truncate(old)!r}"
-            )
-
-            if new is not None:
-                parts.append(
-                    f"new={self._truncate(new)!r}"
-                )
-
-            if replace_all:
-                parts.append(
-                    "all=true"
-                )
-
-        return " | ".join(
-            parts
         )
+        metadata: list[str] = []
+        if line is not None:
+            metadata.append(f"insert@line={line}")
+        if replace_all:
+            metadata.append("all=true")
+        if metadata:
+            diff += "\n" + " | ".join(metadata)
+        return diff.rstrip()
 
     @override
     def format_result_log(

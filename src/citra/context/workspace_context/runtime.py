@@ -259,7 +259,27 @@ class RuntimeProvisioning:
         return self.resolve_command(command) is not None
 
     def resolve_command(self, command: str) -> Path | None:
-        """Resolve one command to its canonical sandbox launcher."""
+        """Resolve one command to its canonical sandbox launcher.
+
+        Mutable dependency-environment entries (registered through
+        :meth:`register_staged_command`) take precedence over discovered
+        host commands so the model-facing ``python`` tool can keep
+        ``python`` and ``python3`` pointing at the agent-managed
+        ``env/python`` venv.
+        """
+        for tool in self.tools.values():
+            if tool.id.startswith("staged:") and tool.available and command in tool.commands:
+                resolved = tool.commands[command]
+                logger.debug(
+                    "Resolved staged dependency-environment command",
+                    extra={
+                        "origin": __name__,
+                        "command": command,
+                        "tool": tool.id,
+                        "path": str(resolved),
+                    },
+                )
+                return resolved
         for tool in self.tools.values():
             if tool.available and command in tool.commands:
                 resolved = tool.commands[command]

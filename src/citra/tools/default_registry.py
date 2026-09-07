@@ -25,6 +25,7 @@ from .transient import (
     Grep,
     Lsp,
     PromptUser,
+    Python,
     Read,
     ReadImage,
     SkillTool,
@@ -301,6 +302,7 @@ _DEFERRED_TOOL_TYPES: tuple[type[Tool], ...] = (
     Diagram,
     ReadImage,
     SubagentTool,
+    Python,
 )
 
 

@@ -61,20 +61,19 @@ class TestRead:
         log = Read(_ctx()).format_call_log(
             {"path": "src/main.py"}
         )
-        assert "path=src/main.py" in log
+        assert log == "src/main.py"
 
     def test_call_log_with_offset_limit(self) -> None:
         log = Read(_ctx()).format_call_log(
             {"path": "src/main.py", "offset": 10, "limit": 50}
         )
-        assert "offset=10" in log
-        assert "limit=50" in log
+        assert log == "src/main.py"
 
     def test_call_log_batch(self) -> None:
         log = Read(_ctx()).format_call_log(
             {"requests": [{"path": "a.py"}, {"path": "b.py"}]}
         )
-        assert "batch=2" in log
+        assert log == "- a.py\n- b.py"
 
     def test_result_log_content(self) -> None:
         result = "===== a.py =====\nline 1\nline 2\n"
@@ -96,9 +95,10 @@ class TestEdit:
         log = Edit(_ctx()).format_call_log(
             {"path": "a.py", "old": "x", "new": "y"}
         )
-        assert "path=a.py" in log
-        assert "old=" in log
-        assert "new=" in log
+        assert "--- a/a.py" in log
+        assert "+++ b/a.py" in log
+        assert "-x" in log
+        assert "+y" in log
 
     def test_call_log_insert(self) -> None:
         log = Edit(_ctx()).format_call_log(
@@ -131,6 +131,16 @@ class TestWrite:
         )
         assert "path=a.py" in log
         assert "6 chars" in log
+        assert "hello\n" in log
+
+    def test_call_log_truncates_long_content(self) -> None:
+        content = "x" * 2_100
+        log = Write(_ctx()).format_call_log(
+            {"path": "large.txt", "content": content}
+        )
+        assert "2100 chars" in log
+        assert "truncated 100 chars" in log
+        assert content not in log
 
     def test_result_log(self) -> None:
         assert Write(_ctx()).format_result_log("ok") == "ok"

@@ -26,13 +26,13 @@ Design goals:
 from __future__ import annotations
 
 from asyncio import TimerHandle
-from typing import Any, Callable
+from collections.abc import Callable
+from shutil import get_terminal_size
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.formatted_text import ANSI
-
 
 __all__ = [
     "TerminalInput",
@@ -58,6 +58,8 @@ class TerminalInput:
     def prompt(
         self,
         message: str = "",
+        *,
+        boxed: bool = False,
     ) -> str:
         """
         Read one line of normal, unlimited user input.
@@ -71,15 +73,32 @@ class TerminalInput:
             EOFError:
                 When Ctrl+D is pressed on an empty buffer.
         """
-        return self._session.prompt(
-            ANSI(message),
-            handle_sigint=True,
-        )
+        if not boxed:
+            return self._session.prompt(
+                ANSI(message),
+                handle_sigint=True,
+            )
+
+        width = max(24, min(get_terminal_size(fallback=(80, 24)).columns, 100))
+        top = "╭" + "─" * (width - 2) + "╮"
+        bottom = "╰" + "─" * (width - 2) + "╯"
+        print(top)
+        try:
+            return self._session.prompt(
+                ANSI("│ " + message),
+                rprompt=ANSI("│"),
+                bottom_toolbar=ANSI(bottom),
+                handle_sigint=True,
+            )
+        finally:
+            print(bottom)
 
     def prompt_with_idle_timeout(
         self,
         timeout: float,
         message: str = "",
+        *,
+        on_activity: Callable[[], None] | None = None,
     ) -> str | None:
         """
         Read one line with an inactivity timeout.
@@ -96,6 +115,9 @@ class TerminalInput:
                 Maximum number of consecutive idle seconds.
             message:
                 Optional ANSI-styled prompt text.
+            on_activity:
+                Optional callback invoked when the prompt opens and whenever
+                its buffer changes.
 
         Returns:
             The submitted line, or ``None`` when the inactivity timeout
@@ -116,6 +138,7 @@ class TerminalInput:
 
         watchdog = _IdleWatchdog(
             timeout=timeout,
+            on_activity=on_activity,
         )
 
         try:
@@ -213,9 +236,11 @@ class _IdleWatchdog:
     def __init__(
         self,
         timeout: float,
+        on_activity: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the instance."""
         self._timeout = timeout
+        self._on_activity = on_activity
 
         self._handle: TimerHandle | None = None
         self._buffer: Buffer | None = None
@@ -231,6 +256,7 @@ class _IdleWatchdog:
         self._buffer = app.layout.current_buffer
         self._buffer.on_text_changed += self._on_text_changed
 
+        self._record_activity()
         self._schedule()
 
     def stop(self) -> None:
@@ -257,7 +283,13 @@ class _IdleWatchdog:
         """
         Reset the inactivity timer whenever the input text changes.
         """
+        self._record_activity()
         self._schedule()
+
+    def _record_activity(self) -> None:
+        """Notify the owner that the user is still engaging with the prompt."""
+        if self._on_activity is not None:
+            self._on_activity()
 
     def _schedule(self) -> None:
         """

@@ -408,6 +408,13 @@ class LintRunner:
         project file and walks toward the project root. Ruff is currently the
         auto-detected project linter. An explicit ``[tool.ruff.lint]`` table is
         required; ``[tool.ruff.format]`` additionally enables format checking.
+
+        This read-only policy detection is intentionally separate from
+        Python dependency management: the model-facing
+        :class:`citra.tools.transient.python.Python` tool owns the
+        ``env/python`` venv and the ``pyproject.toml`` install/sync path,
+        while :class:`LintRunner` only inspects project policy for static
+        analysis. There is no duplicate install or venv logic here.
         """
         project_root = self.workspace.workspace.resolve()
         project_path = (project_root / relative).resolve()

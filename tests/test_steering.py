@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import contextlib
-from types import SimpleNamespace
-from threading import Event, Thread
 import time
+from threading import Event, Thread
+from types import SimpleNamespace
 from unittest import mock
 
 from citra.agent import AgentSession
@@ -29,6 +29,28 @@ def test_user_interaction_broker_round_trip() -> None:
     assert broker.respond(request.id, "2")
     thread.join(timeout=2)
     assert result == ["2"]
+
+
+def test_user_typing_extends_broker_handoff_deadline() -> None:
+    broker = UserInteractionBroker()
+    result: list[str | None] = []
+    thread = Thread(
+        target=lambda: result.append(
+            broker.ask("Explain", (), timeout=0.08)
+        )
+    )
+    thread.start()
+    request = None
+    while request is None:
+        request = broker.take()
+
+    for _ in range(3):
+        time.sleep(0.04)
+        assert broker.record_activity(request.id)
+
+    assert broker.respond(request.id, "still here")
+    thread.join(timeout=1)
+    assert result == ["still here"]
 
 
 def test_mid_turn_steering_cancels_unstarted_tool_calls() -> None:

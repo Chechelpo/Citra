@@ -14,7 +14,6 @@ import os
 import unittest
 from unittest import mock
 
-
 _SRC = os.path.join(
     os.path.dirname(__file__),
     "..",
@@ -23,12 +22,12 @@ _SRC = os.path.join(
 os.environ["PYTHONPATH"] = os.path.abspath(_SRC)
 
 
-from citra.utils.terminal_input import (  # noqa: E402
+from citra.utils.terminal_input import (
+    TerminalInput,
     _IdleTimeout,
     _IdleWatchdog,
     _PredicateSatisfied,
     terminal_input,
-    TerminalInput,
 )
 
 
@@ -104,6 +103,10 @@ class _Event:
         self._handlers.append(other)
         return self
 
+    def __isub__(self, other):
+        self._handlers.remove(other)
+        return self
+
     def _fire(self, *args):
         for h in self._handlers:
             h(*args)
@@ -135,6 +138,20 @@ def _make_watchdog(timeout):
 
 
 class IdleWatchdogTests(unittest.TestCase):
+    def test_activity_callback_runs_on_open_and_buffer_changes(self):
+        activity = mock.Mock()
+        app = FakeApp()
+        watchdog = _IdleWatchdog(timeout=1.0, on_activity=activity)
+        with mock.patch(
+            "citra.utils.terminal_input.get_app",
+            return_value=app,
+        ):
+            watchdog.start()
+            app.layout.current_buffer._trigger()
+            watchdog.stop()
+
+        self.assertEqual(activity.call_count, 2)
+
     def test_timeout_fires_when_idle(self):
         wd, app = _make_watchdog(1.0)
 
@@ -175,6 +192,20 @@ class IdleWatchdogTests(unittest.TestCase):
 
 
 class TerminalInputApiTests(unittest.TestCase):
+    def test_boxed_prompt_draws_a_composer_border(self):
+        ti = TerminalInput()
+
+        with mock.patch.object(
+            ti._session, "prompt", return_value="hello"
+        ) as prompt, mock.patch("builtins.print") as output:
+            result = ti.prompt("› ", boxed=True)
+
+        self.assertEqual(result, "hello")
+        self.assertTrue(prompt.call_args.args[0].value.startswith("│ "))
+        self.assertEqual(output.call_count, 2)
+        self.assertTrue(output.call_args_list[0].args[0].startswith("╭"))
+        self.assertTrue(output.call_args_list[1].args[0].startswith("╰"))
+
     def test_prompt_with_idle_timeout_returns_none_on_idle_timeout(self):
         """
         Drive a PromptSession prompt where the watchdog fires an

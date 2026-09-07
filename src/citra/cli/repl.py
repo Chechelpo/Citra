@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import time
 from threading import Event, Thread
 from typing import Any
 
@@ -14,7 +13,6 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from ..agent.interactions import UserPromptRequest
 from ..agent.runner import ApiCall
 from ..application import CitraApplication
-from ..workflows import Workflow, WorkflowRegistry
 from ..utils.chat_completions_api import call_api
 from ..utils.process_logging import process_log
 from ..utils.terminal import (
@@ -30,8 +28,8 @@ from ..utils.terminal import (
     terminal_bell,
 )
 from ..utils.terminal_input import terminal_input
+from ..workflows import Workflow, WorkflowRegistry
 from .rendering import print_header
-
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +91,11 @@ def _answer_model_prompt(
         print(f"\n{DIM}Type a number or a free-form answer.{RESET}")
     else:
         print(f"{DIM}(open-ended question){RESET}")
-    remaining = max(0.01, request.timeout - (time.monotonic() - request.created_at))
+    application.interactions.record_activity(request.id)
     answer = input_service.prompt_with_idle_timeout(
-        timeout=remaining,
+        timeout=request.timeout,
         message=f"{BOLD}{BLUE}❯{RESET} ",
+        on_activity=lambda: application.interactions.record_activity(request.id),
     )
     if answer is None:
         print(
@@ -193,11 +192,11 @@ def run_turn_with_steering(
             if steering is not None and is_command(steering):
                 command_parts = steering[1:].split(None, 1)
                 command_id = command_parts[0] if command_parts else ""
-                if command_id in {"agent", "workflow"}:
+                if command_id in {"agent", "memory", "workflow"}:
                     application.handle_command(steering)
                 else:
                     print(
-                        f"{YELLOW}⏺ Only /agent and /workflow supervision "
+                        f"{YELLOW}⏺ Only /agent, /memory, and /workflow "
                         f"commands are "
                         f"available while a turn is running.{RESET}"
                     )
@@ -253,7 +252,10 @@ def _run_application(
         while True:
             try:
                 print(separator())
-                user_input = input_service.prompt(f"{BOLD}{BLUE}❯{RESET} ").strip()
+                user_input = input_service.prompt(
+                    f"{BOLD}{BLUE}›{RESET} ",
+                    boxed=True,
+                ).strip()
                 print(separator())
                 if not user_input:
                     continue

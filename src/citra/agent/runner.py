@@ -11,11 +11,10 @@ from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 from citra.logging import Logger
 
 from ..cli.rendering import (
-    memory_tool_for_call,
     render_assistant_text,
-    render_memory_change,
     render_tool_call_result,
     render_tool_call_start,
+    working_animation,
 )
 from ..context import ExecutionContext
 from ..tools.enable_tools import EnableTools
@@ -29,7 +28,6 @@ from ..utils.chat_completions_api import (
 from ..utils.terminal import RESET, YELLOW
 from .response import execute_tool_call, get_assistant_message
 from .session import AgentSession
-
 
 _logger = Logger("agent_runner.py")
 
@@ -209,7 +207,11 @@ class AgentRunner:
             )
 
             try:
-                response = self.api_call(**api_arguments)
+                if self.render_output:
+                    with working_animation():
+                        response = self.api_call(**api_arguments)
+                else:
+                    response = self.api_call(**api_arguments)
 
             except ModelRequestInterrupted:
                 _logger.info(
@@ -355,19 +357,10 @@ class AgentRunner:
                 )
 
                 if self.render_output:
-                    render_tool_call_start(tool_call)
-
-                memory_tool = (
-                    memory_tool_for_call(tools, tool_call)
-                    if self.render_output
-                    else None
-                )
-
-                memory_before = (
-                    build_memory_context(tools)
-                    if memory_tool
-                    else None
-                )
+                    render_tool_call_start(
+                        tool_call,
+                        tools.get(tool_name),
+                    )
 
                 result = (
                     _CANCELLED_BY_STEERING
@@ -395,18 +388,16 @@ class AgentRunner:
                 )
 
                 if self.render_output:
-                    render_tool_call_result(result)
+                    render_tool_call_result(
+                        result,
+                        tools.get(tool_name),
+                    )
 
                 self.session.add_tool_result(
                     call_id,
                     result,
                 )
 
-                if not cancel_remaining and memory_tool is not None:
-                    render_memory_change(
-                        tools,
-                        memory_before,
-                    )
 
     def _emit(self, event: AgentRunEvent) -> None:
         """Handle emit."""

@@ -1,15 +1,12 @@
 """Model-facing read tool backed by the sandbox filesystem worker."""
 
-from citra.sandbox.filesystem_ops import ReadRawInput
-from citra.sandbox.filesystem_ops import ReadOutput
-from citra.sandbox.filesystem_ops import ReadInput
-from citra.utils.lsp import LspError
-from citra.utils.lsp.errors import LspDiagnosticsTimeout
-from citra.utils.lsp import LspUnavailable
-from citra.utils.lsp.diagnostics import format_diagnostics
-from citra.utils.lsp import detect_language
 from pathlib import Path
 from typing import Any, override
+
+from citra.sandbox.filesystem_ops import ReadInput, ReadRawInput
+from citra.utils.lsp import LspError, LspUnavailable, detect_language
+from citra.utils.lsp.diagnostics import format_diagnostics
+from citra.utils.lsp.errors import LspDiagnosticsTimeout
 
 from ...context import ExecutionContext
 from ...utils.json_schema import (
@@ -307,22 +304,15 @@ class Read(Tool):
         requests = arguments.get("requests")
 
         if path is not None:
-            parts = [f"path={self._truncate(path)}"]
-
-            offset = arguments.get("offset")
-            if offset:
-                parts.append(f"offset={offset}")
-
-            limit = arguments.get("limit")
-            if limit is not None:
-                parts.append(f"limit={limit}")
-
-            return " | ".join(parts)
+            return self._truncate(path)
 
         if requests:
-            return f"batch={len(requests)} request(s)"
+            return "\n".join(
+                f"- {self._truncate(request.get('path', '(missing path)'))}"
+                for request in requests
+            )
 
-        return "no path"
+        return "(no files)"
 
     @override
     def format_result_log(

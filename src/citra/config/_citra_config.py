@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import os
-from pathlib import Path
 import tomllib
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 from citra.config._analysis import (
     LintContextConfig,
@@ -17,6 +17,7 @@ from citra.config._sandbox_policy import SandboxPolicy
 from citra.config._tool_config import (
     BashConfig,
     BrowserConfig,
+    PythonConfig,
     SubprocessConfig,
     ToolConfigs,
     WebSearchConfig,
@@ -120,6 +121,11 @@ class CitraConfig:
     def subprocess(self) -> SubprocessConfig:
         """Handle subprocess."""
         return self.tools.subprocess
+
+    @property
+    def python(self) -> PythonConfig:
+        """Return managed Python tool configuration."""
+        return self.tools.python
 
     @property
     def browser(self) -> BrowserConfig:

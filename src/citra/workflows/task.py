@@ -43,7 +43,7 @@ class TaskWorkflow(StaticWorkflow):
             DecisionTool,
             ConstraintTool,
         ),
-        deferred_tools=(Lsp, WebSearch, Browser, PromptUser, Document, Diagram),
+        deferred_tools=(Lsp, WebSearch, Browser, PromptUser, Document, Diagram, Python),
     )
     _SANDBOX_CONFIG = SandboxConfig()
     _TASK_STEERING = TaskSteeringConfig(

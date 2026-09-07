@@ -55,8 +55,9 @@ Re-exports `Command`, `CommandRegistry`, `CommandResult`,
 | `debug`| `DebugCommand`| `debug.py` | Toggle the grey model-request debug lines in `chat_completions_api.py` (`on`, `off`, or no argument to flip). |
 | `agent`| `AgentCommand`| `agent.py` | List or inspect subagents and send steering, guidance answers, or cancellation directly from the CLI. |
 | `workflow`| `WorkflowCommand`| `workflow.py` | Inspect or cancel the active workflow run and show its resolved sandbox policy, phase, and transitions. |
+| `memory`| `MemoryCommand`| `memory.py` | Print the current structured session memory on demand, including while an agent turn is running. |
 | `workspace`| `WorkspaceCommand`| `workspace.py` | Show the copied checkout path or open an interactive user shell in it. |
-| `apply`| `ApplyCommand`| `apply.py` | Preview baseline-relative checkout changes, apply them to the private original source after confirmation, and safely stage eligible paths in a containing Git worktree when one exists. |
+| `apply`| `ApplyCommand`| `apply.py` | Preview baseline-relative checkout changes, apply them to the private original source after confirmation, safely stage eligible paths, and allow shutdown to remove a fully applied checkout. |
 
 Legacy alias: bare `/exit` is mapped to `/q` by `CitraApplication`.
 
@@ -98,6 +99,9 @@ active turn.
   optional staging capability: when the source is inside a larger worktree,
   the containing top-level repository is detected automatically while the
   selected workspace remains the apply boundary.
+- After a successful `/apply`, normal shutdown removes the copied checkout only
+  when it still matches the advanced apply baseline. Any edits made afterward
+  cause the checkout to be preserved instead.
 - `HelpCommand` reads from `COMMAND_REGISTRY.help_lines()` — new
   commands appear in `/help` automatically once registered.
 - `TestCommand` is the most complex command; it demonstrates how to

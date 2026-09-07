@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from queue import Empty, Queue
 from threading import Event, Lock
-import time
 
 
 @dataclass
@@ -16,6 +16,7 @@ class UserPromptRequest:
     options: tuple[str, ...]
     timeout: float
     created_at: float = field(default_factory=time.monotonic)
+    last_activity_at: float = field(default_factory=time.monotonic)
     completed: Event = field(default_factory=Event)
     answer: str | None = None
 
@@ -51,11 +52,16 @@ class UserInteractionBroker:
             self._next_id += 1
             self._active[request.id] = request
             self._pending.put(request)
-        if not request.completed.wait(timeout):
+        while True:
             with self._lock:
-                self._active.pop(request.id, None)
-            return None
-        return request.answer
+                if request.id not in self._active:
+                    return request.answer
+                remaining = timeout - (time.monotonic() - request.last_activity_at)
+                if remaining <= 0:
+                    self._active.pop(request.id, None)
+                    return None
+            if request.completed.wait(remaining):
+                return request.answer
 
     def take(self) -> UserPromptRequest | None:
         """Handle take."""
@@ -76,6 +82,15 @@ class UserInteractionBroker:
                 return False
             request.answer = answer
             request.completed.set()
+            return True
+
+    def record_activity(self, request_id: int) -> bool:
+        """Extend a pending prompt's inactivity deadline after user typing."""
+        with self._lock:
+            request = self._active.get(request_id)
+            if request is None:
+                return False
+            request.last_activity_at = time.monotonic()
             return True
 
     def has_pending(self) -> bool:

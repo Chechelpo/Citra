@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from openai.types.chat import ChatCompletionMessageFunctionToolCallParam
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.status import Status
 from rich.text import Text
 
 from ..context import CitraConfig
@@ -16,10 +19,39 @@ from ..tools.session_memory import MemoryTool
 from ..tools.tool import Tool
 from ..utils.chat_completions_api import build_memory_context
 
-
 console = Console(
     highlight=False,
 )
+
+
+def format_elapsed(seconds: float) -> str:
+    """Format elapsed work time compactly for terminal status messages."""
+    total_seconds = max(0, round(seconds))
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+@contextmanager
+def working_animation():
+    """Animate while the model is working and report the elapsed duration."""
+    started = perf_counter()
+    status = Status(
+        "[dim]Working…[/dim]",
+        console=console,
+        spinner="dots",
+        refresh_per_second=12.5,
+    )
+    status.start()
+    try:
+        yield
+    finally:
+        status.stop()
+        elapsed = format_elapsed(perf_counter() - started)
+        line = Text("✻ ", style="magenta")
+        line.append(f"Worked for {elapsed}", style="dim")
+        console.print(line)
 
 
 def render_markdown(text: str) -> None:
@@ -76,6 +108,7 @@ def result_preview(
 
 def render_tool_call_start(
     tool_call: ChatCompletionMessageFunctionToolCallParam,
+    tool: Tool | None = None,
 ) -> dict[str, Any] | None:
     """Handle render tool call start."""
     function = tool_call["function"]
@@ -95,7 +128,16 @@ def render_tool_call_start(
     except json.JSONDecodeError:
         arguments = None
 
-    if isinstance(arguments, dict):
+    if (
+        isinstance(arguments, dict)
+        and tool is not None
+        and (
+            tool.id in {"edit", "read", "write"}
+            or isinstance(tool, MemoryTool)
+        )
+    ):
+        preview = tool.format_call_log(arguments)
+    elif isinstance(arguments, dict):
         preview = argument_preview(
             arguments
         )
@@ -120,14 +162,13 @@ def render_tool_call_start(
         style="green bold",
     )
 
-    line.append("(")
-
-    line.append(
-        preview,
-        style="dim",
-    )
-
-    line.append(")")
+    if "\n" in preview:
+        line.append("\n")
+        line.append(preview, style="dim")
+    else:
+        line.append("(")
+        line.append(preview, style="dim")
+        line.append(")")
 
     console.print()
     console.print(line)
@@ -137,6 +178,7 @@ def render_tool_call_start(
 
 def render_tool_call_result(
     result: str,
+    tool: Tool | None = None,
 ) -> None:
     """Handle render tool call result."""
     line = Text()
@@ -146,10 +188,12 @@ def render_tool_call_result(
         style="dim",
     )
 
-    line.append(
-        result_preview(result),
-        style="dim",
+    shown = (
+        tool.format_result_log(result)
+        if isinstance(tool, MemoryTool)
+        else result_preview(result)
     )
+    line.append(shown, style="dim")
 
     console.print(line)
 

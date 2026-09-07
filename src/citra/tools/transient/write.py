@@ -1,16 +1,19 @@
-from citra.sandbox.filesystem_ops import WriteInput
 from typing import Any, override
 
+from citra.sandbox.filesystem_ops import WriteInput
+
 from ...context import ExecutionContext
-from ..capabilities import ToolCapabilities
-from ..tool import Tool, ToolDefinition
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
     JsonProperty,
     JsonSchema,
 )
+from ..capabilities import ToolCapabilities
+from ..tool import Tool, ToolDefinition
 from ._post_edit import post_edit_result
+
+_LOG_CONTENT_LIMIT = 2_000
 
 
 def _write_definition(
@@ -436,10 +439,15 @@ class Write(Tool):
             arguments
         )
 
-        return (
-            f"path={path} | "
-            f"{len(content)} chars"
-        )
+        shown_content = content
+        omitted = len(content) - _LOG_CONTENT_LIMIT
+        if omitted > 0:
+            shown_content = (
+                content[:_LOG_CONTENT_LIMIT]
+                + f"\n… <truncated {omitted} chars>"
+            )
+
+        return f"path={path} | {len(content)} chars\n{shown_content}"
 
     @override
     def format_result_log(

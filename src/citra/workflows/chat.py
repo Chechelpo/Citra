@@ -33,6 +33,7 @@ class ChatWorkflow(StaticWorkflow):
             Document,
             Diagram,
             ReadImage,
+            Python,
         ),
     )
     _SANDBOX_CONFIG = SandboxConfig()

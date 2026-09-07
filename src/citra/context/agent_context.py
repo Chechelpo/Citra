@@ -5,19 +5,19 @@ import platform
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from citra.config import CitraConfig, ModelConfig, WebSearchConfig
 from citra.context.workspace_context import WorkspaceContext
+from citra.sandbox.sandbox import WorkspaceSandbox
+from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
 from citra.tools.linting import LintRunner
 from citra.tools.skills.skill_registry import SkillRegistry
 from citra.utils.browser_manager import BrowserManager
 from citra.utils.managed_subprocess import ManagedSubprocesses
 from citra.utils.model_tokenizer import tokenize
 from citra.utils.repo_map import RepoMap
-from citra.sandbox.sandbox import WorkspaceSandbox
-from citra.sandbox.sandboxed_filesystem import SandboxedFilesystem
-
-from citra.config import CitraConfig, ModelConfig, WebSearchConfig
 
 if TYPE_CHECKING:
+    from citra.agent import AgentSession
     from citra.utils.lsp import LspManager
     from citra.workflows import SingleModeWorkflow, WorkflowRuntime
 
@@ -38,6 +38,7 @@ class ExecutionContext:
     lsp_manager: LspManager | None = None
     user_interactions: object | None = None
     subagents: object | None = None
+    session: AgentSession | None = None
     __os: str = field(
         init=False,
     )
