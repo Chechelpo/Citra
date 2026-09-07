@@ -47,8 +47,10 @@ The selected workflow's unified sandbox contribution is merged into a cloned
 `SandboxPolicy` before `WorkspaceSandbox` is constructed. Operator network
 denial is monotonic, and bind lists are additive.
 
-Lint placeholders are `{path}`, `{relative_path}`, and `{project}`. Project
+Lint placeholders are `{path}`, `{relative_path}`, `{project}`, and `{workspace}` (`{workspace}` is an exact alias for `{project}`). Project
 auto-detection reads the nearest `pyproject.toml` inside the copied project.
+
+<!-- Author: adamant-disaster -->
 
 ## Runtime provisioning
 

@@ -23,6 +23,8 @@ from citra.tools.session_memory import (
     WorkingStateTool,
 )
 from citra.tools.skills.skill import Skill
+from citra.tools.skills.integrations import IntegrationSkill
+from citra.tools.skills.coding_conventions import coding_skills
 from citra.tools.subagent.tool import SubagentTool
 from citra.tools.transient import  *
 from citra.workflows.sys_prompt import build_system_prompt
@@ -137,7 +139,8 @@ class _RoleWorkflow(SingleModeWorkflow):
     TASK_STEERING: ClassVar[TaskSteeringConfig]
     WORKFLOW_PREFIX: ClassVar[str] = "serial"
     ASSURANCE_INSTRUCTIONS: ClassVar[str] = ""
-    _AVAILABLE_SKILLS: ClassVar[tuple[Skill, ...]] = ()
+    _AVAILABLE_SKILLS: ClassVar[tuple[Skill, ...]] = (*coding_skills(), IntegrationSkill())
+    
 
     @property
     def name(self) -> str:
@@ -312,7 +315,7 @@ Advance to plan only when:
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(Lsp,),
+        deferred_tools=(Lsp, WebSearch, Bash),
     )
 
 
@@ -387,7 +390,7 @@ Do not edit files.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(Lsp,),
+        deferred_tools=(Lsp, WebSearch),
     )
 
 
@@ -444,7 +447,7 @@ Complete TODOs only when the described outcome exists and can be verified.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(SubagentTool,),
+        deferred_tools=(SubagentTool, WebSearch),
     )
 
 
@@ -494,7 +497,7 @@ Failures become issues routed to the phase capable of correction.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(Browser, Subprocess),
+        deferred_tools=(Browser, Subprocess, WebSearch),
     )
 
 
@@ -544,7 +547,7 @@ open, and no working state remains provisional.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(),
+        deferred_tools=(WebSearch,),
     )
 
 

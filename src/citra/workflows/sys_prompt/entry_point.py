@@ -181,7 +181,7 @@ Prefer:
 All functions/classes must contain documentation. For classes, its just what they're for and their data.
 
 For functions, include:
-    
+        
     1. **Parameter information** list parameters and what they're expected to represent/how they'll be used etc. Name assumptions if any.
     2. **What it does** an explanation of what this function does.
     3. **Return** what this functions returns if any.
@@ -190,4 +190,6 @@ For functions, include:
 All global variables must have their purpose documented.
 
 A developer must be able to understand all of the function without knowing the code. Keep in-line code comments updated to the logic.
+
+**MANDATORY: READ THE LANGUAGE CODING CONVENTIONS SKILL BEFORE WRITING ANY LINE OF CODE**
 """
