@@ -572,10 +572,13 @@ def render_notice(message: str, *, level: str = "info") -> None:
 
 
 def render_model_debug(message: str) -> None:
-    """Render optional model-request diagnostics without disrupting live output."""
-    console.print(
-        Text.assemble(("  · ", "citra.border"), (message, "citra.muted"))
-    )
+    """Replace the bounded latest-request diagnostics in the composer."""
+    terminal_ui_state.record_model_debug(message)
+
+
+def clear_model_debug() -> None:
+    """Clear transient model diagnostics from the composer."""
+    terminal_ui_state.clear_model_debug()
 
 
 def render_model_retry(

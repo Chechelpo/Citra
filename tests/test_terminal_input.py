@@ -430,6 +430,31 @@ class TerminalInputApiTests(unittest.TestCase):
         self.assertIn("in: 12 (hit 75%) · out: 4", idle)
         self.assertIn("Working for", active)
 
+    def test_model_debug_keeps_only_latest_request(self):
+        terminal_ui_state.reset()
+        terminal_ui_state.record_model_debug("Starting model request one")
+        terminal_ui_state.record_model_debug("Model HTTP 200 received")
+        terminal_ui_state.record_model_debug("Model finish_reason(s): stop")
+        first = "".join(
+            fragment[1]
+            for fragment in terminal_ui_state.composer_header(width=100)
+        )
+        self.assertIn("Starting model request one", first)
+
+        terminal_ui_state.record_model_debug("Starting model request two")
+        terminal_ui_state.record_model_debug("Model HTTP 429 received")
+        second = "".join(
+            fragment[1]
+            for fragment in terminal_ui_state.composer_header(width=100)
+        )
+
+        self.assertNotIn("request one", second)
+        self.assertNotIn("finish_reason(s): stop", second)
+        self.assertIn("Starting model request two", second)
+        self.assertIn("Model HTTP 429 received", second)
+        self.assertEqual(first.count("\n"), second.count("\n"))
+        terminal_ui_state.reset()
+
     def test_initial_and_steering_use_the_same_composer_object(self):
         initial = ComposerPrompt("/help or type your first message", "footer")
         steering = ComposerPrompt("enter steering", "footer")

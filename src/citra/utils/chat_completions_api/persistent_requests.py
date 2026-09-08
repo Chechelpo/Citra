@@ -12,6 +12,7 @@ from typing import Any, Callable
 import urllib.error
 import urllib.request
 from ...cli.rendering import (
+    clear_model_debug,
     render_model_debug,
     render_model_error,
     render_model_retry,
@@ -51,6 +52,8 @@ def set_debug_printing(enabled: bool) -> None:
     """Enable or disable model-request diagnostics at their owning module."""
     global DEBUG_PRINTING
     DEBUG_PRINTING = enabled
+    if not enabled:
+        clear_model_debug()
 
 def _debug_print(message: str) -> None:
     """Render a quiet diagnostic line when debug printing is enabled."""

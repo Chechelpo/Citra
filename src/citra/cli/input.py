@@ -78,6 +78,7 @@ _COMPOSER_STYLE = Style.from_dict(
         "": f"bg:{_COMPOSER_BACKGROUND}",
         "bottom-toolbar": (f"bg:{_STATUS_BACKGROUND} #8a8a8a noreverse"),
         "composer.activity": f"bg:{_STATUS_BACKGROUND} bold #7aa2f7",
+        "composer.debug": f"bg:{_STATUS_BACKGROUND} #8a8a8a",
         "composer.body": f"bg:{_COMPOSER_BACKGROUND}",
         "composer.divider": f"bg:{_STATUS_BACKGROUND} {_DIVIDER_FOREGROUND}",
         "composer.footer": f"bg:{_STATUS_BACKGROUND} #8a8a8a",
@@ -113,6 +114,7 @@ class BottomStatus:
     """Represent stable model activity and token counts below the composer."""
 
     working_label: str | None = None
+    model_debug: tuple[str, ...] = ()
     input_tokens: int = 0
     cached_tokens: int = 0
     output_tokens: int = 0
@@ -142,6 +144,7 @@ class TerminalUiState:
         with self._lock:
             self._status = BottomStatus(
                 working_label=label,
+                model_debug=(),
                 input_tokens=self._status.input_tokens,
                 cached_tokens=self._status.cached_tokens,
                 output_tokens=self._status.output_tokens,
@@ -164,6 +167,7 @@ class TerminalUiState:
                 else self._status.elapsed_seconds
             )
             self._status = BottomStatus(
+                model_debug=self._status.model_debug,
                 input_tokens=self._status.input_tokens,
                 cached_tokens=self._status.cached_tokens,
                 output_tokens=self._status.output_tokens,
@@ -182,9 +186,45 @@ class TerminalUiState:
         with self._lock:
             self._status = BottomStatus(
                 working_label=self._status.working_label,
+                model_debug=self._status.model_debug,
                 input_tokens=max(0, input_tokens),
                 cached_tokens=max(0, cached_tokens),
                 output_tokens=max(0, output_tokens),
+                started_at=self._status.started_at,
+                elapsed_seconds=self._status.elapsed_seconds,
+            )
+        self._invalidate()
+
+    def record_model_debug(self, message: str) -> None:
+        """Keep diagnostics for only the latest model request in the composer."""
+        normalized = message.strip()
+        if not normalized:
+            return
+        with self._lock:
+            previous = (
+                ()
+                if normalized.startswith("Starting ")
+                else self._status.model_debug
+            )
+            self._status = BottomStatus(
+                working_label=self._status.working_label,
+                model_debug=(*previous, normalized)[-3:],
+                input_tokens=self._status.input_tokens,
+                cached_tokens=self._status.cached_tokens,
+                output_tokens=self._status.output_tokens,
+                started_at=self._status.started_at,
+                elapsed_seconds=self._status.elapsed_seconds,
+            )
+        self._invalidate()
+
+    def clear_model_debug(self) -> None:
+        """Remove transient model diagnostics without changing other status."""
+        with self._lock:
+            self._status = BottomStatus(
+                working_label=self._status.working_label,
+                input_tokens=self._status.input_tokens,
+                cached_tokens=self._status.cached_tokens,
+                output_tokens=self._status.output_tokens,
                 started_at=self._status.started_at,
                 elapsed_seconds=self._status.elapsed_seconds,
             )
@@ -205,10 +245,19 @@ class TerminalUiState:
             f" · out: {status.output_tokens:,}"
         )
         status_line = _fit_toolbar_line(f"  {activity}  |  {tokens}", width)
+        debug_lines = tuple(
+            _fit_toolbar_line(f"  · {message}", width)
+            for message in status.model_debug[-3:]
+        )
+        debug_lines = (*debug_lines, *("",) * (3 - len(debug_lines)))
         divider = "─" * width
         return FormattedText(
             (
                 ("class:composer.activity", status_line + "\n"),
+                *(
+                    ("class:composer.debug", line + "\n")
+                    for line in debug_lines
+                ),
                 ("class:composer.divider", divider + "\n"),
                 ("class:composer.body", "│" + " " * (width - 1) + "\n"),
                 ("class:composer.body", "│   "),

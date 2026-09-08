@@ -10,6 +10,7 @@ from citra.agent.chat_message import ToolCall, UserMessage
 from citra.agent.runner import AgentRunner
 from citra.agent.session import AgentSession
 from citra.cli import rendering
+from citra.cli.input import terminal_ui_state
 from citra.cli.rendering import SessionHeader, format_elapsed
 from citra.commands.model import ModelCommand
 from citra.cli.theme import CITRA_THEME
@@ -279,6 +280,7 @@ def test_command_result_preserves_errors(monkeypatch) -> None:
 def test_model_request_diagnostics_use_semantic_styles(monkeypatch) -> None:
     output = _recording_console()
     monkeypatch.setattr(rendering, "console", output)
+    terminal_ui_state.reset()
 
     rendering.render_model_debug("Starting model request")
     rendering.render_model_retry(
@@ -291,10 +293,15 @@ def test_model_request_diagnostics_use_semantic_styles(monkeypatch) -> None:
     rendering.render_model_error("Model API returned HTTP 401: unauthorized")
 
     rendered = output.export_text()
-    assert "· Starting model request" in rendered
+    status = "".join(
+        fragment[1] for fragment in terminal_ui_state.composer_header(width=100)
+    )
+    assert "· Starting model request" in status
+    assert "Starting model request" not in rendered
     assert "Retrying in 1.2s (attempt 2/4)" in rendered
     assert "! Provider returned an empty response." in rendered
     assert "× Model API returned HTTP 401" in rendered
+    terminal_ui_state.reset()
 
 
 def test_command_usage_renders_forms_and_arguments_as_a_tree(monkeypatch) -> None:
