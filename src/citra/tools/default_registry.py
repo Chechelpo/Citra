@@ -12,29 +12,18 @@ from citra.logging import Logger
 from .capabilities import ToolCapabilities
 from .session_memory import *
 from .subagent.tool import SubagentTool
+from .subagent.group import SubagentToolGroup as _SubagentToolGroup
 from .tool import Tool
-from .transient import (
-    Bash,
-    Browser,
-    Diagram,
-    Document,
-    Edit,
-    Find,
-    Git,
-    Glob,
-    Grep,
-    Lsp,
-    PromptUser,
-    Python,
-    Read,
-    ReadImage,
-    SkillTool,
-    Subprocess,
-    Tree,
-    WebSearch,
-    Workspace,
-    Write,
-)
+from .developer import Git, Lsp
+from .documents import Diagram, Document
+from .editing import Edit, Write
+from .execution import Bash, Python, Subprocess
+from .explorer import Find, Glob, Grep, Read, ReadImage, Tree
+from .interaction import PromptUser
+from .skills.tool import SkillTool
+from .skills.group import SkillToolGroup as _SkillToolGroup
+from .web import Browser, WebSearch
+from .workspace import Workspace
 
 __all__ = [
     "ToolConfiguration",

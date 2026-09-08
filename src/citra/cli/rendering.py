@@ -7,7 +7,6 @@ import re
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
@@ -24,7 +23,8 @@ from rich.text import Text
 from rich.tree import Tree
 
 from ..agent.chat_message import ToolCall
-from ..tools.tool import InvalidToolArguments, Tool
+from ..tools.tool import Tool
+from ..tools.tool_group import GenericToolGroup, ToolGroup
 from .theme import console
 from .input import terminal_ui_state
 
@@ -104,66 +104,11 @@ class CliSessionLayout:
     footer: SessionFooter
 
 
-class ToolCallGroup(Enum):
-    """Describe the user-facing activity represented by a tool call."""
-
-    EXPLORED = "Explored"
-    CHANGED = "Changed"
-    RAN_COMMANDS = "Ran commands"
-    UPDATED_MEMORY = "Updated memory"
-    USED_TOOLS = "Used tools"
-
-
-# Tool identities assigned to the same activity category share one heading.
-_TOOL_GROUPS: dict[str, ToolCallGroup] = {
-    **dict.fromkeys(
-        (
-            "browser",
-            "find",
-            "glob",
-            "grep",
-            "lsp",
-            "read",
-            "read_image",
-            "tree",
-            "web-search",
-            "web_search",
-        ),
-        ToolCallGroup.EXPLORED,
-    ),
-    **dict.fromkeys(
-        ("apply_patch", "diagram", "document", "edit", "write"),
-        ToolCallGroup.CHANGED,
-    ),
-    **dict.fromkeys(
-        ("bash", "commit", "git", "python", "subprocess"),
-        ToolCallGroup.RAN_COMMANDS,
-    ),
-    **dict.fromkeys(
-        (
-            "acceptance_criteria",
-            "change",
-            "checkpoint",
-            "constraint",
-            "decision",
-            "fact",
-            "issue",
-            "requirement",
-            "scope",
-            "todo",
-            "verification",
-            "working_state",
-        ),
-        ToolCallGroup.UPDATED_MEMORY,
-    ),
-}
-
-
 @dataclass
 class ToolCallRenderState:
     """Keep adjacent tool calls under one activity heading for a single run."""
 
-    active_group: ToolCallGroup | None = None
+    active_group: type[ToolGroup] | None = None
     active_arguments: dict[str, Any] | None = None
     prepared_calls: dict[str, PreparedToolCall] | None = None
 
@@ -295,17 +240,19 @@ def _panel_width() -> int:
 def tool_call_group(
     tool_call: ToolCall,
     tool: Tool | None = None,
-) -> ToolCallGroup:
-    """Map a model-facing call to its semantic UI activity category."""
-    model_name = tool_call.name
-    semantic_name = str(getattr(tool, "id", model_name)).lower()
-    return _TOOL_GROUPS.get(semantic_name, ToolCallGroup.USED_TOOLS)
+) -> type[ToolGroup]:
+    """Resolve the group registered by the tool's package."""
+    return (
+        ToolGroup.for_tool(tool)
+        or ToolGroup.for_name(str(getattr(tool, "id", tool_call.name)))
+        or GenericToolGroup
+    )
 
 
-def render_tool_group_heading(group: ToolCallGroup) -> None:
+def render_tool_group_heading(group: type[ToolGroup]) -> None:
     """Start a semantic tool activity group in the terminal."""
     console.print()
-    console.print(Text.assemble(("• ", "citra.tool"), (group.value, "citra.tool")))
+    console.print(Text.assemble(("• ", "citra.tool"), (group.GROUP_NAME, "citra.tool")))
 
 
 def format_elapsed(seconds: float) -> str:
@@ -349,28 +296,28 @@ def _fallback_call_preview(arguments: dict[str, Any]) -> str:
     )
 
 
-def _safe_call_preview(tool: Tool | None, arguments: dict[str, Any]) -> str:
+def _safe_call_preview(tool: Tool | None, arguments: Any) -> str:
     """A presentation hook must never prevent the tool itself from running."""
     if tool is None:
-        return _fallback_call_preview(arguments)
+        return _fallback_call_preview(dict(arguments))
     try:
-        return str(tool.format_call_log(arguments))
+        group = ToolGroup.for_tool(tool) or GenericToolGroup
+        return group.format_call(tool, arguments)
     except Exception:  # noqa: BLE001 - third-party tool presentation hook
-        return _fallback_call_preview(arguments)
+        return _fallback_call_preview(dict(arguments))
 
 
 def _prepare_tool_call(
     tool_call: ToolCall,
     tool: Tool | None,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Decode a tool call and build its safe presentation preview."""
+    """Build a presentation preview from already parsed arguments."""
+    typed_arguments = tool_call.arguments
+    arguments = typed_arguments.to_dict()
     if tool is None:
-        return None, tool_call.arguments[:_MAX_FALLBACK_PREVIEW_LENGTH]
-    try:
-        arguments = tool.parse_arguments(tool_call.arguments)
-    except InvalidToolArguments as error:
-        return None, str(error)
-    return arguments, _safe_call_preview(tool, arguments)
+        preview = _fallback_call_preview(arguments)
+        return None, preview[:_MAX_FALLBACK_PREVIEW_LENGTH]
+    return arguments, _safe_call_preview(tool, typed_arguments)
 
 
 def _diff_line_counts(diff: str) -> tuple[int, int]:
@@ -581,8 +528,14 @@ def render_tool_call_result(
     nested: bool = False,
 ) -> None:
     """Render a compact, safely formatted receipt for a completed tool call."""
-    semantic_name = str(getattr(tool, "id", "unknown"))
-    shown = tool_result_preview(semantic_name, result, arguments).strip() or "(empty)"
+    if tool is None:
+        shown = result_preview(result)
+    elif not isinstance(tool, Tool):
+        shown = tool_result_preview(str(getattr(tool, "id", "unknown")), result, arguments)
+    else:
+        group = ToolGroup.for_tool(tool) or GenericToolGroup
+        shown = group.format_result(tool, result, arguments)
+    shown = shown.strip() or "(empty)"
     _render_result_receipt(shown, nested=nested)
 
 

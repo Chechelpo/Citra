@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import json
 from types import MappingProxyType
-from typing import TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from citra.tools.tool import Tool, ToolArguments
 
 
 JsonScalar: TypeAlias = None | bool | int | float | str
@@ -49,11 +53,28 @@ class ReasoningMetadata:
 
 @dataclass(frozen=True, slots=True)
 class ToolCall:
-    """Represent one model-requested tool invocation with raw tool-owned arguments."""
+    """Represent one model-requested invocation with parsed tool-owned arguments."""
 
     id: str
     name: str
-    arguments: str
+    arguments: ToolArguments
+
+    def __post_init__(self) -> None:
+        """Keep direct callers compatible while storing only typed arguments."""
+        from citra.tools.tool import ToolArguments, UnboundToolArguments
+
+        if isinstance(self.arguments, ToolArguments):
+            return
+        if not isinstance(self.arguments, str):
+            raise TypeError("Tool-call arguments must be ToolArguments or JSON text.")
+        decoded = json.loads(self.arguments or "{}")
+        if not isinstance(decoded, dict):
+            raise TypeError("Tool-call arguments must be a JSON object.")
+        object.__setattr__(
+            self,
+            "arguments",
+            UnboundToolArguments.from_dict(decoded),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,3 +111,23 @@ class ToolResultMessage:
 ChatMessage: TypeAlias = (
     UserMessage | SystemMessage | AssistantMessage | ToolResultMessage
 )
+
+
+def bind_tool_call_arguments(
+    message: AssistantMessage,
+    tools: Mapping[str, object],
+) -> AssistantMessage:
+    """Rebuild calls with their concrete tool argument classes before storage."""
+    bound: list[ToolCall] = []
+    for call in message.tool_calls:
+        tool = tools.get(call.name)
+        if tool is not None and hasattr(tool, "arguments_type"):
+            concrete_tool = cast("Tool[Any]", tool)
+            arguments_type = concrete_tool.arguments_type()
+            if isinstance(call.arguments, arguments_type):
+                bound.append(call)
+                continue
+            arguments = arguments_type.from_dict(call.arguments.to_dict())
+            call = replace(call, arguments=arguments)
+        bound.append(call)
+    return replace(message, tool_calls=tuple(bound))

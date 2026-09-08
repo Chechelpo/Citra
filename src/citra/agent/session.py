@@ -16,8 +16,10 @@ instructions through ``steering``.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from citra.utils.model_tokenizer import tokenize
 
@@ -63,7 +65,7 @@ class ToolCallCache:
     def get(
         self,
         tool_id: str,
-        arguments: dict[str, object],
+        arguments: Mapping[str, Any],
     ) -> CachedToolResult | None:
         """Handle get."""
         entry = self._entries.get(
@@ -76,7 +78,7 @@ class ToolCallCache:
     def put(
         self,
         tool_id: str,
-        arguments: dict[str, object],
+        arguments: Mapping[str, Any],
         result: str,
     ) -> None:
         """Handle put."""
@@ -88,11 +90,11 @@ class ToolCallCache:
     @staticmethod
     def _key(
         tool_id: str,
-        arguments: dict[str, object],
+        arguments: Mapping[str, Any],
     ) -> str:
         """Handle key."""
         encoded = json.dumps(
-            arguments,
+            dict(arguments),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

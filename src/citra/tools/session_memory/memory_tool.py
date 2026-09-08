@@ -13,7 +13,6 @@ from ..session_tool import SessionTool
 if TYPE_CHECKING:
     from citra.context import ExecutionContext
     from citra.agent import AgentSession
-    from ..tool import ToolDefinition
 
 
 TExtract = TypeVar("TExtract")

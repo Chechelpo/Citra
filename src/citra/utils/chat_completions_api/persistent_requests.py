@@ -652,7 +652,11 @@ def _serialize_message(message: ChatMessage) -> WireMessage:
                     'type': 'function',
                     'function': {
                         'name': tool_call.name,
-                        'arguments': tool_call.arguments,
+                        'arguments': json.dumps(
+                            tool_call.arguments.to_dict(),
+                            ensure_ascii=False,
+                            separators=(',', ':'),
+                        ),
                     },
                 }
                 for tool_call in message.tool_calls
@@ -867,7 +871,7 @@ def call_api(model_call: ModelCall) -> ModelResponse:
                 _log_finish_reasons(decoded)
                 if _has_usable_choice(decoded):
                     try:
-                        return parse_model_response(decoded)
+                        return parse_model_response(decoded, tools)
                     except ModelResponseParseError as error:
                         _retry_after_error(
                             attempt=attempt,

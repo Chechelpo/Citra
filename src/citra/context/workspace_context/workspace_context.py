@@ -705,14 +705,14 @@ def _create_dependency_environment(env_root: Path, provisioning: RuntimeProvisio
     """Create the shared Python dependency environment when Python exists.
 
     This bootstrap is a prerequisite for the model-facing ``python`` tool
-    (:class:`citra.tools.transient.python.Python`). The tool re-uses this
+    (:class:`citra.tools.execution.python.Python`). The tool re-uses this
     venv for status, ``select_version``, install/uninstall, and sync; it
     must not duplicate the venv bootstrap or run ``uv pip install`` here.
 
     The ``python`` and ``python3`` entry points inside the venv are
     registered as staged runtime commands so Bash, Subprocess, and direct
     ``sandbox.run`` calls resolve them through the isolated runtime layer
-    (Requirement R4). The :class:`citra.tools.transient.python.Python`
+    (Requirement R4). The :class:`citra.tools.execution.python.Python`
     tool re-registers the entry points after every ``select_version`` or
     ``install``/``uninstall`` so version changes keep the redirect.
     """

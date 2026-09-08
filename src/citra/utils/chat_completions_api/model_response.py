@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 from citra.agent.chat_message import (
@@ -11,6 +13,7 @@ from citra.agent.chat_message import (
     ToolCall,
     freeze_json,
 )
+from citra.tools.tool import InvalidToolArguments, Tool, UnboundToolArguments
 
 
 class ModelResponseParseError(ValueError):
@@ -35,7 +38,10 @@ class ModelResponse:
     usage: ModelUsage = ModelUsage()
 
 
-def parse_model_response(response: object) -> ModelResponse:
+def parse_model_response(
+    response: object,
+    tools: Mapping[str, Tool] | None = None,
+) -> ModelResponse:
     """Validate and parse one normalized Chat Completions response payload."""
     root = _object(response, "response")
     choices = root.get("choices")
@@ -51,7 +57,7 @@ def parse_model_response(response: object) -> ModelResponse:
     return ModelResponse(
         assistant=AssistantMessage(
             content=content,
-            tool_calls=_parse_tool_calls(message.get("tool_calls")),
+            tool_calls=_parse_tool_calls(message.get("tool_calls"), tools),
             reasoning=ReasoningMetadata(
                 reasoning=freeze_json(message.get("reasoning")),
                 content=freeze_json(message.get("reasoning_content")),
@@ -63,8 +69,11 @@ def parse_model_response(response: object) -> ModelResponse:
     )
 
 
-def _parse_tool_calls(value: object) -> tuple[ToolCall, ...]:
-    """Parse provider tool-call envelopes while leaving arguments untouched."""
+def _parse_tool_calls(
+    value: object,
+    tools: Mapping[str, Tool] | None,
+) -> tuple[ToolCall, ...]:
+    """Parse provider envelopes and construct each tool's argument record."""
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -79,18 +88,36 @@ def _parse_tool_calls(value: object) -> tuple[ToolCall, ...]:
             raise ModelResponseParseError(f"Duplicate tool call id {call_id!r}.")
         seen_ids.add(call_id)
         function = _object(call.get("function"), f"tool call {index} function")
+        name = _required_string(
+            function.get("name"),
+            f"tool call {index} function name",
+        )
+        raw_arguments = _required_string(
+            function.get("arguments"),
+            f"tool call {index} arguments",
+            allow_empty=True,
+        )
+        tool = None if tools is None else tools.get(name)
+        if tool is None:
+            try:
+                decoded_arguments = json.loads(raw_arguments or "{}")
+            except json.JSONDecodeError as error:
+                raise ModelResponseParseError(str(error)) from error
+            if not isinstance(decoded_arguments, dict):
+                raise ModelResponseParseError(
+                    f"Arguments for tool {name!r} must be a JSON object."
+                )
+            arguments = UnboundToolArguments.from_dict(decoded_arguments)
+        else:
+            try:
+                arguments = tool.parse_arguments(raw_arguments)
+            except InvalidToolArguments as error:
+                raise ModelResponseParseError(str(error)) from error
         parsed.append(
             ToolCall(
                 id=call_id,
-                name=_required_string(
-                    function.get("name"),
-                    f"tool call {index} function name",
-                ),
-                arguments=_required_string(
-                    function.get("arguments"),
-                    f"tool call {index} arguments",
-                    allow_empty=True,
-                ),
+                name=name,
+                arguments=arguments,
             )
         )
     return tuple(parsed)

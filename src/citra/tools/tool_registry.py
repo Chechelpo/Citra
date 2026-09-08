@@ -17,10 +17,10 @@ _logger = Logger(__name__)
 
 
 class _ToolFactory(Protocol):
-    """Construct a transient tool from an execution context."""
+    """Construct a tool from an execution context."""
 
     def __call__(self, *, context: ExecutionContext) -> Tool:
-        """Create the configured transient tool."""
+        """Create the configured tool."""
         ...
 
 

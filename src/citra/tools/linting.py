@@ -411,7 +411,7 @@ class LintRunner:
 
         This read-only policy detection is intentionally separate from
         Python dependency management: the model-facing
-        :class:`citra.tools.transient.python.Python` tool owns the
+        :class:`citra.tools.execution.python.Python` tool owns the
         ``env/python`` venv and the ``pyproject.toml`` install/sync path,
         while :class:`LintRunner` only inspects project policy for static
         analysis. There is no duplicate install or venv logic here.

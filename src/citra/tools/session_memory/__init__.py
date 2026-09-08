@@ -14,6 +14,7 @@ from .scope_tool import ScopeTool
 from .todo_tool import TodoTool
 from .verification_tool import VerificationExtract, VerificationTool
 from .working_state_tool import WorkingStateTool
+from .group import SessionMemoryToolGroup
 
 __all__ = [
     "AcceptanceCriteriaTool",
@@ -33,4 +34,5 @@ __all__ = [
     "ScopeTool",
     "VerificationExtract",
     "VerificationTool",
+    "SessionMemoryToolGroup",
 ]

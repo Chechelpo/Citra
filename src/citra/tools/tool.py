@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from collections.abc import Iterator, Mapping
+from dataclasses import asdict, dataclass, fields, is_dataclass, make_dataclass
 from hashlib import sha256
 from time import perf_counter
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar, final, Self, TypeVar, Generic, cast
 import json
 import logging
+import sys
 
 from citra.utils.model_tokenizer import tokenize
 from jsonschema import Draft202012Validator
 
 from ..context import ExecutionContext
-from ..utils.json_schema import ChatCompletionTool
+from ..utils.json_schema import ChatCompletionTool, JsonSchema, JsonType
 from .capabilities import InvalidToolCapabilities, ToolCapabilities
 
 
@@ -28,93 +30,159 @@ class InvalidToolDefinition(ValueError):
     """Represent InvalidToolDefinition."""
     pass
 
-
 @dataclass(frozen=True)
-class ToolDefinition:
-    """
-    A model-facing representation of a tool.
+class ToolArguments(Mapping[str, Any]):
+    """Immutable, tool-owned arguments stored at the model boundary."""
 
-    An empty `model_family_matchers` tuple acts as the fallback definition.
-    More-specific model matchers take precedence over less-specific ones.
-    `primary` resolves ambiguity between definitions with equal specificity.
-    """
-    definition: ChatCompletionTool
-    model_family_matchers: tuple[str, ...] = ()
-    primary: bool = False
+    _TOOL_TYPE: ClassVar[type[Tool[Any]] | None] = None
 
-    def __post_init__(self) -> None:
-        """Validate and initialize the instance after construction."""
-        if any(
-            not matcher.strip()
-            for matcher in self.model_family_matchers
-        ):
-            raise ValueError(
-                "Tool model-family matchers cannot be empty strings."
+    @classmethod
+    def from_dict(
+        cls,
+        arguments: dict[str, Any],
+    ) -> Self:
+        if not is_dataclass(cls):
+            raise TypeError(
+                f"{cls.__name__} must be decorated with @dataclass."
             )
 
-    def match_score(
-        self,
-        model_id: str,
-    ) -> int | None:
-        """
-        Return match specificity.
+        try:
+            return cls(**arguments)
+        except (TypeError, ValueError) as error:
+            raise InvalidToolArguments(
+                f"Could not parse {cls.__name__}: {error}"
+            ) from error
 
-        - None: does not match
-        - 0: fallback definition
-        - >0: length of the most-specific matching family string
-        """
-        if not self.model_family_matchers:
-            return 0
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached dictionary for JSON and sandbox boundaries."""
+        return {
+            name: value
+            for name, value in asdict(self).items()
+            if value is not None
+        }
 
-        normalized_model_id = model_id.casefold()
+    def __getitem__(self, name: str) -> Any:
+        if name not in {field.name for field in fields(self)}:
+            raise KeyError(name)
+        value = getattr(self, name)
+        if value is None:
+            raise KeyError(name)
+        return value
 
-        matches = [
-            len(matcher)
-            for matcher in self.model_family_matchers
-            if matcher.casefold() in normalized_model_id
-        ]
-
-        if not matches:
-            return None
-
-        return max(matches)
-
-    def with_name(
-        self,
-        name: str,
-        *,
-        model_family_matchers: tuple[str, ...] | None = None,
-        primary: bool | None = None,
-    ) -> ToolDefinition:
-        """
-        Create another model-facing definition with the same schema but a
-        different function name.
-        """
-        return ToolDefinition(
-            definition=replace(
-                self.definition,
-                function=replace(
-                    self.definition.function,
-                    name=name,
-                ),
-            ),
-            model_family_matchers=(
-                self.model_family_matchers
-                if model_family_matchers is None
-                else model_family_matchers
-            ),
-            primary=(
-                self.primary
-                if primary is None
-                else primary
-            ),
+    def __iter__(self) -> Iterator[str]:
+        return (
+            field.name
+            for field in fields(self)
+            if getattr(self, field.name) is not None
         )
 
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
 
-class Tool(ABC):
+    @classmethod
+    def tool_type(
+        cls,
+    ) -> type[Tool[Self]]:
+        tool_type = cls.__dict__.get("_TOOL_TYPE")
+        if tool_type is None:
+            raise TypeError(f"{cls.__name__} is not bound to a Tool.")
+        return cast(type[Tool[Self]], tool_type)
+
+    @classmethod
+    def _bind_tool(
+        cls,
+        tool_type: type[Tool[Self]],
+    ) -> None:
+        existing = cls.__dict__.get("_TOOL_TYPE")
+        if existing is not None and existing is not tool_type:
+            raise TypeError(
+                f"{cls.__name__} is already bound to {existing.__name__}; "
+                f"cannot bind it to {tool_type.__name__}."
+            )
+        cls._TOOL_TYPE = tool_type
+
+
+@dataclass(frozen=True)
+class UnboundToolArguments(ToolArguments):
+    """Typed fallback used when response parsing has no tool registry."""
+
+    data: Mapping[str, Any]
+
+    @classmethod
+    def from_dict(cls, arguments: dict[str, Any]) -> Self:
+        return cls(data=dict(arguments))
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self.data)
+
+    def __getitem__(self, name: str) -> Any:
+        return self.data[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.data)
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+ArgumentsT = TypeVar(
+    "ArgumentsT",
+    bound=ToolArguments,
+)
+
+
+def _arguments_type_from_definition(
+    tool_type: type[Tool[Any]],
+    definition: ChatCompletionTool,
+) -> type[ToolArguments]:
+    """Build the immutable argument record declared by a tool's JSON schema."""
+    properties = definition.function.parameters.properties
+    required = [property for property in properties if property.required]
+    optional = [property for property in properties if not property.required]
+    argument_fields: list[tuple[Any, ...]] = [
+        (property.name, _python_type(property.schema))
+        for property in required
+    ]
+    argument_fields.extend(
+        (property.name, _python_type(property.schema) | None, None)
+        for property in optional
+    )
+    name = f"{tool_type.__name__}Arguments"
+    arguments_type = make_dataclass(
+        name,
+        argument_fields,
+        bases=(ToolArguments,),
+        frozen=True,
+        slots=True,
+        namespace={"__module__": tool_type.__module__},
+    )
+    arguments_type.__module__ = tool_type.__module__
+    setattr(sys.modules[tool_type.__module__], name, arguments_type)
+    return arguments_type
+
+
+def _python_type(schema: JsonSchema) -> Any:
+    """Translate the supported JSON-schema vocabulary into Python types."""
+    if schema.type is JsonType.STRING:
+        return str
+    if schema.type is JsonType.INTEGER:
+        return int
+    if schema.type is JsonType.NUMBER:
+        return float
+    if schema.type is JsonType.BOOLEAN:
+        return bool
+    if schema.type is JsonType.ARRAY:
+        assert schema.items is not None
+        return list[_python_type(schema.items)]
+    if schema.type is JsonType.OBJECT:
+        return dict[str, Any]
+    return Any
+
+class Tool(ABC, Generic[ArgumentsT]):
     """Base for schema-selected, capability-aware, lifecycle-logged tools."""
     HISTORY_ARGUMENT_COMPACT_THRESHOLD_TOKENS : ClassVar[int] = 128
     HISTORY_ARGUMENT_DIGEST_LENGTH: ClassVar[int] = 12
+    ARGUMENTS_TYPE: ClassVar[type[ToolArguments]]
+    DEFINITION: ClassVar[ChatCompletionTool]
 
     # Stable Citra-internal identity.
     # This does NOT change when the model-facing function name changes.
@@ -147,51 +215,78 @@ class Tool(ABC):
             extra={"origin": type(self).__module__},
         )
 
+    def __init_subclass__(
+        cls,
+        **kwargs: Any,
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+
+        argument_type = cls.__dict__.get("ARGUMENTS_TYPE")
+
+        if argument_type is None:
+            definition = cls.__dict__.get("DEFINITION") or cls.__dict__.get(
+                "CITRA_DEFINITION"
+            )
+            if isinstance(definition, ChatCompletionTool):
+                argument_type = _arguments_type_from_definition(cls, definition)
+                cls.ARGUMENTS_TYPE = argument_type
+
+        # Allows abstract/intermediate Tool classes that don't
+        # declare their own argument type.
+        if argument_type is None:
+            return
+
+        if (
+            not isinstance(argument_type, type)
+            or not issubclass(argument_type, ToolArguments)
+        ):
+            raise TypeError(
+                f"{cls.__name__}.ARGUMENTS_TYPE must be "
+                f"a ToolArguments subclass."
+            )
+
+        argument_type._bind_tool(cast(type[Tool[ToolArguments]], cls))
+        cls.Arguments = argument_type
+
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Arguments
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    @classmethod
+    def arguments_type(
+        cls,
+    ) -> type[ArgumentsT]:
+        return cast(
+            type[ArgumentsT],
+            cls.ARGUMENTS_TYPE,
+        )
+
     # -------------------------------------------------------------------------
     # Definition
     # -------------------------------------------------------------------------
 
     @classmethod
-    @abstractmethod
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: ExecutionContext,
-    ) -> tuple[ToolDefinition, ...]:
-        """
-        Return the model-facing definitions supported in this execution context.
-
-        Runtime configuration belongs here.
-
-        For example, Bash may omit the `network` and `reason` parameters when
-        network access is globally enabled.
-
-        Model-specific names or schemas should be returned as additional
-        ToolDefinition entries.
-        """
-        ...
+    ) -> ChatCompletionTool:
+        """Return this tool's single definition, adjusted for runtime context."""
+        del context
+        return cls.DEFINITION
         
-    def definitions_for_instance(
+    def definition_for_instance(
         self,
         context: ExecutionContext,
-    ) -> tuple[ToolDefinition, ...]:
-        """Handle definitions for instance."""
-        return type(self).definitions_for_context(
-            context
-        )
+    ) -> ChatCompletionTool:
+        """Return the definition when it depends on instance state."""
+        return type(self).definition_for_context(context)
 
     def _resolve_definition(
         self,
         context: ExecutionContext,
     ) -> ChatCompletionTool:
         """Handle resolve definition."""
-        definitions = self.definitions_for_instance(
-            context
-        )
-
-        definition = self._select_definition(
-            context,
-            definitions,
-        )
+        definition = self.definition_for_instance(context)
+        self._validate_definition(definition)
         return self.__capabilities.apply_to_definition(definition)
 
     @classmethod
@@ -203,10 +298,8 @@ class Tool(ABC):
     ) -> ChatCompletionTool:
         """Resolve the public definition under an optional action restriction."""
 
-        definition = cls._select_definition(
-            context,
-            cls.definitions_for_context(context),
-        )
+        definition = cls.definition_for_context(context)
+        cls._validate_definition(definition)
         return cls._resolve_capabilities(capabilities).apply_to_definition(
             definition
         )
@@ -235,85 +328,17 @@ class Tool(ABC):
         return cls._resolve_capabilities(capabilities)
 
     @classmethod
-    def _select_definition(
+    def _validate_definition(
         cls,
-        context: ExecutionContext,
-        definitions: tuple[ToolDefinition, ...],
-    ) -> ChatCompletionTool:
-        """Handle select definition."""
-        model_id = context.config.model().id
-
-        if not definitions:
+        definition: ChatCompletionTool,
+    ) -> None:
+        """Validate the one model-independent definition."""
+        if not isinstance(definition, ChatCompletionTool):
             raise InvalidToolDefinition(
-                f"Tool '{cls.TOOL_ID}' produced no definitions."
+                f"Tool '{cls.TOOL_ID}' did not produce a ChatCompletionTool."
             )
-
-        matched: list[
-            tuple[int, ToolDefinition]
-        ] = []
-
-        for tool_definition in definitions:
-            definition = tool_definition.definition
-
-            Draft202012Validator.check_schema(
-                definition.function.parameters.to_dict()
-            )
-
-            score = tool_definition.match_score(
-                model_id
-            )
-
-            if score is not None:
-                matched.append(
-                    (
-                        score,
-                        tool_definition,
-                    )
-                )
-
-        if not matched:
-            raise InvalidToolDefinition(
-                f"Tool '{cls.TOOL_ID}' has no definition "
-                f"for model '{model_id}'."
-            )
-
-        best_score = max(
-            score
-            for score, _ in matched
-        )
-
-        candidates = [
-            tool_definition
-            for score, tool_definition in matched
-            if score == best_score
-        ]
-
-        if len(candidates) == 1:
-            return candidates[0].definition
-
-        primary = [
-            candidate
-            for candidate in candidates
-            if candidate.primary
-        ]
-
-        if len(primary) == 1:
-            return primary[0].definition
-
-        names = [
-            candidate.definition.function.name
-            for candidate in candidates
-        ]
-
-        if len(primary) > 1:
-            raise InvalidToolDefinition(
-                f"Tool '{cls.TOOL_ID}' has multiple primary definitions "
-                f"for model '{model_id}': {names}"
-            )
-
-        raise InvalidToolDefinition(
-            f"Tool '{cls.TOOL_ID}' has ambiguous definitions "
-            f"for model '{model_id}': {names}"
+        Draft202012Validator.check_schema(
+            definition.function.parameters.to_dict()
         )
 
     @property
@@ -426,7 +451,7 @@ class Tool(ABC):
     
     def is_cacheable(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT,
     ) -> bool:
         """Return whether is cacheable."""
         del arguments
@@ -434,7 +459,7 @@ class Tool(ABC):
 
     def invalidates_tool_cache(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT,
     ) -> bool:
         """Handle invalidates tool cache."""
         del arguments
@@ -446,19 +471,19 @@ class Tool(ABC):
 
     def compact_history_arguments(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT,
         result: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ArgumentsT | None:
         """Handle compact history arguments."""
         del arguments, result
         return None
 
     def _compact_history_string_arguments(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT,
         *names: str,
         min_token_savings: int = 128,
-    ) -> dict[str, Any] | None:
+    ) -> ArgumentsT | None:
         """Handle compact history string arguments."""
         model_id = self.context.config.model().id
 
@@ -491,7 +516,7 @@ class Tool(ABC):
                 history_fragment,
             )
 
-        compacted = dict(arguments)
+        compacted = arguments.to_dict()
 
         current_tokens = history_tokens(
             compacted
@@ -536,11 +561,7 @@ class Tool(ABC):
             current_tokens = candidate_tokens
             changed = True
 
-        return (
-            compacted
-            if changed
-            else None
-        )
+        return self.arguments_type().from_dict(compacted) if changed else None
 
     # -------------------------------------------------------------------------
     # Validation
@@ -548,11 +569,12 @@ class Tool(ABC):
 
     def validate_arguments(
         self,
-        arguments: dict[str, Any],
+        arguments: Mapping[str, Any],
     ) -> None:
         """Handle validate arguments."""
+        argument_dict = dict(arguments)
         try:
-            self.__capabilities.validate_arguments(arguments)
+            self.__capabilities.validate_arguments(argument_dict)
         except InvalidToolCapabilities as error:
             self._logger().warning(
                 "Rejected disabled action for tool '%s': %s",
@@ -569,7 +591,7 @@ class Tool(ABC):
         )
 
         errors = sorted(
-            validator.iter_errors(arguments),
+            validator.iter_errors(argument_dict),
             key=lambda error: tuple(
                 str(part)
                 for part in error.absolute_path
@@ -612,7 +634,7 @@ class Tool(ABC):
     # Execution
     # -------------------------------------------------------------------------
 
-    def parse_arguments(self, raw_arguments: str) -> dict[str, Any]:
+    def parse_arguments(self, raw_arguments: str) -> ArgumentsT:
         """Parse this tool's model-emitted argument payload."""
         try:
             arguments = json.loads(raw_arguments or "{}")
@@ -624,20 +646,44 @@ class Tool(ABC):
             raise InvalidToolArguments(
                 f"Arguments for tool '{self.model_name}' must be a JSON object."
             )
-        return arguments
+        self.validate_argument_dict(arguments)
+        return self.arguments_type().from_dict(arguments)
+
+    def validate_argument_dict(self, arguments: dict[str, Any]) -> None:
+        """Validate decoded arguments before constructing their typed record."""
+        validator = Draft202012Validator(
+            self.definition.function.parameters.to_dict()
+        )
+        errors = sorted(
+            validator.iter_errors(arguments),
+            key=lambda error: tuple(str(part) for part in error.absolute_path),
+        )
+        if errors:
+            messages = [
+                f"{'.'.join(str(part) for part in error.absolute_path)}: "
+                f"{error.message}"
+                if error.absolute_path
+                else error.message
+                for error in errors
+            ]
+            raise InvalidToolArguments(
+                f"Invalid arguments for tool '{self.model_name}': "
+                + "; ".join(messages)
+            )
 
     @final
     def execute(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT | dict[str, Any],
     ) -> Any:
         """Execute the execute operation."""
-        self.validate_arguments(
-            arguments
-        )
+        if not isinstance(arguments, self.arguments_type()):
+            self.validate_argument_dict(dict(arguments))
+            arguments = self.arguments_type().from_dict(dict(arguments))
+        self.validate_arguments(arguments)
 
         call_log = self.format_call_log(
-            arguments
+            arguments.to_dict()
         )
 
         operation_logger = self._logger()
@@ -695,14 +741,14 @@ class Tool(ABC):
     @abstractmethod
     def _execute(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT,
     ) -> Any:
         """Execute the execute operation."""
         ...
 
     def compact_if_over_budget(
         self,
-        arguments: dict[str, Any],
+        arguments: ArgumentsT,
         tool_result: str,
     ) -> str:
         """

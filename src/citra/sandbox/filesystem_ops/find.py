@@ -544,7 +544,7 @@ class FindInput(FilesystemInput[FindOutput]):
         The model-facing schema advertises camelCase names (``maxDepth``,
         ``caseSensitive``, ``limit``); the worker wire protocol and internal
         representation use snake_case. Both spellings are accepted here so
-        transient tools can pass arguments through verbatim.
+        model-facing tools can pass arguments through verbatim.
         """
         paths = _require_paths(arguments)
         name = _normalize_name(arguments)

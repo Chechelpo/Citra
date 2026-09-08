@@ -16,7 +16,7 @@ from typing import Any, Protocol, override
 
 from ...context import ExecutionContext
 from ..capabilities import ToolCapabilities
-from ..tool import Tool, ToolDefinition
+from ..tool import Tool
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -117,17 +117,13 @@ class RequestGuidanceTool(Tool):
 
     @classmethod
     @override
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: ExecutionContext,
-    ) -> tuple[ToolDefinition, ...]:
-        """Handle definitions for context."""
+    ) -> ChatCompletionTool:
+        """Return the tool's model-independent definition."""
         del context
-        return (
-            ToolDefinition(
-                definition=cls.DEFINITION,
-            ),
-        )
+        return cls.DEFINITION
 
     @property
     def subagent_id(self) -> str:

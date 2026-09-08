@@ -16,7 +16,7 @@ from ..cli.rendering import (
 )
 from ..cli.input import terminal_ui_state
 from ..context import ExecutionContext
-from ..tools.enable_tools import EnableTools
+from ..tools.orchestration.enable_tools import EnableTools
 from ..tools.session_memory import RequirementTool, TodoTool
 from ..tools.tool import Tool
 from ..tools.tool_registry import ToolRegistry
@@ -27,7 +27,7 @@ from ..utils.chat_completions_api import (
     call_api,
 )
 from ..utils.model_tokenizer import tokenize
-from .chat_message import ToolCall
+from .chat_message import ToolCall, bind_tool_call_arguments
 from .response import execute_tool_call
 from .session import AgentSession
 
@@ -210,7 +210,7 @@ class AgentRunner:
                 _logger.info("Discarding model response after agent stop")
                 return
 
-            assistant = response.assistant
+            assistant = bind_tool_call_arguments(response.assistant, tools)
 
             if self.render_output:
                 terminal_ui_state.record_tokens(
@@ -334,7 +334,10 @@ class AgentRunner:
                     AgentRunEvent(
                         kind="tool-call",
                         role="assistant",
-                        content=tool_call.arguments,
+                        content=json.dumps(
+                            tool_call.arguments.to_dict(),
+                            ensure_ascii=False,
+                        ),
                         tool=tool_name,
                     )
                 )

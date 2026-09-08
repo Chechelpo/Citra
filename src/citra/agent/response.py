@@ -8,7 +8,7 @@ from typing import Any
 
 from .chat_message import ToolCall
 from .session import AgentSession
-from ..tools.tool import InvalidToolArguments, Tool
+from ..tools.tool import Tool
 from citra.logging import Logger
 
 
@@ -73,31 +73,15 @@ def execute_tool_call(
         )
         return f"error: unknown tool '{tool_name}'"
 
-    raw_arguments = tool_call.arguments
-
     _logger.debug(
-        "Raw tool arguments received",
+        "Parsed tool arguments received",
         tool=tool.id,
         call_id=call_id,
-        arguments=raw_arguments,
+        arguments=tool_call.arguments,
     )
-
-    try:
-        arguments = tool.parse_arguments(raw_arguments)
-    except InvalidToolArguments as error:
-        _logger.warning(
-            "Tool rejected model arguments",
-            tool=tool.id,
-            arguments=raw_arguments,
-            error=str(error),
-        )
-        return f"error: {error}"
-
-    _logger.debug(
-        "Parsed tool arguments",
-        tool=tool.id,
-        arguments=arguments,
-    )
+    arguments = tool_call.arguments
+    if not isinstance(arguments, tool.arguments_type()):
+        arguments = tool.arguments_type().from_dict(arguments.to_dict())
 
     invalidates_cache = tool.invalidates_tool_cache(arguments)
     cacheable = tool.is_cacheable(arguments)

@@ -13,7 +13,6 @@ from citra.utils.json_schema import (
 )
 
 from ..capabilities import ToolCapabilities
-from ..tool import ToolDefinition
 from .memory_tool import MemoryTool
 from .requirement_tool import RequirementTool
 
@@ -115,13 +114,13 @@ class AcceptanceCriteriaTool(MemoryTool[AcceptanceCriterionExtract]):
 
     @classmethod
     @override
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: ExecutionContext,
-    ) -> tuple[ToolDefinition, ...]:
-        """Return the single model-facing acceptance definition."""
+    ) -> ChatCompletionTool:
+        """Return the tool's model-independent definition."""
         del context
-        return (ToolDefinition(definition=cls.DEFINITION),)
+        return cls.DEFINITION
 
     def __init__(
         self,

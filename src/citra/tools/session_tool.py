@@ -11,8 +11,8 @@ class SessionTool(Tool, ABC):
     """
     Base class for tools that require access to the active agent session.
 
-    Model-facing tool definitions are resolved by Tool through
-    definitions_for_context(); SessionTool only adds session state.
+    Model-facing tool definitions are resolved by Tool; SessionTool only adds
+    session state.
     """
 
     CAPABILITIES = ToolCapabilities()

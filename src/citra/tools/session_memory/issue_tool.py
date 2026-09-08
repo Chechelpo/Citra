@@ -13,7 +13,6 @@ from citra.utils.json_schema import (
 )
 
 from ..capabilities import ToolCapabilities
-from ..tool import ToolDefinition
 from .acceptance_criteria_tool import AcceptanceCriteriaTool
 from .change_tool import ChangeTool
 from .memory_tool import MemoryTool
@@ -182,13 +181,13 @@ class IssueTool(MemoryTool[IssueExtract]):
 
     @classmethod
     @override
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: ExecutionContext,
-    ) -> tuple[ToolDefinition, ...]:
-        """Return the single model-facing issue definition."""
+    ) -> ChatCompletionTool:
+        """Return the tool's model-independent definition."""
         del context
-        return (ToolDefinition(definition=cls.DEFINITION),)
+        return cls.DEFINITION
 
     def __init__(
         self,

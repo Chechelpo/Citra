@@ -11,7 +11,6 @@ from citra.utils.json_schema import (
 )
 
 from ..capabilities import ToolCapabilities
-from ..tool import ToolDefinition
 from .memory_tool import MemoryTool, WorkingStateExtract
 
 if TYPE_CHECKING:
@@ -105,18 +104,13 @@ class WorkingStateTool(MemoryTool[WorkingStateExtract]):
 
     @classmethod
     @override
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: ExecutionContext,
-    ) -> tuple[ToolDefinition, ...]:
-        """Handle definitions for context."""
+    ) -> ChatCompletionTool:
+        """Return the tool's model-independent definition."""
         del context
-
-        return (
-            ToolDefinition(
-                definition=cls.DEFINITION,
-            ),
-        )
+        return cls.DEFINITION
 
     def __init__(
         self,
