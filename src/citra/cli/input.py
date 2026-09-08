@@ -72,13 +72,14 @@ _console = console
 _COMPOSER_BACKGROUND = SURFACE
 _STATUS_BACKGROUND = BACKGROUND
 _PLACEHOLDER_FOREGROUND = "#343434"
+_DIVIDER_FOREGROUND = "#555555"
 _COMPOSER_STYLE = Style.from_dict(
     {
         "": f"bg:{_COMPOSER_BACKGROUND}",
         "bottom-toolbar": (f"bg:{_STATUS_BACKGROUND} #8a8a8a noreverse"),
         "composer.activity": f"bg:{_STATUS_BACKGROUND} bold #7aa2f7",
         "composer.body": f"bg:{_COMPOSER_BACKGROUND}",
-        "composer.divider": f"bg:{_STATUS_BACKGROUND} #555555",
+        "composer.divider": f"bg:{_STATUS_BACKGROUND} {_DIVIDER_FOREGROUND}",
         "composer.footer": f"bg:{_STATUS_BACKGROUND} #8a8a8a",
         "composer.placeholder": (
             f"bg:{_COMPOSER_BACKGROUND} {_PLACEHOLDER_FOREGROUND}"
@@ -445,18 +446,22 @@ class TerminalInput:
 
     @staticmethod
     def _render_submitted_section(content: str, *, width: int) -> None:
-        """Persist only an accepted prompt's body after its live area is erased."""
+        """Persist an accepted prompt and its turn divider after erasing the UI."""
         surface_style = f"on {_COMPOSER_BACKGROUND}"
         _console.print(
             Text("│" + " " * (width - 1), style=surface_style),
             soft_wrap=True,
         )
         for line in content.splitlines() or [""]:
+            rendered_line = _fit_toolbar_line(f"│   {line}", width).ljust(width)
             _console.print(
-                Text(_fit_toolbar_line(f"│   {line}", width), style=surface_style),
+                Text(rendered_line, style=surface_style),
                 soft_wrap=True,
             )
         _console.print(Text("│" + " " * (width - 1), style=surface_style))
+        _console.print(
+            Text("─" * width, style=f"{_DIVIDER_FOREGROUND} on {_STATUS_BACKGROUND}")
+        )
 
     def prompt_with_idle_timeout(
         self,

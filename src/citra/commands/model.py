@@ -252,18 +252,25 @@ class ModelCommand(Command):
 
     def _add(self, args: list[str]) -> CommandResult:
         """Handle add."""
-        if not args:
-            return self.usage_result("Expected a new profile name.")
-
-        name = args[0]
         copy_from: str | None = None
-        remaining = args[1:]
-        if remaining:
-            if len(remaining) != 2 or remaining[0] != "--copy":
-                return self.usage_result(
-                    "Expected '--copy <profile>' after the new profile name."
-                )
-            copy_from = remaining[1]
+        names: list[str] = []
+        index = 0
+        while index < len(args):
+            token = args[index]
+            if token == "--copy":
+                if copy_from is not None or index + 1 >= len(args):
+                    return self.usage_result("Expected one '--copy <profile>' option.")
+                copy_from = args[index + 1]
+                index += 2
+                continue
+            if token.startswith("-"):
+                return self.usage_result(f"Unknown /model add option: {token}")
+            names.append(token)
+            index += 1
+
+        if len(names) != 1:
+            return self.usage_result("Expected exactly one new profile name.")
+        name = names[0]
 
         store = self.context.config.model_config_store
         try:

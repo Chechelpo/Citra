@@ -13,6 +13,8 @@ class QuitCommand(Command):
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
+        if args.strip():
+            return self.usage_result("Quit takes no arguments.")
         return CommandResult(
             output="Bye.",
             exit=True,

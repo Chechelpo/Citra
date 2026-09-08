@@ -311,6 +311,30 @@ def test_command_usage_renders_forms_and_arguments_as_a_tree(monkeypatch) -> Non
     assert "/model set [--profile <profile>] <setting> <value>" in rendered
 
 
+def test_command_result_maps_output_and_usage_through_renderer(monkeypatch) -> None:
+    from citra.commands import CommandResult
+
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        rendering,
+        "render_command_output",
+        lambda value: calls.append(("output", value)),
+    )
+    monkeypatch.setattr(
+        rendering,
+        "render_command_usage",
+        lambda value: calls.append(("usage", value)),
+    )
+    result = CommandResult(output="Problem", usage=(ModelCommand.usage,))
+
+    rendering.render_command_result(result)
+
+    assert calls == [
+        ("output", "Problem"),
+        ("usage", (ModelCommand.usage,)),
+    ]
+
+
 def test_adjacent_tool_calls_share_semantic_group_until_category_changes(
     monkeypatch,
 ) -> None:

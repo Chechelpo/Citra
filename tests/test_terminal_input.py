@@ -254,7 +254,7 @@ class TerminalInputApiTests(unittest.TestCase):
 
         def submit(*_arguments, **_keywords):
             erase_values.append(ti._session.app.erase_when_done)
-            return "hello"
+            return "/help"
 
         with (
             mock.patch.object(ti._session, "prompt", side_effect=submit) as prompt,
@@ -269,7 +269,7 @@ class TerminalInputApiTests(unittest.TestCase):
                 ),
         )
 
-        self.assertEqual(result, "hello")
+        self.assertEqual(result, "/help")
         header = prompt.call_args.args[0]()
         header_text = "".join(fragment[1] for fragment in header)
         self.assertIn("• Ready", header_text)
@@ -292,13 +292,19 @@ class TerminalInputApiTests(unittest.TestCase):
         self.assertIn("key_bindings", prompt.call_args.kwargs)
         continuation = prompt.call_args.kwargs["prompt_continuation"]
         self.assertEqual("".join(fragment[1] for fragment in continuation), "│ · ")
-        self.assertEqual(output.call_count, 3)
+        self.assertEqual(output.call_count, 4)
         self.assertTrue(output.call_args_list[0].args[0].plain.startswith("│"))
-        self.assertEqual(output.call_args_list[1].args[0].plain.strip(), "│   hello")
+        self.assertEqual(output.call_args_list[1].args[0].plain.strip(), "│   /help")
+        persisted_width = len(output.call_args_list[0].args[0].plain)
+        self.assertEqual(len(output.call_args_list[1].args[0].plain), persisted_width)
         self.assertTrue(output.call_args_list[2].args[0].plain.startswith("│"))
+        self.assertEqual(
+            output.call_args_list[3].args[0].plain,
+            "─" * persisted_width,
+        )
         submitted = "\n".join(call.args[0].plain for call in output.call_args_list)
         self.assertNotIn("model: default", submitted)
-        self.assertNotIn("─", submitted)
+        self.assertTrue(submitted.endswith("─" * persisted_width))
 
     def test_prompt_and_status_toolbar_have_distinct_backgrounds(self):
         self.assertNotEqual(_COMPOSER_BACKGROUND, _STATUS_BACKGROUND)

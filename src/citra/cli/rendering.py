@@ -29,7 +29,7 @@ from .theme import console
 from .input import terminal_ui_state
 
 if TYPE_CHECKING:
-    from ..commands.command import CommandUsage
+    from ..commands.command import CommandResult, CommandUsage
 
 _MAX_PANEL_WIDTH = 120
 _FILE_LIST_TOOLS = {"read", "glob", "tree"}
@@ -658,7 +658,16 @@ def render_command_output(output: str) -> None:
     if output.lstrip().startswith(("diff --git", "--- ")):
         console.print(Syntax(output.rstrip(), "diff", theme="monokai", word_wrap=True))
     else:
-        console.print(Markdown(output, code_theme="monokai"))
+        # Command output often contains absolute paths and shell snippets.  It
+        # is still parsed as Markdown, but Rich must not inject hard newlines
+        # into copyable values merely because the current terminal is narrow.
+        console.print(Markdown(output, code_theme="monokai"), soft_wrap=True)
+
+
+def render_command_result(result: CommandResult) -> None:
+    """Render every presentational field of a command result in order."""
+    render_command_output(result.output)
+    render_command_usage(result.usage)
 
 
 def render_command_usage(usages: tuple[CommandUsage, ...]) -> None:

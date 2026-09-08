@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from ..utils.terminal import GREEN, RESET
 from .command import Command, CommandResult, CommandUsage
 
 
@@ -14,7 +13,9 @@ class ClearCommand(Command):
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
+        if args.strip():
+            return self.usage_result("Clear takes no arguments.")
         return CommandResult(
-            output=f"{GREEN}⏺ Cleared conversation{RESET}",
+            output="⏺ Cleared conversation",
             clear_messages=True,
         )

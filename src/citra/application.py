@@ -18,7 +18,7 @@ from .agent import (
 )
 from .agent.runner import AgentRunner, ApiCall
 from .commands import COMMAND_REGISTRY
-from .cli.rendering import render_command_output, render_command_usage, render_notice
+from .cli.rendering import render_command_result, render_notice
 from .context import CitraConfig, ExecutionContext, WorkspaceContext
 from .tools.session_memory import (
     AcceptanceCriteriaTool,
@@ -497,10 +497,7 @@ class CitraApplication:
             )
             return True
         result = command.run(args)
-        if result.output:
-            render_command_output(result.output)
-        if result.usage:
-            render_command_usage(result.usage)
+        render_command_result(result)
         if result.clear_messages:
             self.session.clear_history(clear_memory=True)
         return not result.exit

@@ -182,8 +182,6 @@ class Command(ABC):
             )
             return result
         except Exception as error:  # noqa: BLE001
-            from ..utils.terminal import RED, RESET
-
             self._logger.error(
                 "Command failed",
                 command=self.id,
@@ -191,7 +189,7 @@ class Command(ABC):
                 error=str(error),
             )
             return CommandResult(
-                output=f"{RED}⏺ Command error: {error}{RESET}",
+                output=f"⏺ Command error: {error}",
             )
 
     @abstractmethod

@@ -16,4 +16,6 @@ class HelpCommand(Command):
         """Execute the run operation."""
         from .default_registry import COMMAND_REGISTRY
 
+        if args.strip():
+            return self.usage_result("Help takes no arguments.")
         return CommandResult(usage=COMMAND_REGISTRY.usages)

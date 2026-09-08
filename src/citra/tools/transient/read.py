@@ -40,8 +40,7 @@ class Read(Tool):
                 name="path",
                 schema=JsonSchema.string(
                     description=(
-                        "File path or glob pattern. Examples: 'main.py', "
-                        "'src/**/*.py', or 'pyproject.toml'."
+                        "File path to read"
                     ),
                 ),
             ),
@@ -74,8 +73,7 @@ class Read(Tool):
         function=FunctionDefinition(
             name="read",
             description=(
-                "Read exact file contents and implementations. "
-                "Use tree for discovery and structure."
+                "Read file contents"
             ),
             parameters=JsonSchema.object(
                 properties=(
@@ -113,7 +111,6 @@ class Read(Tool):
                         schema=JsonSchema.boolean(
                             description=(
                                 "Also run language-server diagnostics on the file. "
-                                "Only supported for exact file paths."
                             ),
                         ),
                         required=False,

@@ -72,3 +72,23 @@ def test_model_command_updates_orchestrator_selector(tmp_path: Path) -> None:
 
     assert "Orchestrator model profile = beta" in result.output
     assert config.model_config_store.orchestrator_name() == "beta"
+
+
+def test_model_add_accepts_copy_option_in_declared_position(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    command = ModelCommand(SimpleNamespace(config=config))
+
+    result = command.run("add --copy beta gamma")
+
+    assert "Added model profile gamma from beta" in result.output
+    assert config.model_config_store.get("gamma").id == "beta-model"
+
+
+def test_model_add_retains_trailing_copy_option(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    command = ModelCommand(SimpleNamespace(config=config))
+
+    result = command.run("add gamma --copy beta")
+
+    assert "Added model profile gamma from beta" in result.output
+    assert config.model_config_store.get("gamma").id == "beta-model"

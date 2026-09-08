@@ -121,6 +121,22 @@ def test_apply_previews_copies_and_stages_nonignored_changes(
     assert _git(source, "log", "-1", "--format=%s").strip() == "initial"
 
 
+def test_apply_preview_goes_through_command_renderer(tmp_path: Path) -> None:
+    source, checkout, baseline = _repositories(tmp_path)
+    (checkout / "tracked.py").write_text("after = 2\n", encoding="utf-8")
+
+    with (
+        mock.patch("builtins.input", return_value="no"),
+        mock.patch("citra.cli.rendering.render_command_output") as render,
+    ):
+        _command(source, checkout, baseline).run("")
+
+    render.assert_called_once()
+    preview = render.call_args.args[0]
+    assert "Checkout changes relative to the original source" in preview
+    assert "```diff" in preview
+
+
 def test_apply_does_not_change_index_for_preexisting_dirty_source(
     tmp_path: Path,
 ) -> None:

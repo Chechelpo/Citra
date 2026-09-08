@@ -344,10 +344,17 @@ class ApplyCommand(Command):
                 | set(filesystem_project_inventory(checkout))
             )
         )
-        print("\nFORCED FULL WORKSPACE APPLY\n")
-        print(f"Checkout: {checkout}")
-        print(f"Original: {source}")
-        print(f"Entries to overwrite or delete: {len(selected)}\n")
+        self._render_preview(
+            "\n".join(
+                (
+                    "# Forced full workspace apply",
+                    "",
+                    f"Checkout: {checkout}",
+                    f"Original: {source}",
+                    f"Entries to overwrite or delete: {len(selected)}",
+                )
+            )
+        )
         if not self._confirm(
             "Overwrite the entire original workspace with the checkout? [y/N] ",
             default_yes=False,
@@ -480,49 +487,55 @@ class ApplyCommand(Command):
         conflicts: tuple[str, ...],
         unsupported: tuple[str, ...],
     ) -> None:
-        """Print diffs, conflicts, and optional Git staging decisions."""
-        print("\nCheckout changes relative to the original source\n")
-        print(f"Original: {source}")
-        print(f"Checkout: {checkout}\n")
+        """Render diffs, conflicts, and optional Git staging decisions."""
+        lines = [
+            "# Checkout changes relative to the original source",
+            "",
+            f"Original: {source}",
+            f"Checkout: {checkout}",
+            "",
+        ]
         for path in selected:
-            print(self._diff(source, checkout, path).rstrip())
-            print()
+            lines.extend(("```diff", self._diff(source, checkout, path).rstrip(), "```", ""))
         if repository_root is None:
-            print(f"Selected: {len(selected)} | Git staging: unavailable")
-            print("Changes can still be applied directly to the original source.")
+            lines.append(f"Selected: {len(selected)} | Git staging: unavailable")
+            lines.append("Changes can still be applied directly to the original source.")
         else:
-            print(
+            lines.append(
                 f"Selected: {len(selected)} | stage by default: "
                 f"{len(safe_to_stage)} | pre-existing dirty: "
                 f"{len(skipped_dirty)} | Git-ignored: {len(skipped_ignored)}"
             )
-            print(f"Containing repository: {repository_root}")
+            lines.append(f"Containing repository: {repository_root}")
         if skipped_dirty:
-            print("Pre-existing dirty source paths will be applied but not staged:")
-            for path in skipped_dirty:
-                print(f"  - {path}")
-            print(
+            lines.append("Pre-existing dirty source paths will be applied but not staged:")
+            lines.extend(f"- {path}" for path in skipped_dirty)
+            lines.append(
                 "Cancel and rerun with --include-dirty to stage them explicitly."
             )
         if skipped_ignored:
-            print("Git-ignored paths will be applied but not staged:")
-            for path in skipped_ignored:
-                print(f"  - {path}")
+            lines.append("Git-ignored paths will be applied but not staged:")
+            lines.extend(f"- {path}" for path in skipped_ignored)
         if conflicts:
-            print("Conflicts: original source changed after checkout creation:")
-            for path in conflicts:
-                print(f"  - {path}")
+            lines.append("Conflicts: original source changed after checkout creation:")
+            lines.extend(f"- {path}" for path in conflicts)
         if unsupported:
-            print("Unsupported entries were excluded:")
-            for path in unsupported:
-                print(f"  - {path}")
-        print()
+            lines.append("Unsupported entries were excluded:")
+            lines.extend(f"- {path}" for path in unsupported)
+        self._render_preview("\n".join(lines))
         _logger.debug(
             "Rendered source apply preview",
             selected=len(selected),
             conflicts=len(conflicts),
             staging_available=repository_root is not None,
         )
+
+    @staticmethod
+    def _render_preview(output: str) -> None:
+        """Send interactive pre-confirmation output through the CLI renderer."""
+        from citra.cli.rendering import render_command_output
+
+        render_command_output(output)
 
     def _diff(self, source: Path, checkout: Path, relative: str) -> str:
         """Render a binary-safe no-index diff for one selected path."""

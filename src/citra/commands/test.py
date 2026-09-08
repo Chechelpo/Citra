@@ -31,7 +31,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..utils.api import chat_completions_url
-from ..utils.terminal import BOLD, DIM, GREEN, RED, RESET
 from citra.utils.lsp import LspManager
 from .command import Command, CommandResult, CommandUsage
 
@@ -71,18 +70,18 @@ class CheckRunner:
         lines: list[str] = []
 
         for result in self.results:
-            icon = f"{GREEN}✓{RESET}" if result.passed else f"{RED}✗{RESET}"
-            detail = f" {DIM}— {result.detail}{RESET}" if result.detail else ""
+            icon = "✓" if result.passed else "✗"
+            detail = f" — {result.detail}" if result.detail else ""
             lines.append(f"  {icon} {result.name}{detail}")
 
         lines.append("")
 
         if self.all_passed:
-            lines.append(f"{GREEN}⏺ All checks passed.{RESET}")
+            lines.append("⏺ All checks passed.")
         else:
             failed = sum(1 for r in self.results if not r.passed)
             lines.append(
-                f"{RED}⏺ {failed} check(s) failed.{RESET}"
+                f"⏺ {failed} check(s) failed."
             )
 
         return "\n".join(lines)
@@ -270,6 +269,8 @@ class TestCommand(Command):
 
     def _run(self, args: str) -> CommandResult:
         """Execute the run operation."""
+        if args.strip():
+            return self.usage_result("Test takes no arguments.")
         runner = CheckRunner()
 
         runner.run("Config", self._check_config)
@@ -280,7 +281,7 @@ class TestCommand(Command):
         runner.run("Agent Runtime", self._check_agent_runtime)
         runner.run("Language Servers", self._check_language_servers)
 
-        header = f"{BOLD}Running diagnostics…{RESET}\n\n"
+        header = "# Running diagnostics…\n\n"
 
         return CommandResult(
             output=header + runner.render(),
