@@ -1,13 +1,12 @@
-"""Project-local interpreter resolvers for language servers.
+"""Runtime interpreter resolvers for language servers.
 
 Language servers such as Pyright, gopls, ruby-lsp, or the TypeScript language
 server need to know which interpreter / toolchain to use to resolve installed
-third-party dependencies. The Citra runtime already provisions a lifecycle
-``env/`` virtual environment, but many projects ship their own per-project
-interpreter (``.venv``/``venv`` for Python, ``vendor/bundle`` for Ruby,
-``node_modules/.bin`` for Node, ``$GOPATH/bin`` for Go, ...). Surfacing those
-to the language server keeps the type checker honest without forcing every
-project to relink its dependencies into the runtime venv.
+third-party dependencies. Citra provisions a lifecycle ``env/python`` virtual
+environment and the model-facing Python tool installs project dependencies
+there. Surfacing that environment to Python language servers keeps diagnostics
+in sync with the code's actual runtime. A project-local ``.venv``/``venv`` is
+retained as a fallback for contexts that do not provide the managed runtime.
 
 The public surface of this module is intentionally narrow and language
 agnostic:
@@ -217,18 +216,27 @@ def resolve_python(
     *,
     workspace: WorkspaceContext,
 ) -> ResolvedInterpreter:
-    """Resolve the project-local Python interpreter, if any.
+    """Resolve the managed runtime Python interpreter, if any.
 
-    The resolver is intentionally defensive: a missing or broken venv is
-    reported as ``interpreter=None`` rather than as an exception, so the
-    language server can fall back to the runtime's auto-provisioned
-    interpreter (or the system Python). The ``workspace`` parameter is part
-    of the language-agnostic protocol contract and is not consulted for the
-    Python case; it is reserved for future resolvers that need it.
+    The model-facing Python tool owns ``workspace.python_runtime()`` and
+    installs dependencies into it, so that environment takes precedence over
+    any copied project-local venv. The resolver remains defensive: test
+    doubles and legacy contexts without a runtime accessor fall back to the
+    project-local lookup, and a missing or broken venv returns an empty result
+    rather than blocking language-server startup.
     """
-    del workspace  # The Python resolver is fully driven by ``project_root``.
+    runtime = getattr(workspace, "python_runtime", None)
+    runtime_venv: Path | None = None
+    if callable(runtime):
+        try:
+            runtime_path = runtime()
+        except (OSError, TypeError, ValueError):
+            runtime_path = None
+        candidate = Path(runtime_path) if isinstance(runtime_path, (str, Path)) else None
+        if candidate is not None and _python_executable_path(candidate) is not None:
+            runtime_venv = candidate
 
-    venv = find_python_venv(project_root)
+    venv = runtime_venv or find_python_venv(project_root)
     if venv is None:
         return ResolvedInterpreter(language="python")
 

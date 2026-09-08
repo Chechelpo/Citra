@@ -12,7 +12,7 @@ from citra.config import LintContextConfig, LintRuleConfig
 
 if TYPE_CHECKING:
     from citra.context.session_context import WorkspaceContext
-    from citra.sandbox.sandbox import WorkspaceSandbox
+    from citra.sandbox.sandbox import SandboxResult, WorkspaceSandbox
 
 
 # Single source of truth for the supported lint-placeholder set. The
@@ -37,10 +37,11 @@ _PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 # ``--preset default`` surfaces default-level errors (for example
 # ``bad-assignment``) that the no-config ``basic`` preset hides, while
 # ``--search-path {project}`` resolves sibling workspace imports from the
-# copied project tree. Third-party imports resolve through the
-# sandbox-provisioned interpreter site-packages (see PythonRuntimeDiscovery),
-# so no host absolute paths are embedded here. ``cwd`` stays at ``{project}``
-# so configuration-relative resolution keeps the copied-project shape.
+# copied project tree. The generated rule explicitly points Pyrefly at the
+# agent-managed ``env/python`` interpreter, while every Python lint/fix command
+# receives that venv's ``VIRTUAL_ENV`` and ``bin`` directory. ``cwd`` stays at
+# ``{project}`` so configuration-relative resolution keeps the copied-project
+# shape.
 # Author: liberating-potato
 _HARDCODED_PYREFLY_RULE_NAME = "pyrefly"
 _HARDCODED_PYREFLY_COMMAND: tuple[str, ...] = (
@@ -134,6 +135,7 @@ class LintRunner:
         relative_path = relative.as_posix()
         failures: list[str] = []
         run_fixes = config.auto_fix if auto_fix is None else auto_fix
+        python_environment = self._python_runtime_environment(path)
 
         for rule in rules:
             is_hardcoded_pyrefly = self._is_hardcoded_pyrefly_rule(rule)
@@ -151,6 +153,7 @@ class LintRunner:
                     path,
                     relative_path,
                     config,
+                    python_environment=python_environment,
                 )
                 if fix_failure is not None:
                     failures.append(fix_failure)
@@ -203,11 +206,11 @@ class LintRunner:
 
             try:
                 cwd = self.workspace.resolve_path(cwd_raw)
-                result = self.sandbox.run(
+                result = self._sandbox_run(
                     command,
                     cwd=cwd,
                     timeout=config.timeout,
-                    network=False,
+                    python_environment=python_environment,
                 )
             except Exception as error:
                 if is_hardcoded_pyrefly and self._is_missing_pyrefly_error(error):
@@ -254,6 +257,8 @@ class LintRunner:
         path: Path,
         relative_path: str,
         config: LintContextConfig,
+        *,
+        python_environment: tuple[dict[str, str], tuple[str, ...], str] | None,
     ) -> str | None:
         """Run a configured fixer and return only execution failures.
 
@@ -295,11 +300,11 @@ class LintRunner:
             )
 
         try:
-            result = self.sandbox.run(
+            result = self._sandbox_run(
                 command,
                 cwd=self.workspace.resolve_path(cwd_raw),
                 timeout=config.timeout,
-                network=False,
+                python_environment=python_environment,
             )
         except Exception as error:
             return self._format_failure(
@@ -348,8 +353,7 @@ class LintRunner:
             return config.rules
         return (*config.rules, self._hardcoded_pyrefly_rule())
 
-    @staticmethod
-    def _hardcoded_pyrefly_rule() -> LintRuleConfig:
+    def _hardcoded_pyrefly_rule(self) -> LintRuleConfig:
         """Return the Citra-owned single-file pyrefly rule.
 
         What it does:
@@ -359,14 +363,25 @@ class LintRunner:
 
         Returns:
             Lint rule running ``pyrefly check --preset default
-            --search-path {project} {path}`` from ``{project}`` for
-            Python sources only.
+            --search-path {project} --python-interpreter-path <runtime-python>
+            {path}`` from ``{project}`` for Python sources. The interpreter
+            option is omitted only when no managed runtime is available.
 
         Author: liberating-potato
         """
+        command = _HARDCODED_PYREFLY_COMMAND
+        runtime = self._python_runtime_environment(self.workspace.workspace / "_.py")
+        if runtime is not None:
+            _environment, _path_prepend, interpreter = runtime
+            command = (
+                *command[:-1],
+                "--python-interpreter-path",
+                interpreter,
+                command[-1],
+            )
         return LintRuleConfig(
             name=_HARDCODED_PYREFLY_RULE_NAME,
-            command=_HARDCODED_PYREFLY_COMMAND,
+            command=command,
             include=_HARDCODED_PYREFLY_INCLUDE,
             exclude=(),
             cwd=_HARDCODED_PYREFLY_CWD,
@@ -410,10 +425,73 @@ class LintRunner:
 
         Author: liberating-potato
         """
+        command = tuple(rule.command)
+        expected_prefix = _HARDCODED_PYREFLY_COMMAND[:-1]
         return (
             rule.name == _HARDCODED_PYREFLY_RULE_NAME
-            and tuple(rule.command) == _HARDCODED_PYREFLY_COMMAND
+            and command[: len(expected_prefix)] == expected_prefix
+            and command[-1:] == _HARDCODED_PYREFLY_COMMAND[-1:]
             and rule.cwd == _HARDCODED_PYREFLY_CWD
+        )
+
+    def _python_runtime_environment(
+        self,
+        path: Path,
+    ) -> tuple[dict[str, str], tuple[str, ...], str] | None:
+        """Return the managed Python venv for Python post-edit processes."""
+        if path.suffix.lower() not in {".py", ".pyi", ".pyw", ".ipynb"}:
+            return None
+        runtime = getattr(self.workspace, "python_runtime", None)
+        if not callable(runtime):
+            return None
+        try:
+            runtime_path = runtime()
+        except (OSError, TypeError, ValueError):
+            return None
+        if not isinstance(runtime_path, (str, Path)):
+            return None
+        venv = Path(runtime_path)
+        bin_dir = venv / "bin"
+        interpreter = next(
+            (
+                candidate
+                for candidate in (bin_dir / "python3", bin_dir / "python")
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if interpreter is None:
+            return None
+        return (
+            {"VIRTUAL_ENV": str(venv)},
+            (str(bin_dir),),
+            str(interpreter),
+        )
+
+    def _sandbox_run(
+        self,
+        command: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout: float,
+        python_environment: tuple[dict[str, str], tuple[str, ...], str] | None,
+    ) -> SandboxResult:
+        """Run a lint command with the managed Python environment selected."""
+        if python_environment is None:
+            return self.sandbox.run(
+                command,
+                cwd=cwd,
+                timeout=timeout,
+                network=False,
+            )
+        environment, path_prepend, _interpreter = python_environment
+        return self.sandbox.run(
+            command,
+            cwd=cwd,
+            timeout=timeout,
+            network=False,
+            environment=environment,
+            path_prepend=path_prepend,
         )
 
     def _is_pyrefly_available(self) -> bool:

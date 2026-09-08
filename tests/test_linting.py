@@ -41,6 +41,39 @@ class FakeSandbox:
         return self.result
 
 
+class RuntimeWorkspace(FakeWorkspace):
+    def __init__(self, project: Path, runtime: Path) -> None:
+        super().__init__(project)
+        self.runtime = runtime
+
+    def python_runtime(self) -> Path:
+        return self.runtime
+
+
+class RuntimeAwareSandbox(FakeSandbox):
+    def run(
+        self,
+        command,
+        *,
+        cwd,
+        timeout,
+        network,
+        environment=None,
+        path_prepend=(),
+    ):
+        self.calls.append(
+            {
+                "command": tuple(command),
+                "cwd": Path(cwd),
+                "timeout": timeout,
+                "network": network,
+                "environment": environment,
+                "path_prepend": tuple(path_prepend),
+            }
+        )
+        return self.result
+
+
 def test_lint_config_loads_auto_fix_command() -> None:
     config = load_lint_config(
         {
@@ -109,6 +142,49 @@ def test_fix_command_runs_before_check(tmp_path: Path) -> None:
         ("fixer", "module.py"),
         ("pyrefly", "check", str(target)),
     ]
+
+
+def test_python_lint_and_fix_use_managed_runtime_venv(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "module.py"
+    target.write_text("import external\n", encoding="utf-8")
+    runtime = tmp_path / "env" / "python"
+    runtime_bin = runtime / "bin"
+    runtime_bin.mkdir(parents=True)
+    (runtime_bin / "python3").write_text("", encoding="utf-8")
+    sandbox = RuntimeAwareSandbox(SandboxResult(0, "", False))
+    config = LintContextConfig(
+        rules=(
+            LintRuleConfig(
+                name="ruff",
+                command=("ruff", "check", "{path}"),
+                fix_command=("ruff", "check", "--fix", "{path}"),
+                include=("**/*.py",),
+            ),
+        ),
+    )
+
+    result = LintRunner(
+        RuntimeWorkspace(project, runtime), sandbox, config
+    ).lint_for_path("module.py")
+
+    assert result is None
+    assert len(sandbox.calls) == 3
+    for call in sandbox.calls:
+        assert call["environment"] == {"VIRTUAL_ENV": str(runtime)}
+        assert call["path_prepend"] == (str(runtime_bin),)
+    assert sandbox.calls[-1]["command"] == (
+        "pyrefly",
+        "check",
+        "--preset",
+        "default",
+        "--search-path",
+        str(project),
+        "--python-interpreter-path",
+        str(runtime_bin / "python3"),
+        str(target),
+    )
 
 
 def test_auto_fix_can_be_disabled_without_disabling_checks(tmp_path: Path) -> None:

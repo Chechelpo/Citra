@@ -28,13 +28,13 @@ def post_edit_result(
             else lint_for_path(path, auto_fix=auto_fix)
         )
         if lint:
-            sections.append(f"Lint checks after edit:\n{lint}")
+            sections.append(str(lint))
 
     diagnostics_for_path = getattr(context, "diagnostics_for_path", None)
     if callable(diagnostics_for_path):
         diagnostics = diagnostics_for_path(path)
         if diagnostics:
-            sections.append(f"LSP diagnostics after edit:\n{diagnostics}")
+            sections.append(str(diagnostics))
 
     if not sections:
         return "ok"

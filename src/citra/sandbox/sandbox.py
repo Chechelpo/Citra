@@ -500,6 +500,7 @@ class WorkspaceSandbox:
         timeout: float = 30.0,
         network: bool = False,
         environment: Mapping[str, str] | None = None,
+        path_prepend: Sequence[str | Path] = (),
         input_text: str | None = None,
     ) -> SandboxResult:
         """
@@ -547,6 +548,7 @@ class WorkspaceSandbox:
 
         env = self.build_environment(
             overrides=environment,
+            path_prepend=path_prepend,
         )
 
         resolved_command = self._resolve_command(command)

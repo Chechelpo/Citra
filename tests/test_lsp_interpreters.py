@@ -111,6 +111,24 @@ def test_resolve_python_returns_interpreter_and_settings() -> None:
         assert resolved.initialization_options["pythonPath"] == resolved.interpreter
 
 
+def test_resolve_python_prefers_managed_runtime_venv() -> None:
+    """LSP analysis follows the venv populated by the model-facing Python tool."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir) / "project"
+        root.mkdir()
+        _make_venv(root, candidate=".venv")
+        runtime_parent = Path(temp_dir) / "runtime"
+        runtime = _make_venv(runtime_parent, candidate="python")
+        workspace = types.SimpleNamespace(python_runtime=lambda: runtime)
+
+        resolved = resolve_python(root, workspace=workspace)  # type: ignore[arg-type]
+
+        assert resolved.interpreter == str(runtime / "bin" / "python3")
+        assert resolved.path_prepend == (str(runtime / "bin"),)
+        assert resolved.environment == {"VIRTUAL_ENV": str(runtime)}
+        assert resolved.settings["python"]["pythonPath"] == resolved.interpreter
+
+
 def test_resolve_python_handles_missing_venv() -> None:
     """A project without a venv yields a populated shell object, not an exception."""
     with tempfile.TemporaryDirectory() as temp_dir:
