@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from citra.context.environment_fetching import EnvironmentInfo
-from citra.tools.skills.skill import Skill
 from citra.utils.directory_tree import render_tree
+
 from .names import agent_name
 
 if TYPE_CHECKING:
@@ -16,7 +15,8 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "build_system_prompt"
+    "build_system_prompt",
+    "build_workspace_context",
 ]
 
 
@@ -28,8 +28,6 @@ def build_system_prompt(
     add_skills : bool = True,
     add_coding_convetions:bool = False,
     add_environment:bool = True,
-    add_aider_tree:bool = True,
-    add_directory_tree:bool = True
 ) -> str:
     """
     Build a system prompt.
@@ -55,9 +53,6 @@ def build_system_prompt(
     if (add_environment):
         result = _concat(result, _collect_environment(context).as_prompt_section())
     
-    if add_aider_tree or add_directory_tree:
-        result = _concat(result, _tree_sections(context, add_aider_tree, add_directory_tree))
-
     if (add_coding_convetions):
         result = _concat(result, _basic_coding_conventions())
     
@@ -96,30 +91,19 @@ def _format_skills(workflow: SingleModeWorkflow) -> str:
 Call them as soon as they're relevant to the current task at hand
 """
 
-def _tree_sections(context:ExecutionContext, aider_tree:bool, directory_tree:bool) -> str:
-    """Creates the prompt section for both the aider tree and directory tree from the workspace's root"""
-    if not aider_tree and not directory_tree:
-        return ""
+def build_workspace_context(context: ExecutionContext) -> str:
+    """Render the mutable workspace snapshot for the next user message."""
+    return f"""# Workspace snapshot
 
-    result = """
-    # Workspace
-    """
-    if aider_tree:
-        result = result + f"""
-        
-        # Directory tree
-        
-        {render_tree(context.workspace, directories_only=True)}
+## Directory tree
 
-        """
-    if directory_tree:
-        result = result + f"""
-        # Aider tree
+{render_tree(context.workspace, directories_only=True)}
 
-        {context.repo_map.render(model_id=context.model_config().id)}
-        """
+## Repository map
 
-    return result + "\n" + "Use these maps as an initial snapshot of your workspace"
+{context.repo_map.render(model_id=context.model_config().id)}
+
+Use these maps as an initial snapshot of your workspace."""
 
 def _basic_coding_conventions() -> str:
     return """

@@ -1,11 +1,11 @@
-"""Configured lint checks for modified workspace files."""
+"""Configured lint fixes and checks for modified workspace files."""
 
 from __future__ import annotations
 
 import re
-from pathlib import Path, PurePosixPath
 import shlex
 import tomllib
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from citra.config import LintContextConfig, LintRuleConfig
@@ -100,8 +100,13 @@ class LintRunner:
         self.sandbox = sandbox
         self.config = config
 
-    def lint_for_path(self, path_raw: str) -> str | None:
-        """Return lint failures for a project file, or ``None`` when clean/inactive."""
+    def lint_for_path(
+        self,
+        path_raw: str,
+        *,
+        auto_fix: bool | None = None,
+    ) -> str | None:
+        """Return lint failures, optionally overriding automatic fixes for this run."""
         # ``lint.enabled`` is the master switch for post-edit linting. Project
         # auto-detection must not bypass an operator who explicitly disabled
         # lint enforcement in the global Citra configuration.
@@ -128,15 +133,30 @@ class LintRunner:
 
         relative_path = relative.as_posix()
         failures: list[str] = []
+        run_fixes = config.auto_fix if auto_fix is None else auto_fix
 
         for rule in rules:
             is_hardcoded_pyrefly = self._is_hardcoded_pyrefly_rule(rule)
             if not self._matches(rule, relative_path):
                 continue
 
+            if run_fixes and rule.fix_command is not None:
+                fix_command = tuple(
+                    self._expand(argument, path, relative_path)
+                    for argument in rule.fix_command
+                )
+                fix_failure = self._run_fix(
+                    rule,
+                    fix_command,
+                    path,
+                    relative_path,
+                    config,
+                )
+                if fix_failure is not None:
+                    failures.append(fix_failure)
+
             command = tuple(
-                self._expand(argument, path, relative_path)
-                for argument in rule.command
+                self._expand(argument, path, relative_path) for argument in rule.command
             )
             cwd_raw = self._expand(rule.cwd, path, relative_path)
 
@@ -144,8 +164,7 @@ class LintRunner:
                 (
                     token
                     for token in (
-                        self._unsupported_placeholder(argument)
-                        for argument in command
+                        self._unsupported_placeholder(argument) for argument in command
                     )
                     if token is not None
                 ),
@@ -227,6 +246,75 @@ class LintRunner:
 
         text = f"Lint violations for {relative_path}:\n" + "\n\n".join(failures)
         return self._truncate(text, config.max_output_length)
+
+    def _run_fix(
+        self,
+        rule: LintRuleConfig,
+        command: tuple[str, ...],
+        path: Path,
+        relative_path: str,
+        config: LintContextConfig,
+    ) -> str | None:
+        """Run a configured fixer and return only execution failures.
+
+        A non-zero fixer exit is not itself reported: tools such as
+        ``ruff check --fix`` use it when unfixable violations remain, and the
+        normal check command immediately afterward reports those violations.
+        """
+        unsupported_argument = next(
+            (
+                token
+                for token in (
+                    self._unsupported_placeholder(argument) for argument in command
+                )
+                if token is not None
+            ),
+            None,
+        )
+        if unsupported_argument is not None:
+            return self._format_failure(
+                rule,
+                command,
+                "lint fix execution failed: lint rule "
+                f"'{rule.name}' uses unsupported placeholder "
+                f"'{unsupported_argument}' in a fix_command argument. "
+                "Supported placeholders: " + ", ".join(_SUPPORTED_PLACEHOLDERS) + ".",
+            )
+
+        cwd_raw = self._expand(rule.cwd, path, relative_path)
+        unsupported_cwd = self._unsupported_placeholder(cwd_raw)
+        if unsupported_cwd is not None:
+            return self._format_failure(
+                rule,
+                command,
+                "lint fix execution failed: lint rule "
+                f"'{rule.name}' uses unsupported placeholder "
+                f"'{unsupported_cwd}' in cwd. Supported placeholders: "
+                + ", ".join(_SUPPORTED_PLACEHOLDERS)
+                + ".",
+            )
+
+        try:
+            result = self.sandbox.run(
+                command,
+                cwd=self.workspace.resolve_path(cwd_raw),
+                timeout=config.timeout,
+                network=False,
+            )
+        except Exception as error:
+            return self._format_failure(
+                rule,
+                command,
+                f"lint fix execution failed: {error}",
+            )
+
+        if result.timed_out:
+            return self._format_failure(
+                rule,
+                command,
+                f"lint fix timed out after {config.timeout}s",
+            )
+        return None
 
     def _effective_config(self, relative: Path) -> LintContextConfig:
         """Handle effective config."""
@@ -485,11 +573,21 @@ class LintRunner:
         rules = [
             LintRuleConfig(
                 name="ruff-project",
-                command = (
+                command=(
                     "ruff",
-                    "format",
-                    "--check",
+                    "check",
                     "--force-exclude",
+                    "--config",
+                    config_path,
+                    "{path}",
+                ),
+                fix_command=(
+                    "ruff",
+                    "check",
+                    "--fix",
+                    "--force-exclude",
+                    "--config",
+                    config_path,
                     "{path}",
                 ),
                 include=_PROJECT_RUFF_FILES,
@@ -510,6 +608,14 @@ class LintRunner:
                         config_path,
                         "{path}",
                     ),
+                    fix_command=(
+                        "ruff",
+                        "format",
+                        "--force-exclude",
+                        "--config",
+                        config_path,
+                        "{path}",
+                    ),
                     include=_PROJECT_RUFF_FILES,
                     cwd=str(writable_project_root),
                 )
@@ -517,6 +623,9 @@ class LintRunner:
 
         return LintContextConfig(
             enabled=True,
+            auto_fix=self.config.auto_fix,
+            timeout=self.config.timeout,
+            max_output_length=self.config.max_output_length,
             rules=tuple(rules),
         )
 

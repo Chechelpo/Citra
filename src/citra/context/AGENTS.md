@@ -49,6 +49,11 @@ denial is monotonic, and bind lists are additive.
 
 Lint placeholders are `{path}`, `{relative_path}`, `{project}`, and `{workspace}` (`{workspace}` is an exact alias for `{project}`). Project
 auto-detection reads the nearest `pyproject.toml` inside the copied project.
+Each lint rule may provide a `fix_command`, which runs before its required
+`command`; `[lint].auto_fix = false` disables all fix commands while retaining
+post-edit checks by default. The model can override that default for one Edit or
+Write call with `auto_fix`; checks still run when fixes are disabled.
+Auto-detected Ruff policies provide safe fix and format commands automatically.
 
 <!-- Author: adamant-disaster -->
 

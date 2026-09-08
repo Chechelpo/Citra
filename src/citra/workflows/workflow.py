@@ -198,6 +198,11 @@ class SingleModeWorkflow(Workflow):
         """Return get system prompt."""
         ...
 
+    def get_user_message_prefix(self, context: ExecutionContext) -> str | None:
+        """Return optional context prepended to the turn's user message."""
+        del context
+        return None
+
     @property
     @final
     def initial_workflow(self) -> SingleModeWorkflow:

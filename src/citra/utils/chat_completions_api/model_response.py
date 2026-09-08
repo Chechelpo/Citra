@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from citra.agent.chat_message import (
@@ -27,6 +27,7 @@ class ModelUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    cached_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +129,18 @@ def _parse_usage(value: object) -> ModelUsage:
     if value is None:
         return ModelUsage()
     usage = _object(value, "usage")
+    input_details = usage.get(
+        "prompt_tokens_details",
+        usage.get("input_tokens_details"),
+    )
+    cached_tokens = None
+    if input_details is not None:
+        cached_tokens = _optional_int(
+            _object(input_details, "usage input token details").get(
+                "cached_tokens"
+            ),
+            "usage cached tokens",
+        )
     return ModelUsage(
         input_tokens=_optional_int(
             usage.get("prompt_tokens", usage.get("input_tokens")),
@@ -138,6 +151,7 @@ def _parse_usage(value: object) -> ModelUsage:
             "usage output tokens",
         ),
         total_tokens=_optional_int(usage.get("total_tokens"), "usage total tokens"),
+        cached_tokens=cached_tokens,
     )
 
 

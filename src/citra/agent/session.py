@@ -287,6 +287,25 @@ class AgentSession:
             )
         )
 
+    def prepend_to_latest_user_message(self, content: str) -> bool:
+        """Prepend context when the latest group is one plain user message."""
+        content = content.strip()
+        if not content or not self.message_groups:
+            return False
+
+        group = self.message_groups[-1]
+        if len(group.messages) != 1 or not isinstance(
+            group.messages[0],
+            UserMessage,
+        ):
+            return False
+
+        user_message = group.messages[0]
+        group.messages[0] = UserMessage(
+            content=f"{content}\n\n{user_message.content}"
+        )
+        return True
+
     def add_assistant_message(
         self,
         message: AssistantMessage,

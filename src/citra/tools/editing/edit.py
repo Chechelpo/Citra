@@ -110,13 +110,27 @@ def _edit_definition(
                 schema=JsonSchema.boolean(
                     description=(
                         "Deprecated compatibility flag. LSP diagnostics "
-                        "and configured lint checks run automatically "
+                        "and configured lint fixes and checks run automatically "
                         "after every successful edit."
                     ),
                 ),
                 required=False,
             )
         )
+
+    properties.append(
+        JsonProperty(
+            name="auto_fix",
+            schema=JsonSchema.boolean(
+                description=(
+                    "Whether configured lint fixers may rewrite the file after "
+                    "this edit. Defaults to the project setting. Set false for "
+                    "an intermediate edit; lint checks and LSP diagnostics still run."
+                ),
+            ),
+            required=False,
+        )
+    )
 
     return ChatCompletionTool(
         function=FunctionDefinition(
@@ -317,6 +331,9 @@ class Edit(Tool):
                 replace_all
             )
 
+        if "auto_fix" in arguments:
+            normalized["auto_fix"] = arguments["auto_fix"]
+
         return normalized
 
     # ------------------------------------------------------------------
@@ -343,6 +360,7 @@ class Edit(Tool):
         return post_edit_result(
             self.context,
             filesystem_arguments["path"],
+            auto_fix=filesystem_arguments.get("auto_fix"),
         )
 
     # ------------------------------------------------------------------

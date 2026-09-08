@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from citra.config import LintContextConfig, LintRuleConfig
+from citra.config._analysis import load_lint_config
 from citra.sandbox import SandboxResult
+from citra.tools.editing import Edit, Write
+from citra.tools.editing._post_edit import post_edit_result
 from citra.tools.linting import LintRunner
 
 
@@ -13,7 +19,9 @@ class FakeWorkspace:
 
     def resolve_path(self, value: str | Path) -> Path:
         path = Path(value)
-        return path.resolve() if path.is_absolute() else (self.workspace / path).resolve()
+        return (
+            path.resolve() if path.is_absolute() else (self.workspace / path).resolve()
+        )
 
 
 class FakeSandbox:
@@ -31,6 +39,175 @@ class FakeSandbox:
             }
         )
         return self.result
+
+
+def test_lint_config_loads_auto_fix_command() -> None:
+    config = load_lint_config(
+        {
+            "lint": {
+                "auto_fix": False,
+                "rules": [
+                    {
+                        "name": "ruff",
+                        "command": ["ruff", "check", "{path}"],
+                        "fix_command": ["ruff", "check", "--fix", "{path}"],
+                    }
+                ],
+            }
+        }
+    )
+
+    assert config.auto_fix is False
+    assert config.rules[0].fix_command == (
+        "ruff",
+        "check",
+        "--fix",
+        "{path}",
+    )
+
+
+def test_lint_config_rejects_empty_fix_command() -> None:
+    with pytest.raises(ValueError, match=r"lint\.rules\[0\]\.fix_command"):
+        load_lint_config(
+            {
+                "lint": {
+                    "rules": [
+                        {
+                            "name": "ruff",
+                            "command": ["ruff", "check", "{path}"],
+                            "fix_command": [],
+                        }
+                    ]
+                }
+            }
+        )
+
+
+def test_fix_command_runs_before_check(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "module.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    sandbox = FakeSandbox(SandboxResult(0, "", False))
+    config = LintContextConfig(
+        rules=(
+            LintRuleConfig(
+                name="pyrefly-custom",
+                command=("pyrefly", "check", "{path}"),
+                fix_command=("fixer", "{relative_path}"),
+                include=("**/*.py",),
+            ),
+        ),
+    )
+
+    result = LintRunner(FakeWorkspace(project), sandbox, config).lint_for_path(
+        "module.py"
+    )
+
+    assert result is None
+    assert [call["command"] for call in sandbox.calls] == [
+        ("fixer", "module.py"),
+        ("pyrefly", "check", str(target)),
+    ]
+
+
+def test_auto_fix_can_be_disabled_without_disabling_checks(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "module.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    sandbox = FakeSandbox(SandboxResult(0, "", False))
+    config = LintContextConfig(
+        auto_fix=False,
+        rules=(
+            LintRuleConfig(
+                name="pyrefly-custom",
+                command=("pyrefly", "check", "{path}"),
+                fix_command=("fixer", "{path}"),
+                include=("**/*.py",),
+            ),
+        ),
+    )
+
+    LintRunner(FakeWorkspace(project), sandbox, config).lint_for_path("module.py")
+
+    assert [call["command"] for call in sandbox.calls] == [
+        ("pyrefly", "check", str(target)),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("configured", "requested", "expected_commands"),
+    (
+        (True, False, ("checker",)),
+        (False, True, ("fixer", "checker")),
+    ),
+)
+def test_auto_fix_can_be_overridden_for_one_tool_call(
+    tmp_path: Path,
+    configured: bool,
+    requested: bool,
+    expected_commands: tuple[str, ...],
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "module.py").write_text("x = 1\n", encoding="utf-8")
+    sandbox = FakeSandbox(SandboxResult(0, "", False))
+    config = LintContextConfig(
+        auto_fix=configured,
+        rules=(
+            LintRuleConfig(
+                name="custom",
+                command=("checker", "{path}"),
+                fix_command=("fixer", "{path}"),
+                include=("**/*.py",),
+            ),
+        ),
+    )
+
+    LintRunner(FakeWorkspace(project), sandbox, config).lint_for_path(
+        "module.py",
+        auto_fix=requested,
+    )
+
+    commands = tuple(call["command"][0] for call in sandbox.calls)
+    assert tuple(command for command in commands if command != "pyrefly") == (
+        expected_commands
+    )
+
+
+def test_edit_and_write_expose_auto_fix_override() -> None:
+    for tool_type in (Edit, Write):
+        parameters = tool_type.CITRA_DEFINITION.function.parameters.to_dict()
+
+        assert parameters["properties"]["auto_fix"]["type"] == "boolean"
+        assert "auto_fix" not in parameters["required"]
+
+
+def test_post_edit_fixes_before_collecting_diagnostics() -> None:
+    calls: list[str] = []
+    context = SimpleNamespace(
+        lint_for_path=lambda path: calls.append(f"lint:{path}") or None,
+        diagnostics_for_path=lambda path: calls.append(f"lsp:{path}") or None,
+    )
+
+    assert post_edit_result(context, "module.py") == "ok"
+    assert calls == ["lint:module.py", "lsp:module.py"]
+
+
+def test_post_edit_forwards_auto_fix_override() -> None:
+    calls: list[str] = []
+
+    def lint_for_path(path: str, *, auto_fix: bool | None = None) -> None:
+        calls.append(f"lint:{path}:{auto_fix}")
+
+    context = SimpleNamespace(
+        lint_for_path=lint_for_path,
+        diagnostics_for_path=lambda path: calls.append(f"lsp:{path}") or None,
+    )
+
+    assert post_edit_result(context, "module.py", auto_fix=False) == "ok"
+    assert calls == ["lint:module.py:False", "lsp:module.py"]
 
 
 def test_global_lint_rule_uses_current_project_placeholders(tmp_path: Path) -> None:
@@ -114,9 +291,12 @@ def test_project_ruff_policy_uses_copied_pyproject(tmp_path: Path) -> None:
     ).lint_for_path("module.py")
 
     assert result is None
-    command = sandbox.calls[0]["command"]
-    assert str(project / "pyproject.toml") in command
-    assert "@source" not in " ".join(command)
+    commands = [call["command"] for call in sandbox.calls]
+    assert commands[0][:3] == ("ruff", "check", "--fix")
+    assert commands[1][:2] == ("ruff", "check")
+    assert str(project / "pyproject.toml") in commands[0]
+    assert str(project / "pyproject.toml") in commands[1]
+    assert "@source" not in " ".join(commands[0])
 
 
 def test_lint_workspace_placeholder_in_command_expands_to_project(

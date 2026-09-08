@@ -34,6 +34,7 @@ def test_parse_model_response_builds_immutable_contract() -> None:
                 "prompt_tokens": 10,
                 "completion_tokens": 4,
                 "total_tokens": 14,
+                "prompt_tokens_details": {"cached_tokens": 6},
             },
         }
     )
@@ -45,7 +46,7 @@ def test_parse_model_response_builds_immutable_contract() -> None:
         ),
     )
     assert response.finish_reason == "tool_calls"
-    assert response.usage == ModelUsage(10, 4, 14)
+    assert response.usage == ModelUsage(10, 4, 14, 6)
 
 
 def test_parse_model_response_rejects_duplicate_tool_call_ids() -> None:

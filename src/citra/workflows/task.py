@@ -19,7 +19,10 @@ from citra.tools.interaction import PromptUser
 from citra.tools.web import Browser, WebSearch
 from citra.tools.workspace import Workspace
 from citra.utils.directory_tree import render_tree
-from citra.workflows.sys_prompt import build_system_prompt
+from citra.workflows.sys_prompt import build_system_prompt, build_workspace_context
+from citra.tools.skills.coding_conventions import coding_skills
+from citra.tools.session_memory import RequirementTool
+from citra.tools.skills.tool import SkillTool
 
 from .workflow import SandboxConfig, StaticWorkflow, TaskSteeringConfig
 
@@ -34,6 +37,9 @@ class TaskWorkflow(StaticWorkflow):
     _DESCRIPTION = (
         "General-purpose task workflow for focused repository work."
     )
+    _AVAILABLE_SKILLS= (
+        coding_skills()
+    )
     _TOOLS = ToolSet(
         core_tools=(
             Edit,
@@ -43,14 +49,16 @@ class TaskWorkflow(StaticWorkflow):
             Glob,
             Grep,
             Bash,
+            SkillTool,
             Workspace,
             Tree,
+            RequirementTool,
             TodoTool,
             FactTool,
             DecisionTool,
             ConstraintTool,
         ),
-        deferred_tools=(Lsp, WebSearch, Browser, PromptUser, Document, Diagram, Python),
+        deferred_tools=(Lsp, WebSearch, Browser, PromptUser, Python),
     )
     _SANDBOX_CONFIG = SandboxConfig()
     _TASK_STEERING = TaskSteeringConfig(
@@ -68,6 +76,7 @@ class TaskWorkflow(StaticWorkflow):
 
         return build_system_prompt(
             context,
+            give_name=True,
             add_coding_convetions=True, 
             preepend="""
 # Role
@@ -152,6 +161,11 @@ Before finishing, make sure:
 
 Report what was changed and any important verification results.
 """.strip())
+
+    @override
+    def get_user_message_prefix(self, context: ExecutionContext) -> str:
+        """Return the current workspace snapshot for the user's request."""
+        return build_workspace_context(context)
 
 
 __all__ = ["TaskWorkflow"]

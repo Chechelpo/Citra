@@ -35,7 +35,7 @@ from citra.tools.interaction import PromptUser
 from citra.tools.skills import SkillTool
 from citra.tools.web import Browser, WebSearch
 from citra.tools.workspace import Workspace
-from citra.workflows.sys_prompt import build_system_prompt
+from citra.workflows.sys_prompt import build_system_prompt, build_workspace_context
 
 from .workflow import (
     SandboxConfig,
@@ -239,6 +239,11 @@ The controller validates the checkpoint and starts a new isolated role. Do not
 simulate that role in this turn.
 """.strip()
 )
+
+    @override
+    def get_user_message_prefix(self, context: ExecutionContext) -> str:
+        """Return the current workspace snapshot for the role's request."""
+        return build_workspace_context(context)
 
 
 class ExplorerWorkflow(_RoleWorkflow):

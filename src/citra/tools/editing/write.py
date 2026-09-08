@@ -64,13 +64,27 @@ def _write_definition(
                 schema=JsonSchema.boolean(
                     description=(
                         "Deprecated compatibility flag. LSP diagnostics "
-                        "and configured lint checks run automatically "
+                        "and configured lint fixes and checks run automatically "
                         "after every successful write."
                     ),
                 ),
                 required=False,
             )
         )
+
+    properties.append(
+        JsonProperty(
+            name="auto_fix",
+            schema=JsonSchema.boolean(
+                description=(
+                    "Whether configured lint fixers may rewrite the file after "
+                    "this write. Defaults to the project setting. Set false for "
+                    "an intermediate write; lint checks and LSP diagnostics still run."
+                ),
+            ),
+            required=False,
+        )
+    )
 
     return ChatCompletionTool(
         function=FunctionDefinition(
@@ -108,8 +122,8 @@ class Write(Tool):
             "to the current project and lifecycle scratch directories. "
             "Use edit instead when only a specific existing fragment "
             "should be changed. After a successful write, Citra "
-            "automatically runs available LSP diagnostics and configured "
-            "project lint checks."
+            "automatically runs configured project lint fixes and checks, "
+            "then available LSP diagnostics."
         ),
         path_description=(
             "Destination file path. Relative paths are resolved "
@@ -264,6 +278,7 @@ class Write(Tool):
         return post_edit_result(
             self.context,
             path,
+            auto_fix=arguments.get("auto_fix"),
         )
 
     # ------------------------------------------------------------------

@@ -156,6 +156,30 @@ Prefer keyword-only arguments for APIs where positional arguments are unclear.
 
 Use generators when processing potentially large streams of data.
 
+## Documentation template
+
+```python
+def function(arg1:A, arg2:B) -> C:
+    \"\"\"
+    <phrase explaining what it does/what its for>
+
+        - arg1: <arg1 expected>
+        - arg2: <arg2 expected>
+    
+    Raises:
+        - <exception1>: <why>
+        - <exception2>: <why>
+
+    Returns: <explanation of C> 
+    \"\"\"
+    ...
+```
+
+- "Returns" section may be skipped if it returns None
+- "Raises" section may be skipped if it isn't expected
+
+For simple functions, a single line is sufficent. Don't overdocument.
+
 ## General guidance
 
 Prefer explicit code over clever code.

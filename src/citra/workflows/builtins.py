@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 
 from citra.tools.default_registry import ToolSet, all_tools
 from citra.tools.subagent.tool import SubagentTool
-from citra.utils.directory_tree import render_tree
+from citra.workflows.sys_prompt import build_workspace_context
 
 from .chat import ChatWorkflow
 from .task import TaskWorkflow
@@ -37,7 +37,6 @@ class ArchitectWorkflow(StaticWorkflow):
     @override
     def get_system_prompt(self, context: ExecutionContext) -> str:
         """Return get system prompt."""
-        tree = render_tree(workspace=context.workspace, limit=120, max_depth=3)
         subagent_name = SubagentTool.resolve_definition_for_context(
             context
         ).function.name
@@ -47,10 +46,6 @@ class ArchitectWorkflow(StaticWorkflow):
 Translate the user's high-level greenfield or system-level requirement into a
 coherent implementation. You are one orchestrator agent in one workflow;
 component workers are genuine isolated subagents.
-
-# Initial tree
-
-{tree}
 
 # Required operating sequence
 
@@ -78,6 +73,11 @@ component workers are genuine isolated subagents.
 - Verify APIs against the frozen contracts before integration.
 - The architect remains responsible for final correctness and completeness.
 """.strip()
+
+    @override
+    def get_user_message_prefix(self, context: ExecutionContext) -> str:
+        """Return the current workspace snapshot for the user's request."""
+        return build_workspace_context(context)
 
 
 def simple_workflow(workflow: SingleModeWorkflow) -> SingleModeWorkflow:

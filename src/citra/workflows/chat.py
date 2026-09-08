@@ -13,7 +13,7 @@ from citra.tools.explorer import Glob, Grep, Read, ReadImage, Tree
 from citra.tools.interaction import PromptUser
 from citra.tools.web import Browser, WebSearch
 from citra.tools.workspace import Workspace
-from citra.workflows.sys_prompt import build_system_prompt
+from citra.workflows.sys_prompt import build_system_prompt, build_workspace_context
 
 from .workflow import SandboxConfig, StaticWorkflow
 
@@ -71,5 +71,10 @@ execution, tests, builds, and similar project work—not for Git mutation.
 """.strip(),
 append=""
 )
+
+    @override
+    def get_user_message_prefix(self, context: ExecutionContext) -> str:
+        """Return the current workspace snapshot for the user's request."""
+        return build_workspace_context(context)
 
 __all__ = ["ChatWorkflow"]

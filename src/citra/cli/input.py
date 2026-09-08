@@ -114,6 +114,7 @@ class BottomStatus:
 
     working_label: str | None = None
     input_tokens: int = 0
+    cached_tokens: int = 0
     output_tokens: int = 0
     started_at: float | None = None
     elapsed_seconds: float | None = None
@@ -142,6 +143,7 @@ class TerminalUiState:
             self._status = BottomStatus(
                 working_label=label,
                 input_tokens=self._status.input_tokens,
+                cached_tokens=self._status.cached_tokens,
                 output_tokens=self._status.output_tokens,
                 started_at=perf_counter(),
             )
@@ -163,17 +165,25 @@ class TerminalUiState:
             )
             self._status = BottomStatus(
                 input_tokens=self._status.input_tokens,
+                cached_tokens=self._status.cached_tokens,
                 output_tokens=self._status.output_tokens,
                 elapsed_seconds=elapsed_seconds,
             )
         self._invalidate()
 
-    def record_tokens(self, *, input_tokens: int, output_tokens: int) -> None:
+    def record_tokens(
+        self,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int = 0,
+    ) -> None:
         """Replace the latest model request's visible input/output token counts."""
         with self._lock:
             self._status = BottomStatus(
                 working_label=self._status.working_label,
                 input_tokens=max(0, input_tokens),
+                cached_tokens=max(0, cached_tokens),
                 output_tokens=max(0, output_tokens),
                 started_at=self._status.started_at,
                 elapsed_seconds=self._status.elapsed_seconds,
@@ -185,7 +195,15 @@ class TerminalUiState:
         with self._lock:
             status = self._status
         activity = self._activity_text(status)
-        tokens = f"in: {status.input_tokens:,} · out: {status.output_tokens:,}"
+        cache_hit = (
+            min(100, round(status.cached_tokens * 100 / status.input_tokens))
+            if status.input_tokens
+            else 0
+        )
+        tokens = (
+            f"in: {status.input_tokens:,} (hit {cache_hit}%)"
+            f" · out: {status.output_tokens:,}"
+        )
         status_line = _fit_toolbar_line(f"  {activity}  |  {tokens}", width)
         divider = "─" * width
         return FormattedText(

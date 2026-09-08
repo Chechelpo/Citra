@@ -349,11 +349,14 @@ class ExecutionContext:
     def lint_for_path(
         self,
         path_raw: str,
+        *,
+        auto_fix: bool | None = None,
     ) -> str | None:
-        """Return configured lint failures for a modified project path."""
+        """Return lint failures with an optional per-operation fixer override."""
         try:
             return self.__lint_runner.lint_for_path(
-                path_raw
+                path_raw,
+                auto_fix=auto_fix,
             )
         except Exception:
             self.logger.exception(

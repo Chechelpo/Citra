@@ -23,12 +23,14 @@ class LintRuleConfig:
     include: tuple[str, ...] = ("**/*",)
     exclude: tuple[str, ...] = ()
     cwd: str = "."
+    fix_command: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
 class LintContextConfig:
     """Represent LintContextConfig."""
     enabled: bool = True
+    auto_fix: bool = True
     timeout: int = 30
     max_output_length: int = 20_000
     rules: tuple[LintRuleConfig, ...] = ()
@@ -146,6 +148,20 @@ def load_lint_config(
                 "of non-empty strings."
             )
 
+        fix_command_raw = rule_raw.get("fix_command")
+        fix_command: tuple[str, ...] | None = None
+        if fix_command_raw is not None:
+            if (
+                not isinstance(fix_command_raw, list)
+                or not fix_command_raw
+                or not all(isinstance(item, str) and item for item in fix_command_raw)
+            ):
+                raise ValueError(
+                    f"'{section}.fix_command' must be a non-empty array "
+                    "of non-empty strings."
+                )
+            fix_command = tuple(fix_command_raw)
+
         include = _string_tuple(
             rule_raw,
             "include",
@@ -174,6 +190,7 @@ def load_lint_config(
             LintRuleConfig(
                 name=name,
                 command=tuple(command),
+                fix_command=fix_command,
                 include=include,
                 exclude=exclude,
                 cwd=cwd,
@@ -184,6 +201,12 @@ def load_lint_config(
         enabled=_bool(
             value,
             "enabled",
+            default=True,
+            section="lint",
+        ),
+        auto_fix=_bool(
+            value,
+            "auto_fix",
             default=True,
             section="lint",
         ),

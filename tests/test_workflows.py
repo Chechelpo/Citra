@@ -18,12 +18,13 @@ from citra.tools.subagent.supervisor import _paths_overlap
 from citra.tools.tool_registry import ToolRegistry
 from citra.workflows import (
     AssuredSerialRolesWorkflow,
-    SerialRolesWorkflow,
     SandboxConfig,
+    SerialRolesWorkflow,
     UserWorkflow,
     WorkflowRegistry,
     WorkflowRuntime,
 )
+from citra.workflows.sys_prompt import build_workspace_context
 from citra.workflows.workflow import WorkflowRun, WorkflowStep
 
 
@@ -33,6 +34,33 @@ def _workflow(name: str, sandbox_mode: SandboxMode) -> UserWorkflow:
         system_prompt=f"prompt:{name}",
         sandbox_config=SandboxConfig(mode=sandbox_mode),
     )
+
+
+def test_session_prepends_context_to_latest_user_message() -> None:
+    session = AgentSession()
+    session.add_user_message("Implement the feature")
+
+    assert session.prepend_to_latest_user_message("workspace snapshot")
+    assert session.get_messages() == [
+        UserMessage(content="workspace snapshot\n\nImplement the feature")
+    ]
+
+
+def test_workspace_context_contains_both_maps(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "citra.workflows.sys_prompt.entry_point.render_tree",
+        lambda *_args, **_kwargs: "directory tree",
+    )
+    context = SimpleNamespace(
+        workspace=object(),
+        repo_map=SimpleNamespace(render=lambda **_kwargs: "repository map"),
+        model_config=lambda: SimpleNamespace(id="test-model"),
+    )
+
+    context_text = build_workspace_context(context)
+
+    assert "## Directory tree\n\ndirectory tree" in context_text
+    assert "## Repository map\n\nrepository map" in context_text
 
 
 def test_single_mode_workflow_owns_one_concrete_policy() -> None:

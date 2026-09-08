@@ -409,7 +409,11 @@ class TerminalInputApiTests(unittest.TestCase):
     def test_dynamic_status_keeps_the_composer_bottom_height_fixed(self):
         footer = "model: test · source: /project · workspace: /runtime"
         terminal_ui_state.finish_working()
-        terminal_ui_state.record_tokens(input_tokens=12, output_tokens=4)
+        terminal_ui_state.record_tokens(
+            input_tokens=12,
+            cached_tokens=9,
+            output_tokens=4,
+        )
         idle = "".join(
             fragment[1]
             for fragment in terminal_ui_state.composer_header(width=80)
@@ -423,7 +427,7 @@ class TerminalInputApiTests(unittest.TestCase):
         terminal_ui_state.finish_working()
 
         self.assertEqual(idle.count("\n"), active.count("\n"))
-        self.assertIn("in: 12 · out: 4", idle)
+        self.assertIn("in: 12 (hit 75%) · out: 4", idle)
         self.assertIn("Working for", active)
 
     def test_initial_and_steering_use_the_same_composer_object(self):
@@ -482,7 +486,7 @@ class TerminalInputApiTests(unittest.TestCase):
         )
         self.assertEqual(initial.count("\n"), active.count("\n"))
         self.assertIn("Working for", active)
-        self.assertIn("in: 123 · out: 45", active)
+        self.assertIn("in: 123 (hit 0%) · out: 45", active)
 
 
 if __name__ == "__main__":

@@ -90,6 +90,14 @@ class AgentRunner:
         )
 
         workflow = self.context.workflow
+        user_message_prefix = workflow.get_user_message_prefix(self.context)
+        if user_message_prefix and not self.session.prepend_to_latest_user_message(
+            user_message_prefix
+        ):
+            _logger.warning(
+                "Could not prepend workflow context: latest message is not user text"
+            )
+
         steering = workflow.get_task_steering(
             turn_number - 1,
             self.context,
@@ -215,6 +223,7 @@ class AgentRunner:
             if self.render_output:
                 terminal_ui_state.record_tokens(
                     input_tokens=response.usage.input_tokens or input_tokens,
+                    cached_tokens=response.usage.cached_tokens or 0,
                     output_tokens=(
                         response.usage.output_tokens
                         if response.usage.output_tokens is not None

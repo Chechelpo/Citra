@@ -1,4 +1,5 @@
 import secrets
+from functools import cache
 
 _MODIFIERS = (
     "angry",
@@ -138,8 +139,9 @@ _NOUNS = (
     "manifest",
 )
 
+@cache
 def agent_name() -> str:
-    """Handle temporary name."""
+    """Return one generated name that remains stable for this process."""
     return (
         f"{secrets.choice(_MODIFIERS)}-"
         f"{secrets.choice(_NOUNS)}"
