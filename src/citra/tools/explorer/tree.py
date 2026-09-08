@@ -47,10 +47,6 @@ class Tree(Tool):
             description=(
                 "Show a semantic map of the repository containing important "
                 "files, definitions, signatures, and relevant code locations. "
-                "This is not a plain directory listing. The map is ranked to "
-                "fit a token budget and is useful for understanding repository "
-                "structure before reading implementations. Use read when you "
-                "need exact source code."
             ),
             parameters=JsonSchema.object(
                 properties=(

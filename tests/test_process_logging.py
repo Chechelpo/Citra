@@ -27,7 +27,7 @@ class _FilesystemSandbox:
     """Return valid worker responses without invoking Bubblewrap."""
 
     _RESULTS = {
-        "read": {"entries": [], "single_literal": True},
+        "read": {"entries": [], "single_path": True},
         "read_raw": {"content": ""},
         "read_binary": {
             "content_b64": "",

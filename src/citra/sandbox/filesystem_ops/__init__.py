@@ -8,7 +8,7 @@ from .find import (
 )
 from .glob import GlobInput, GlobOutput
 from .grep import GrepInput, GrepMatch, GrepOutput
-from .read import ReadInput, ReadOutput, ReadSlice
+from .read import ReadInput, ReadOutput
 from .read_binary import ReadBinaryInput, ReadBinaryOutput
 from .read_raw import ReadRawInput, ReadRawOutput
 from .tree import TreeInput, TreeOutput
@@ -21,7 +21,6 @@ __all__ = [
     "ReadBinaryOutput",
     "ReadInput",
     "ReadOutput",
-    "ReadSlice",
     "ReadRawInput",
     "ReadRawOutput",
     "WriteInput",

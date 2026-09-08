@@ -400,7 +400,7 @@ class RuntimeIsolationTests(unittest.TestCase):
 
     def test_filesystem_python_uses_controller_interpreter(self) -> None:
         """Keep the worker interpreter aligned with discovered stdlib roots."""
-        controller = Path(sys.executable).expanduser().absolute()
+        controller = Path(sys.executable).expanduser().resolve()
         with mock.patch(
             "citra.config.runtime_discovery._language.shutil.which",
             return_value="/usr/bin/python3",
@@ -414,6 +414,62 @@ class RuntimeIsolationTests(unittest.TestCase):
             self.assertEqual(
                 PythonRuntimeDiscovery._resolve_command("python3"),
                 Path("/usr/bin/python3"),
+            )
+
+    def test_filesystem_python_resolves_uv_venv_interpreter(self) -> None:
+        """Launch the worker beside uv's base-prefix standard library."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            interpreter = root / "uv-python" / "bin" / "python3.12"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"python")
+            venv_python = root / "venv" / "bin" / "python"
+            venv_python.parent.mkdir(parents=True)
+            venv_python.symlink_to(interpreter)
+
+            with mock.patch(
+                "citra.config.runtime_discovery._language.sys.executable",
+                str(venv_python),
+            ):
+                resolved = PythonRuntimeDiscovery._resolve_command(
+                    "citra-filesystem-python"
+                )
+
+            self.assertEqual(resolved, interpreter)
+
+    def test_filesystem_python_launcher_preserves_base_prefix_layout(self) -> None:
+        """Point the isolated worker into the provisioned Python prefix."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / "uv-python"
+            interpreter = prefix / "bin" / "python3.12"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"python")
+            (prefix / "lib" / "python3.12" / "encodings").mkdir(
+                parents=True
+            )
+            discovery = RuntimeDiscoveryResult(
+                readonly_binds=(prefix,),
+                available_commands=("citra-filesystem-python",),
+                command_paths=(("citra-filesystem-python", interpreter),),
+            )
+            definition = default_tool_definitions(
+                mode=SandboxMode.FULL_SANDBOX,
+                discovery=discovery,
+            )[0]
+
+            provisioned = RuntimeProvisioner(
+                runtime_root=root / "runtime",
+                copy_budget_bytes=1024,
+                mode=SandboxMode.FULL_SANDBOX,
+            ).provision((definition,))
+
+            asset = provisioned.assets[definition.assets[0].id]
+            self.assertEqual(definition.assets[0].source, prefix)
+            self.assertIsNotNone(asset.sandbox_path)
+            self.assertEqual(
+                (root / "runtime" / "bin" / "citra-filesystem-python").readlink(),
+                asset.sandbox_path / "bin" / "python3.12",
             )
 
     def test_filesystem_client_prefers_dedicated_python_launcher(self) -> None:

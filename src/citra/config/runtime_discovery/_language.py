@@ -82,17 +82,18 @@ class PythonRuntimeDiscovery(_ExtendedCommandDiscovery):
 
     @staticmethod
     def _resolve_command(command: str) -> Path | None:
-        """Resolve Citra's worker launcher to the controller interpreter.
+        """Resolve Citra's worker launcher to the base interpreter.
 
         The generic ``python`` and ``python3`` commands intentionally continue
-        to follow the caller's ``PATH``. The filesystem worker, however, must
-        use the interpreter whose ``sys.prefix`` and ``sysconfig`` roots are
-        added by :meth:`extra_roots`. Otherwise a different host Python can be
-        mounted without its standard library and fail before importing
-        ``encodings``.
+        to follow the caller's ``PATH``. The filesystem worker instead resolves
+        the controller virtual-environment symlink to its base interpreter.
+        This keeps the executable beside the uv-managed standard library after
+        provisioning; launching a relocated venv symlink can otherwise make
+        CPython fall back to its compiled ``/install`` prefix and fail before
+        importing ``encodings``.
         """
         if command == "citra-filesystem-python":
-            executable = Path(sys.executable).expanduser().absolute()
+            executable = Path(sys.executable).expanduser().resolve()
             if executable.is_file():
                 return executable
             return None
