@@ -43,7 +43,7 @@ class RequirementTool(MemoryTool[RequirementExtract]):
                 "as they are established, update them when clarified, mark "
                 "them satisfied only after verification, reopen them when "
                 "evidence is invalidated, and remove only obsolete or "
-                "incorrect requirements."
+                "incorrect requirements. Prefer batches over single operation."
             ),
             parameters=JsonSchema.object(
                 properties=(

@@ -2,6 +2,10 @@ from citra.sandbox.filesystem_ops import TreeInput
 from typing import Any, override
 
 from ...context import ExecutionContext
+from ...sandbox.filesystem_ops.tree import (
+    DEFAULT_TREE_DEPTH,
+    MAX_TREE_DEPTH,
+)
 from ...utils.json_schema import (
     ChatCompletionTool,
     FunctionDefinition,
@@ -18,10 +22,10 @@ from ..tool import Tool
 
 class Tree(Tool):
     """
-    Show an Aider-style structural map of the repository.
+    Show a structural view of source code or directories.
 
-    Unlike a filesystem tree/listing, this returns a ranked semantic map
-    containing important definitions, signatures, and code locations.
+    Semantic maps are provided by RepoMap; directory listings are executed by
+    the sandboxed tree filesystem operation.
     """
 
     TOOL_ID = "tree"
@@ -30,32 +34,36 @@ class Tree(Tool):
     CACHEABLE = True
     INVALIDATES_TOOL_CACHE = False
 
-    # ------------------------------------------------------------------
-    # Semantic repo-map definition
-    #
-    # None of the major coding harnesses exposes an equivalent callable
-    # tool. Aider provides the closest semantics, but injects its repo map
-    # into model context instead of exposing it as a function.
-    # ------------------------------------------------------------------
-
-
-    # Keep an explicit native definition name for consistency with the
-    # other tools, even though all model families currently share it.
-    CITRA_DEFINITION = ChatCompletionTool(
+    DEFINITION = ChatCompletionTool(
         function=FunctionDefinition(
             name="tree",
             description=(
-                "Show a semantic map of the repository containing important "
-                "files, definitions, signatures, and relevant code locations. "
+                "Show a structural view of the workspace. By default, return "
+                "an Aider-style semantic map containing important files, definitions, "
+                "signatures, and code locations. Pass kind=\"directory\" to "
+                "render a bounded directory tree. Directory-only options also "
+                "select directory mode when kind is omitted."
             ),
             parameters=JsonSchema.object(
                 properties=(
                     JsonProperty(
+                        name="kind",
+                        schema=JsonSchema.string(
+                            description=(
+                                "Rendering mode: \"aider\" (the default) for "
+                                "a semantic source map, or \"directory\" for a "
+                                "directory tree."
+                            ),
+                            enum=("aider", "directory"),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
                         name="path",
                         schema=JsonSchema.string(
                             description=(
-                                "Project-relative subtree or @tmp path to map. "
-                                "Defaults to the entire project."
+                                "Project-relative subtree, directory, or @tmp "
+                                "path to inspect. Defaults to the entire project."
                             ),
                         ),
                         required=False,
@@ -83,29 +91,63 @@ class Tree(Tool):
                         ),
                         required=False,
                     ),
+                    JsonProperty(
+                        name="max_depth",
+                        schema=JsonSchema.integer(
+                            description=(
+                                "Directory mode only. Maximum depth below the "
+                                f"root. Defaults to {DEFAULT_TREE_DEPTH} and "
+                                f"cannot exceed {MAX_TREE_DEPTH}."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="directories_only",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Directory mode only. Omit files when true."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="skip",
+                        schema=JsonSchema.array(
+                            JsonSchema.string(),
+                            description=(
+                                "Directory mode only. Basenames, relative paths, "
+                                "or glob patterns to skip."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="hidden",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Directory mode only. Include hidden entries "
+                                "when true; explicit skip rules still apply."
+                            ),
+                        ),
+                        required=False,
+                    ),
+                    JsonProperty(
+                        name="use_default_skips",
+                        schema=JsonSchema.boolean(
+                            description=(
+                                "Directory mode only. Apply common VCS, cache, "
+                                "dependency, and build-directory skips. Defaults "
+                                "to true."
+                            ),
+                        ),
+                        required=False,
+                    ),
                 ),
                 additional_properties=False,
             ),
         ),
     )
-
-    # ------------------------------------------------------------------
-    # Model-family profiles
-    #
-    # These intentionally share the same schema. There is no truthful
-    # Claude/Gemini/Qwen/Kimi/GLM callable-tool schema to imitate here.
-    # ------------------------------------------------------------------
-
-
-    @classmethod
-    @override
-    def definition_for_context(
-        cls,
-        context: ExecutionContext,
-    ) -> ChatCompletionTool:
-        """Return the tool's model-independent definition."""
-        del context
-        return cls.CITRA_DEFINITION
 
     def __init__(
         self,
@@ -122,15 +164,24 @@ class Tree(Tool):
         arguments: dict[str, Any],
     ) -> str:
         """Execute the execute operation."""
+        if self._kind(arguments) == "directory":
+            return self.context.filesystem.execute(
+                TreeInput.parse(dict(arguments))
+            ).to_budgeted(
+                model_id=self.context.model_config().id,
+                token_count=4_000,
+            )
+
         if (
             not hasattr(self.context, "repo_map")
             or not hasattr(self.context, "config")
         ):
-            # Compatibility for lightweight embedded contexts.
-            # Production ExecutionContext uses the semantic repo map.
             return self.context.filesystem.execute(
                 TreeInput.parse(dict(arguments))
-            ).to_budgeted(model_id=self.context.model_config().id,token_count=4_000)
+            ).to_budgeted(
+                model_id=self.context.model_config().id,
+                token_count=4_000,
+            )
 
         model_id = self.context.config.model().id
 
@@ -163,6 +214,21 @@ class Tree(Tool):
         arguments: dict[str, Any],
     ) -> str:
         """Handle format call log."""
+        if self._kind(arguments) == "directory":
+            parts = [
+                "kind=directory",
+                f"path={arguments.get('path', '.')}",
+            ]
+            if "max_depth" in arguments:
+                parts.append(f"depth={arguments['max_depth']}")
+            if arguments.get("directories_only"):
+                parts.append("dirs-only=true")
+            if arguments.get("skip"):
+                parts.append(f"skip={len(arguments['skip'])}")
+            if arguments.get("hidden"):
+                parts.append("hidden=true")
+            return " | ".join(parts)
+
         parts = [
             f"path={arguments.get('path', '.')}",
         ]
@@ -188,6 +254,21 @@ class Tree(Tool):
         return " | ".join(
             parts
         )
+
+    @staticmethod
+    def _kind(arguments: dict[str, Any]) -> str:
+        """Resolve the explicit mode or infer it from directory options."""
+        kind = arguments.get("kind")
+        if kind is not None:
+            return str(kind)
+        directory_fields = {
+            "max_depth",
+            "directories_only",
+            "skip",
+            "hidden",
+            "use_default_skips",
+        }
+        return "directory" if directory_fields.intersection(arguments) else "aider"
 
     @override
     def format_result_log(
