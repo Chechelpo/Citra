@@ -91,6 +91,25 @@ def _format_skills(workflow: SingleModeWorkflow) -> str:
 Call them as soon as they're relevant to the current task at hand
 """
 
+def tool_info(context: ExecutionContext, workflow: SingleModeWorkflow) -> str:
+    """Format currently active tool information + guidance"""
+    tool_guide = "\n".join(
+        f"### {tool.TOOL_ID} \n{tool.get_prompt_info()}"
+        for tool in workflow.tool_set.allowed_tools()
+        if tool.get_prompt_info()
+    )
+    return f"""
+# Tools
+Additional guidance for the use of tools: 
+
+{tool_guide}
+
+## Advice:
+
+- Always use batched tool calls over single tool calls when avaiable.
+- Always optimize your tool calls: Try to do the biggest amount of work you can possibly do each turn.
+"""
+
 def build_workspace_context(context: ExecutionContext) -> str:
     """Render the mutable workspace snapshot for the next user message."""
     return f"""# Workspace snapshot
@@ -119,8 +138,7 @@ When creating a module, whether it be a single or multi file module include the 
     3. **Author: ** sign your edits/creation with your assigned name
     4. **Modification history:** edit/create sections with your assigned developer name
     5. **Synopsis: ** What this module does.
-    6. **Different functions supported in the module along with their input output parameters**
-    7. **Global variables accessed or modified by the module**
+    6. **Global variables accessed or modified by the module**
 
 This can be included directly in the source code in case of a single file module (ex.: api.py) or as the native module aggregator for the specific language 
 (ex.: package-info.java, __init__.py, etc.). In case there's no particular module aggregator and the module is a directory, document it on an AGENTS.md file.

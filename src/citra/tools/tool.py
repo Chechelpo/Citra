@@ -192,7 +192,7 @@ class Tool(ABC, Generic[ArgumentsT]):
     CAPABILITIES: ClassVar[ToolCapabilities] = ToolCapabilities()
 
     _DESCRIPTION : ClassVar[str] = ""
-
+    _USE_DESCRIPTION : ClassVar[str | None] = None
     # Tool-result cache policy.
     CACHEABLE : ClassVar[bool] = False
     INVALIDATES_TOOL_CACHE: ClassVar[bool] = True
@@ -263,6 +263,9 @@ class Tool(ABC, Generic[ArgumentsT]):
     # -------------------------------------------------------------------------
     # Definition
     # -------------------------------------------------------------------------
+    @classmethod
+    def get_prompt_info(cls) -> str | None:
+        return cls._USE_DESCRIPTION
 
     @classmethod
     def definition_for_context(

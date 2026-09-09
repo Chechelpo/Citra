@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from citra.logging import Logger
+from citra.workflows.serial_roles import ImplementerWorkflow
 
 from .builtins import ArchitectWorkflow, ChatWorkflow, TaskWorkflow
 from .serial_roles import AssuredSerialRolesWorkflow, SerialRolesWorkflow
@@ -21,6 +22,7 @@ BUILTIN_WORKFLOW_TYPES: tuple[type[Workflow], ...] = (
     SerialRolesWorkflow,
     AssuredSerialRolesWorkflow,
     ArchitectWorkflow,
+    ImplementerWorkflow
 )
 _logger = Logger(__name__)
 
