@@ -57,8 +57,9 @@ def _edit_definition(
                 name="line",
                 schema=JsonSchema.integer(
                     description=(
-                        "1-based line number before which the new text "
-                        "should be inserted. Cannot be used with old text."
+                        "1-based line number to replace with the new text. "
+                        "The existing line ending is preserved when new text "
+                        "does not include one. Cannot be used with old text."
                     ),
                 ),
                 required=False,
@@ -170,7 +171,7 @@ class Edit(Tool):
             "Replace an exact text fragment in an existing file. "
             "By default the old text must occur exactly once. "
             "Use all=true to replace every occurrence. "
-            "Text can also be inserted at a specific line."
+            "A whole line can instead be replaced by its 1-based line number."
         ),
     )
 
@@ -405,8 +406,22 @@ class Edit(Tool):
             if line is not None:
                 lines = before.splitlines(keepends=True)
                 line_number = int(line)
-                if 1 <= line_number <= len(lines) + 1:
-                    lines.insert(line_number - 1, new_text)
+                if 1 <= line_number <= len(lines):
+                    original = lines[line_number - 1]
+                    if original.endswith("\r\n"):
+                        line_ending = "\r\n"
+                    elif original.endswith(("\n", "\r")):
+                        line_ending = original[-1]
+                    else:
+                        line_ending = ""
+                    replacement = new_text
+                    if (
+                        replacement
+                        and line_ending
+                        and not replacement.endswith(("\n", "\r"))
+                    ):
+                        replacement += line_ending
+                    lines[line_number - 1] = replacement
                     old_text = before
                     new_text = "".join(lines)
             elif old is not None:
@@ -431,7 +446,7 @@ class Edit(Tool):
         )
         metadata: list[str] = []
         if line is not None:
-            metadata.append(f"insert@line={line}")
+            metadata.append(f"replace@line={line}")
         if replace_all:
             metadata.append("all=true")
         if metadata:

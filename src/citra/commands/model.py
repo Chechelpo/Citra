@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 from typing import override
 
@@ -36,6 +37,17 @@ class ModelCommand(Command):
                 ),
             ),
             CommandForm(
+                path=("add", "api_key"),
+                options=(
+                    CommandOption(
+                        "--profile",
+                        "Target profile; defaults to active.",
+                        "<profile>",
+                    ),
+                ),
+                arguments=(CommandArgument("<value>", "API key to append."),),
+            ),
+            CommandForm(
                 path=("add",),
                 options=(
                     CommandOption("--copy", "Optional source profile.", "<profile>"),
@@ -63,6 +75,7 @@ class ModelCommand(Command):
                             "host",
                             "id",
                             "api_key",
+                            "api_keys",
                             "max_input_tokens",
                             "max_output_tokens",
                             "reasoning_effort",
@@ -82,6 +95,7 @@ class ModelCommand(Command):
         "host",
         "id",
         "api_key",
+        "api_keys",
         "max_input_tokens",
         "max_output_tokens",
         "reasoning_effort",
@@ -160,6 +174,7 @@ class ModelCommand(Command):
                     f"host: {config.host}",
                     f"id: {config.id}",
                     "api_key: ********",
+                    f"api_keys: {config.api_key_count} configured",
                     f"max_input_tokens: {config.max_input_tokens}",
                     f"max_output_tokens: {config.max_output_tokens}",
                     f"reasoning_effort: {reasoning}",
@@ -252,6 +267,9 @@ class ModelCommand(Command):
 
     def _add(self, args: list[str]) -> CommandResult:
         """Handle add."""
+        if args[:1] == ["api_key"]:
+            return self._add_api_key(args[1:])
+
         copy_from: str | None = None
         names: list[str] = []
         index = 0
@@ -282,6 +300,44 @@ class ModelCommand(Command):
 
         return CommandResult(
             f"Added model profile {config.name} from {source}."
+        )
+
+    def _add_api_key(self, args: list[str]) -> CommandResult:
+        """Append one API key to a model profile's credential pool."""
+        profile: str | None = None
+        values: list[str] = []
+        index = 0
+        while index < len(args):
+            token = args[index]
+            if token == "--profile":
+                if profile is not None or index + 1 >= len(args):
+                    return self.usage_result(
+                        "Expected one '--profile <name>' option."
+                    )
+                profile = args[index + 1]
+                index += 2
+                continue
+            if token.startswith("-"):
+                return self.usage_result(
+                    f"Unknown /model add api_key option: {token}"
+                )
+            values.append(token)
+            index += 1
+
+        if len(values) != 1:
+            return self.usage_result(
+                "Expected '/model add api_key <value> [--profile <name>]'."
+            )
+
+        store = self.context.config.model_config_store
+        try:
+            target = profile or store.active_name()
+            count = store.add_api_key(values[0], name=profile)
+        except (KeyError, ValueError, RuntimeError, OSError) as error:
+            return self._error("add model API key", error)
+
+        return CommandResult(
+            f"Model API key added for {target} ({count} configured)."
         )
 
     def _delete(self, args: list[str]) -> CommandResult:
@@ -328,6 +384,13 @@ class ModelCommand(Command):
             if field == "api_key":
                 store.set_api_key(value, name=profile)
                 return CommandResult(f"Model API key updated for {target}.")
+
+            if field == "api_keys":
+                keys = self._api_keys(value)
+                store.set_api_keys(keys, name=profile)
+                return CommandResult(
+                    f"{len(keys)} model API keys updated for {target}."
+                )
 
             if field == "host":
                 store.set_host(value, name=profile)
@@ -413,3 +476,20 @@ class ModelCommand(Command):
         if normalized.lower() in {"none", "null", "unset", "off"}:
             return None
         return normalized or None
+
+    @staticmethod
+    def _api_keys(value: str) -> list[str]:
+        """Parse a JSON array without accepting non-string credentials."""
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError("api_keys must be a JSON array of strings.") from error
+        if (
+            not isinstance(parsed, list)
+            or not parsed
+            or any(not isinstance(key, str) or not key for key in parsed)
+        ):
+            raise ValueError(
+                "api_keys must be a non-empty JSON array of non-empty strings."
+            )
+        return parsed

@@ -39,20 +39,40 @@ class ModelConfig:
     reasoning_effort: str | None
     retry: RetryConfig = RetryConfig()
     name: str = _LEGACY_PROFILE_NAME
+    encrypted_keys: tuple[str, ...] = field(default_factory=tuple, repr=False)
     _plaintext_api_key: str | None = field(
         default=None,
+        repr=False,
+        compare=False,
+    )
+    _plaintext_api_keys: tuple[str, ...] = field(
+        default_factory=tuple,
         repr=False,
         compare=False,
     )
 
     def decrypt_api_key(self) -> str:
         """Handle decrypt api key."""
-        if self._plaintext_api_key is not None:
-            return self._plaintext_api_key
+        return self.decrypt_api_keys()[0]
 
-        return ModelConfigStore.decrypt_secret(
-            self.encrypted_key,
-        )
+    def decrypt_api_keys(self) -> tuple[str, ...]:
+        """Return every API key configured for this model profile."""
+        if self._plaintext_api_keys:
+            return self._plaintext_api_keys
+        if self._plaintext_api_key is not None:
+            return (self._plaintext_api_key,)
+        if self.encrypted_keys:
+            return tuple(
+                ModelConfigStore.decrypt_secret(value)
+                for value in self.encrypted_keys
+            )
+
+        return (ModelConfigStore.decrypt_secret(self.encrypted_key),)
+
+    @property
+    def api_key_count(self) -> int:
+        """Return the credential-pool size without decrypting its values."""
+        return len(self._plaintext_api_keys or self.encrypted_keys) or 1
 
 
 class ModelConfigStore:
@@ -177,26 +197,59 @@ class ModelConfigStore:
         if not isinstance(retry_raw, dict):
             raise ValueError(f"'models.{selected}.retry' must be a table.")
 
-        plaintext = raw.get("api_key")
-        encrypted = raw.get("encrypted_key", "")
-        if plaintext is not None and (
-            not isinstance(plaintext, str) or not plaintext
-        ):
-            raise ValueError(f"'models.{selected}.api_key' must be a string.")
-        if plaintext is None and (
-            not isinstance(encrypted, str) or not encrypted
-        ):
-            raise ValueError(
-                f"'models.{selected}' must define api_key or encrypted_key."
+        credential_fields = {
+            key: raw[key]
+            for key in (
+                "api_key",
+                "api_keys",
+                "encrypted_key",
+                "encrypted_keys",
             )
+            if key in raw
+        }
+        if len(credential_fields) != 1:
+            raise ValueError(
+                f"'models.{selected}' must define exactly one of api_key, "
+                "api_keys, encrypted_key, or encrypted_keys."
+            )
+        credential_name, credential_value = next(iter(credential_fields.items()))
+        if credential_name in {"api_key", "encrypted_key"}:
+            if not isinstance(credential_value, str) or not credential_value:
+                raise ValueError(
+                    f"'models.{selected}.{credential_name}' must be a non-empty string."
+                )
+            credentials = (credential_value,)
+        else:
+            if (
+                not isinstance(credential_value, list)
+                or not credential_value
+                or any(
+                    not isinstance(value, str) or not value
+                    for value in credential_value
+                )
+            ):
+                raise ValueError(
+                    f"'models.{selected}.{credential_name}' must be a non-empty "
+                    "array of non-empty strings."
+                )
+            credentials = tuple(credential_value)
+
+        plaintext_keys = credentials if credential_name == "api_keys" else ()
+        encrypted_keys = (
+            credentials if credential_name == "encrypted_keys" else ()
+        )
+        plaintext = credentials[0] if credential_name == "api_key" else None
+        encrypted = credentials[0] if credential_name == "encrypted_key" else ""
 
         retry = RetryConfig(
-            max_attempts=_positive_number(
-                retry_raw,
-                "max_attempts",
-                12,
-                integer=True,
-                section=f"models.{selected}.retry",
+            max_attempts=int(
+                _positive_number(
+                    retry_raw,
+                    "max_attempts",
+                    12,
+                    integer=True,
+                    section=f"models.{selected}.retry",
+                )
             ),
             request_timeout=float(
                 _positive_number(
@@ -250,9 +303,11 @@ class ModelConfigStore:
             ),
             retry=retry,
             name=selected,
+            encrypted_keys=encrypted_keys,
             _plaintext_api_key=(
                 str(plaintext) if plaintext is not None else None
             ),
+            _plaintext_api_keys=plaintext_keys,
         )
 
     def set_orchestrator(self, name: str) -> None:
@@ -390,7 +445,45 @@ class ModelConfigStore:
         document, _, profile = self._mutable_profile(name)
         profile["encrypted_key"] = self.encrypt_secret(value)
         profile.pop("api_key", None)
+        profile.pop("api_keys", None)
+        profile.pop("encrypted_keys", None)
         self._save_document(document)
+
+    def set_api_keys(
+        self,
+        values: list[str] | tuple[str, ...],
+        *,
+        name: str | None = None,
+    ) -> None:
+        """Replace a profile's credentials with an encrypted API-key pool."""
+        if not values or any(
+            not isinstance(value, str) or not value for value in values
+        ):
+            raise ValueError(
+                "API keys must be a non-empty sequence of non-empty strings."
+            )
+        document, _, profile = self._mutable_profile(name)
+        profile["encrypted_keys"] = [self.encrypt_secret(value) for value in values]
+        profile.pop("api_key", None)
+        profile.pop("api_keys", None)
+        profile.pop("encrypted_key", None)
+        self._save_document(document)
+
+    def add_api_key(self, value: str, *, name: str | None = None) -> int:
+        """Append one encrypted credential and return the new pool size."""
+        if not value:
+            raise ValueError("API key cannot be empty.")
+
+        document, profile_name, profile = self._mutable_profile(name)
+        existing = self.get(profile_name).decrypt_api_keys()
+        encrypted_keys = [self.encrypt_secret(key) for key in existing]
+        encrypted_keys.append(self.encrypt_secret(value))
+        profile["encrypted_keys"] = encrypted_keys
+        profile.pop("api_key", None)
+        profile.pop("api_keys", None)
+        profile.pop("encrypted_key", None)
+        self._save_document(document)
+        return len(encrypted_keys)
 
     def set_host(self, value: str, *, name: str | None = None) -> None:
         """Handle set host."""
@@ -575,6 +668,8 @@ def _toml_value(value: Any) -> str:
         return str(value)
     if isinstance(value, str):
         return json.dumps(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     raise ValueError(f"Unsupported model configuration value: {value!r}")
 
 def _config_home() -> Path:

@@ -16,6 +16,9 @@
 #
 #     [models.primary]
 #         host = "https://nanogpt.com/v1"
+#         # One key may be supplied with api_key. For a retry pool, use
+#         # api_keys = ["key-1", "key-2"]. Retryable failures rotate to the
+#         # next key after three failed attempts.
 #         api_key = "key"
 #         id = "zai-org/glm-5.2:thinking"
 #         max_input_tokens = 8192

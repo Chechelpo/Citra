@@ -818,7 +818,7 @@ writes are restricted to the isolated agent workspace and lifecycle agent filesy
 <article class="document-section" id="section-tool-edit-b9123f7413" data-depth="1" data-search-text="tool-edit
 **purpose:** replace an exact text fragment in an existing file — the preferred tool for targeted changes.
 
-**key arguments:** `path`, `old` (exact text to replace; must match whitespace and line breaks), `new` (replacement; may be empty to delete). by default `old` must occur exactly once, preventing ambiguous edits; `all=true` replaces every occurrence. `line` inserts `new` before a 1-based line without deleting text (cannot be combined with `old`; use `len(file)+1` to append). optional `diagnostics` runs lsp diagnostics afterwards.
+**key arguments:** `path`, `old` (exact text to replace; must match whitespace and line breaks), `new` (replacement; may be empty to delete). by default `old` must occur exactly once, preventing ambiguous edits; `all=true` replaces every occurrence. as an alternative, `line` replaces a whole 1-based line and preserves its line ending when `new` does not include one; it cannot be combined with `old`. optional `diagnostics` runs lsp diagnostics afterwards.
 
 files may only be modified inside the active workspace or temporary agent filesystem. mutating.">
 <header class="section-header">
@@ -830,7 +830,7 @@ files may only be modified inside the active workspace or temporary agent filesy
 </header>
 <div class="section-body">
 <p><strong>Purpose:</strong> Replace an exact text fragment in an existing file — the preferred tool for targeted changes.</p>
-<p><strong>Key arguments:</strong> <code>path</code>, <code>old</code> (exact text to replace; must match whitespace and line breaks), <code>new</code> (replacement; may be empty to delete). By default <code>old</code> must occur exactly once, preventing ambiguous edits; <code>all=true</code> replaces every occurrence. <code>line</code> inserts <code>new</code> before a 1-based line without deleting text (cannot be combined with <code>old</code>; use <code>len(file)+1</code> to append). Optional <code>diagnostics</code> runs LSP diagnostics afterwards.</p>
+<p><strong>Key arguments:</strong> <code>path</code>, <code>old</code> (exact text to replace; must match whitespace and line breaks), <code>new</code> (replacement; may be empty to delete). By default <code>old</code> must occur exactly once, preventing ambiguous edits; <code>all=true</code> replaces every occurrence. As an alternative, <code>line</code> replaces a whole 1-based line and preserves its line ending when <code>new</code> does not include one; it cannot be combined with <code>old</code>. Optional <code>diagnostics</code> runs LSP diagnostics afterwards.</p>
 <p>Files may only be modified inside the active workspace or temporary agent filesystem. Mutating.</p>
 </div>
 <a class="back-to-top" href="#document-top">Back to contents</a>

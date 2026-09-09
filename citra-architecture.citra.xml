@@ -473,7 +473,7 @@ Cacheable; does not invalidate the turn's tool-result cache.</section>
 Writes are restricted to the isolated agent workspace and lifecycle agent filesystem; `@source` is read-only. Use `edit` instead when only a specific fragment should change. Mutating; invalidates the tool-result cache.</section>
         <section name="tool-edit">**Purpose:** Replace an exact text fragment in an existing file — the preferred tool for targeted changes.
 
-**Key arguments:** `path`, `old` (exact text to replace; must match whitespace and line breaks), `new` (replacement; may be empty to delete). By default `old` must occur exactly once, preventing ambiguous edits; `all=true` replaces every occurrence. `line` inserts `new` before a 1-based line without deleting text (cannot be combined with `old`; use `len(file)+1` to append). Optional `diagnostics` runs LSP diagnostics afterwards.
+**Key arguments:** `path`, `old` (exact text to replace; must match whitespace and line breaks), `new` (replacement; may be empty to delete). By default `old` must occur exactly once, preventing ambiguous edits; `all=true` replaces every occurrence. As an alternative, `line` replaces a whole 1-based line and preserves its line ending when `new` does not include one; it cannot be combined with `old`. Optional `diagnostics` runs LSP diagnostics afterwards.
 
 Files may only be modified inside the active workspace or temporary agent filesystem. Mutating.</section>
         <section name="tool-glob">**Purpose:** Find files and directories by glob pattern (e.g. `*.py`, `src/**/*.py`, `**/*.py`).

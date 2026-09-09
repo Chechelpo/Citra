@@ -328,7 +328,7 @@ Advance to plan only when:
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(Lsp, WebSearch, Bash),
+        deferred_tools=(Lsp, WebSearch, Bash, Python),
     )
 
 
@@ -403,7 +403,7 @@ Do not edit files.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(Lsp, WebSearch),
+        deferred_tools=(Lsp, WebSearch, Python),
     )
 
 
@@ -560,7 +560,7 @@ open, and no working state remains provisional.
             WorkingStateTool,
             _restricted(CheckpointTool, "set"),
         ),
-        deferred_tools=(WebSearch,),
+        deferred_tools=(WebSearch, Python),
     )
 
 

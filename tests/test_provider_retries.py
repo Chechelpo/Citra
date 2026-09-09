@@ -88,7 +88,7 @@ class _Response:
         return self._body
 
 
-def _model_config() -> ModelConfig:
+def _model_config(*, api_keys: tuple[str, ...] = ()) -> ModelConfig:
     return ModelConfig(
         host="https://openrouter.example/v1",
         encrypted_key="",
@@ -103,6 +103,7 @@ def _model_config() -> ModelConfig:
             max_backoff=0,
         ),
         _plaintext_api_key="test",
+        _plaintext_api_keys=api_keys,
     )
 
 
@@ -181,6 +182,80 @@ def test_call_api_retries_openrouter_provider_400(monkeypatch) -> None:
     result = call_api(_model_call())
     assert result.assistant.content == "ok"
     assert calls == 2
+
+
+def test_call_api_rotates_key_after_three_retryable_failures(monkeypatch) -> None:
+    authorizations: list[str] = []
+
+    def urlopen(request, **_keywords):
+        authorizations.append(request.get_header("Authorization"))
+        if len(authorizations) <= 3:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {},
+                io.BytesIO(b'{"error":{"message":"temporary"}}'),
+            )
+        return _Response(
+            {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        )
+
+    monkeypatch.setattr(
+        "citra.utils.chat_completions_api.persistent_requests.urllib.request.urlopen",
+        urlopen,
+    )
+    model_call = _model_call()
+    model_call = ModelCall(
+        context=model_call.context,
+        messages=model_call.messages,
+        tools=model_call.tools,
+        system_prompt=model_call.system_prompt,
+        model_config=_model_config(api_keys=("primary", "backup")),
+        max_attempts=4,
+    )
+
+    result = call_api(model_call)
+
+    assert result.assistant.content == "ok"
+    assert authorizations == [
+        "Bearer primary",
+        "Bearer primary",
+        "Bearer primary",
+        "Bearer backup",
+    ]
+
+
+def test_call_api_does_not_rotate_key_for_nonretryable_failure(monkeypatch) -> None:
+    authorizations: list[str] = []
+
+    def urlopen(request, **_keywords):
+        authorizations.append(request.get_header("Authorization"))
+        raise urllib.error.HTTPError(
+            request.full_url,
+            401,
+            "Unauthorized",
+            {},
+            io.BytesIO(b'{"error":{"message":"invalid key"}}'),
+        )
+
+    monkeypatch.setattr(
+        "citra.utils.chat_completions_api.persistent_requests.urllib.request.urlopen",
+        urlopen,
+    )
+    model_call = _model_call()
+    model_call = ModelCall(
+        context=model_call.context,
+        messages=model_call.messages,
+        tools=model_call.tools,
+        system_prompt=model_call.system_prompt,
+        model_config=_model_config(api_keys=("primary", "backup")),
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        call_api(model_call)
+
+    assert authorizations == ["Bearer primary"]
 
 
 def test_call_api_serializes_typed_history_at_wire_boundary(monkeypatch) -> None:

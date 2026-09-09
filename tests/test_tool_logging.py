@@ -100,11 +100,25 @@ class TestEdit:
         assert "-x" in log
         assert "+y" in log
 
-    def test_call_log_insert(self) -> None:
+    def test_call_log_line_replacement(self) -> None:
         log = Edit(_ctx()).format_call_log(
-            {"path": "a.py", "line": 5, "new": "inserted"}
+            {"path": "a.py", "line": 5, "new": "replacement"}
         )
-        assert "insert@line=5" in log
+        assert "replace@line=5" in log
+
+    def test_call_log_line_replacement_uses_whole_file_context(self, tmp_path) -> None:
+        source = tmp_path / "a.py"
+        source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        context = _ctx()
+        context.workspace = SimpleNamespace(resolve_path=lambda _path: source)
+
+        log = Edit(context).format_call_log(
+            {"path": "a.py", "line": 2, "new": "changed"}
+        )
+
+        assert "-two" in log
+        assert "+changed" in log
+        assert " three" in log
 
     def test_call_log_all_flag(self) -> None:
         log = Edit(_ctx()).format_call_log(

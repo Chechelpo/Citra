@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from citra.commands.model import ModelCommand
 from citra.config import CitraConfig, ModelConfigStore
 
@@ -51,6 +53,62 @@ def test_named_orchestrator_and_subagent_profiles(tmp_path: Path) -> None:
     assert config.model("beta").decrypt_api_key() == "beta-secret"
 
 
+def test_profile_accepts_multiple_plaintext_api_keys(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    models_file = config.model_config_store.config_file
+    contents = models_file.read_text(encoding="utf-8")
+    models_file.write_text(
+        contents.replace(
+            'api_key = "alpha-secret"',
+            'api_keys = ["alpha-secret", "alpha-backup"]',
+        ),
+        encoding="utf-8",
+    )
+
+    model = ModelConfigStore.load(models_file.parent).get("alpha")
+
+    assert model.decrypt_api_key() == "alpha-secret"
+    assert model.decrypt_api_keys() == ("alpha-secret", "alpha-backup")
+
+
+def test_profile_rejects_mixed_single_and_multiple_api_keys(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    models_file = config.model_config_store.config_file
+    contents = models_file.read_text(encoding="utf-8")
+    models_file.write_text(
+        contents.replace(
+            'api_key = "alpha-secret"',
+            'api_key = "alpha-secret"\napi_keys = ["alpha-backup"]',
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="exactly one"):
+        ModelConfigStore.load(models_file.parent)
+
+
+def test_store_persists_multiple_api_keys_encrypted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    config = _config(tmp_path)
+
+    config.model_config_store.set_api_keys(
+        ["alpha-secret", "alpha-backup"],
+        name="alpha",
+    )
+
+    raw = config.model_config_store.config_file.read_text(encoding="utf-8")
+    assert "encrypted_keys = [" in raw
+    assert "alpha-secret" not in raw
+    reloaded = ModelConfigStore.load(config.model_config_store.config_file.parent)
+    assert reloaded.get("alpha").decrypt_api_keys() == (
+        "alpha-secret",
+        "alpha-backup",
+    )
+
+
 def test_model_store_persists_selectors_and_retry(tmp_path: Path) -> None:
     config = _config(tmp_path)
     store = config.model_config_store
@@ -72,6 +130,43 @@ def test_model_command_updates_orchestrator_selector(tmp_path: Path) -> None:
 
     assert "Orchestrator model profile = beta" in result.output
     assert config.model_config_store.orchestrator_name() == "beta"
+
+
+def test_model_command_sets_multiple_api_keys(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    config = _config(tmp_path)
+    command = ModelCommand(SimpleNamespace(config=config))
+
+    result = command.run("set --profile alpha api_keys '[\"first\", \"second\"]'")
+
+    assert "2 model API keys updated for alpha" in result.output
+    assert config.model("alpha").decrypt_api_keys() == ("first", "second")
+
+
+def test_model_command_adds_api_keys_one_at_a_time(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    config = _config(tmp_path)
+    command = ModelCommand(SimpleNamespace(config=config))
+
+    first = command.run("add api_key alpha-backup --profile alpha")
+    second = command.run("add api_key alpha-third --profile alpha")
+
+    assert "2 configured" in first.output
+    assert "3 configured" in second.output
+    assert config.model("alpha").decrypt_api_keys() == (
+        "alpha-secret",
+        "alpha-backup",
+        "alpha-third",
+    )
+    raw = config.model_config_store.config_file.read_text(encoding="utf-8")
+    assert "encrypted_keys = [" in raw
+    assert "alpha-backup" not in raw
 
 
 def test_model_add_accepts_copy_option_in_declared_position(tmp_path: Path) -> None:

@@ -44,15 +44,15 @@ class EditInput(FilesystemInput[EditOutput]):
     def __post_init__(self) -> None:
         """Validate and initialize the instance after construction."""
         if self.old is not None and self.line is not None:
-            raise ValueError("Use either 'old' for replacement or 'line' for insertion, not both.")
+            raise ValueError("Use either 'old' or 'line' for replacement, not both.")
         if self.line is not None:
             if not isinstance(self.line, int) or self.line < 1:
                 raise ValueError("'line' must be a positive 1-based line number.")
             return
         if self.old is None:
-            raise ValueError("'old' is required for replacement, or use 'line' for insertion.")
+            raise ValueError("'old' or 'line' is required for replacement.")
         if not self.old:
-            raise ValueError("'old' cannot be empty.")
+            raise ValueError("'old' cannot be empty; use 'line' to replace a whole line.")
 
     @classmethod
     def parse(cls, arguments: dict[str, Any]) -> "EditInput":
@@ -62,12 +62,18 @@ class EditInput(FilesystemInput[EditOutput]):
         old = arguments.get("old")
         line = arguments.get("line")
 
+        # Some tool-call providers materialize optional string properties as
+        # empty strings. In line mode that means "not selected", not a second
+        # replacement target.
+        if line is not None and old == "":
+            old = None
+
         if old is not None and line is not None:
-            raise ValueError("Use either 'old' for replacement or 'line' for insertion, not both.")
+            raise ValueError("Use either 'old' or 'line' for replacement, not both.")
         if line is not None:
             return cls(path=path, line=line, new=new)
         if old is None:
-            raise ValueError("'old' is required for replacement, or use 'line' for insertion.")
+            raise ValueError("'old' or 'line' is required for replacement.")
         if not isinstance(old, str):
             raise ValueError("'old' must be a string.")
         return cls(
@@ -96,18 +102,30 @@ def execute(order: EditInput, fs: ScopedFilesystem) -> EditOutput:
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {fs.display_path(path)}")
 
-    with path.open("r", encoding="utf-8") as stream:
+    with path.open("r", encoding="utf-8", newline="") as stream:
         text = stream.read()
 
     if order.line is not None:
         lines = text.splitlines(keepends=True)
 
-        if order.line > len(lines) + 1:
+        if order.line > len(lines):
             raise ValueError(
-                f"Insert line must be between 1 and {len(lines) + 1}, got {order.line}."
+                f"Replacement line must be between 1 and {len(lines)}, got {order.line}."
             )
 
-        lines.insert(order.line - 1, order.new)
+        original = lines[order.line - 1]
+        if original.endswith("\r\n"):
+            line_ending = "\r\n"
+        elif original.endswith(("\n", "\r")):
+            line_ending = original[-1]
+        else:
+            line_ending = ""
+
+        replacement = order.new
+        if replacement and line_ending and not replacement.endswith(("\n", "\r")):
+            replacement += line_ending
+
+        lines[order.line - 1] = replacement
         fs.write_text_atomic(path, "".join(lines))
 
         return EditOutput(status="ok")

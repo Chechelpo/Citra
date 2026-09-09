@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 RETRY_ON_RATE_LIMIT: bool = True
 DEBUG_PRINTING: bool = True
 DEFAULT_MAX_RETRIES: int = 12
+API_KEY_FAILURES_BEFORE_ROTATION: int = 3
 WireMessage = dict[str, Any]
 
 def debug_printing_enabled() -> bool:
@@ -846,10 +847,14 @@ def call_api(model_call: ModelCall) -> ModelResponse:
     stealth_continue_used = False
     recovery_request_pending = False
     attempt = 1
+    api_keys = model.decrypt_api_keys()
     while attempt <= max_attempts:
         payload['messages'] = active_request_messages
         request_data = json.dumps(payload).encode('utf-8')
-        request = urllib.request.Request(url, data=request_data, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {model.decrypt_api_key()}'}, method='POST')
+        key_index = (
+            (attempt - 1) // API_KEY_FAILURES_BEFORE_ROTATION
+        ) % len(api_keys)
+        request = urllib.request.Request(url, data=request_data, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {api_keys[key_index]}'}, method='POST')
         if recovery_request_pending:
             request_label = 'stealth continuation recovery'
             recovery_request_pending = False
