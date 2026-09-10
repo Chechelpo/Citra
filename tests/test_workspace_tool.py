@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-from citra.tools.transient.workspace import Workspace
+from citra.tools.workspace.workspace import Workspace
 
 
 class _Project:

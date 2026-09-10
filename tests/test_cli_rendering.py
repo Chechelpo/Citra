@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 
 from citra.agent.chat_message import ToolCall, UserMessage
@@ -16,7 +17,6 @@ from citra.commands.model import ModelCommand
 from citra.cli.theme import CITRA_THEME
 from citra.sandbox import SandboxMode
 from citra.tools.default_registry import ToolSet
-from citra.tools.tool import InvalidToolArguments
 from citra.utils.chat_completions_api import (
     ModelCall,
     ModelResponse,
@@ -179,17 +179,9 @@ def test_broken_tool_formatters_do_not_break_rendering(monkeypatch) -> None:
     assert "first line  … +1 lines" in rendered
 
 
-def test_invalid_json_is_identified_instead_of_shown_as_arguments(monkeypatch) -> None:
-    output = _recording_console()
-    monkeypatch.setattr(rendering, "console", output)
-    def reject(_raw: str) -> dict[str, object]:
-        raise InvalidToolArguments("Invalid JSON arguments for tool 'read'")
-
-    tool = SimpleNamespace(id="read", parse_arguments=reject)
-    call = ToolCall("call-bad", "read", '{"path":')
-
-    assert rendering.render_tool_call_start(call, tool) is None
-    assert "Invalid JSON arguments" in output.export_text()
+def test_invalid_json_is_rejected_at_the_tool_call_boundary() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        ToolCall("call-bad", "read", '{"path":')
 
 
 def test_multiline_result_keeps_continuation_lines_indented(monkeypatch) -> None:
@@ -444,6 +436,7 @@ def test_runner_renders_tool_batch_only_after_every_call_completes(
         tool_set=ToolSet(core_tools=(), deferred_tools=()),
         get_task_steering=lambda *_arguments: None,
         get_system_prompt=lambda *_arguments: "",
+        get_user_message_prefix=lambda *_arguments: "",
         is_serial=False,
     )
     context = SimpleNamespace(
@@ -487,6 +480,7 @@ def test_two_runner_turns_group_calls_across_model_cycles(monkeypatch) -> None:
         tool_set=ToolSet(core_tools=(), deferred_tools=()),
         get_task_steering=lambda *_arguments: None,
         get_system_prompt=lambda *_arguments: "",
+        get_user_message_prefix=lambda *_arguments: "",
         is_serial=False,
     )
     context = SimpleNamespace(

@@ -14,7 +14,7 @@ from citra.tools.capabilities import (
     ToolCapabilities,
 )
 from citra.tools.default_registry import ToolConfiguration, ToolSet
-from citra.tools.tool import InvalidToolArguments, Tool, ToolDefinition
+from citra.tools.tool import InvalidToolArguments, Tool
 from citra.tools.tool_registry import ToolRegistry
 from citra.utils.json_schema import (
     ChatCompletionTool,
@@ -48,13 +48,13 @@ class _ActionTool(Tool):
 
     @classmethod
     @override
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: Any,
-    ) -> tuple[ToolDefinition, ...]:
+    ) -> ChatCompletionTool:
         """Return the test tool's single model-facing definition."""
         del context
-        return (ToolDefinition(definition=cls.DEFINITION),)
+        return cls.DEFINITION
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
@@ -76,13 +76,13 @@ class _AtomicTool(Tool):
 
     @classmethod
     @override
-    def definitions_for_context(
+    def definition_for_context(
         cls,
         context: Any,
-    ) -> tuple[ToolDefinition, ...]:
+    ) -> ChatCompletionTool:
         """Return the test tool's single model-facing definition."""
         del context
-        return (ToolDefinition(definition=cls.DEFINITION),)
+        return cls.DEFINITION
 
     @override
     def _execute(self, arguments: dict[str, Any]) -> str:
@@ -141,7 +141,7 @@ def test_inclusion_restricts_schema_and_execution() -> None:
 
     assert _action_enum(tool) == ("read", "write")
     assert tool.execute({"action": "read"}) == "read"
-    with pytest.raises(InvalidToolArguments, match="disabled"):
+    with pytest.raises(InvalidToolArguments, match="not one of"):
         tool.execute({"action": "remove"})
 
 

@@ -1,7 +1,7 @@
 import unittest
+from types import SimpleNamespace
 
 from citra.agent import AgentSession
-from citra.context import ExecutionContext
 from citra.tools.session_memory.working_state_tool import WorkingStateTool
 from citra.tools.session_memory.fact_tool import FactTool
 from citra.tools.session_memory.todo_tool import TodoTool
@@ -13,7 +13,11 @@ from citra.tools.session_memory.checkpoint_tool import CheckpointTool
 class MemoryTests(unittest.TestCase):
     def setUp(self):
         self.session = AgentSession()
-        self.context = ExecutionContext()
+        self.context = SimpleNamespace(
+            config=SimpleNamespace(
+                model=lambda: SimpleNamespace(id="test-model")
+            )
+        )
         self.working = WorkingStateTool(self.context, self.session)
         self.facts = FactTool(self.context, self.session)
         self.todos = TodoTool(self.context, self.session)
@@ -125,10 +129,10 @@ class MemoryTests(unittest.TestCase):
         self.checkpoint._execute({"action": "clear"})
         self.assertEqual(self.checkpoint.revision, 2)
 
-    def test_direct_add_actions_are_rejected(self):
+    def test_direct_add_actions_are_supported(self):
         for tool in (self.facts, self.todos, self.constraints, self.decisions):
-            with self.assertRaises(ValueError):
-                tool._execute({"action": "add", "content": "bypass"})
+            result = tool._execute({"action": "add", "content": "verified"})
+            self.assertIn("Added", result)
 
     def test_fact_citation_validation(self):
         wid = self.create("Fact")

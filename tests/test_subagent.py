@@ -305,7 +305,7 @@ def test_subagent_prompt_uses_context_selected_public_tool_names(
     )
 
     prompt = mode.get_system_prompt(cast(Any, context))
-    assert "`exec_command`" in prompt
+    assert "`bash`" in prompt
     assert "`request_guidance`" in prompt
 
 

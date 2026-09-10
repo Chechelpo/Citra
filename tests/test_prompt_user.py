@@ -24,14 +24,14 @@ os.environ.setdefault("CITRA_CONFIG_PATH", os.path.abspath(
 os.environ["PYTHONPATH"] = os.path.abspath(_SRC)
 
 
-from citra.tools.transient.prompt_user import (  # noqa: E402
+from citra.tools.interaction.prompt_user import (  # noqa: E402
     PromptUser,
     USER_UNAVAILABLE_MESSAGE,
 )
 
 
 def _make_prompt_user(answer) -> PromptUser:
-    context = SimpleNamespace(user_interactions=None)
+    context = _context()
     tool = PromptUser(context)
     if isinstance(answer, BaseException):
         tool._execute  # ensure bound
@@ -44,11 +44,11 @@ def _run(arguments, answer):
     utility mocked to return *answer* (or raise it if it is an
     exception).
     """
-    context = SimpleNamespace(user_interactions=None)
+    context = _context()
     tool = PromptUser(context)
 
     with mock.patch(
-        "citra.tools.transient.prompt_user.terminal_input"
+        "citra.tools.interaction.prompt_user.terminal_input"
     ) as fake_ti:
         if isinstance(answer, BaseException):
             fake_ti.prompt_with_idle_timeout.side_effect = answer
@@ -56,6 +56,15 @@ def _run(arguments, answer):
             fake_ti.prompt_with_idle_timeout.return_value = answer
 
         return tool._execute(arguments)
+
+
+def _context():
+    return SimpleNamespace(
+        user_interactions=None,
+        config=SimpleNamespace(
+            notifications=SimpleNamespace(prompt_bell=False),
+        ),
+    )
 
 
 class PlainTextTests(unittest.TestCase):

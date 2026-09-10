@@ -3,6 +3,7 @@
 from typing import Any, override
 
 from citra.sandbox.filesystem_ops import ReadInput
+from citra.sandbox.filesystem_ops.read import ReadOutput, ReadSymbol
 
 from ...context import ExecutionContext
 from ...utils.json_schema import (
@@ -31,6 +32,8 @@ class Read(Tool):
             name="read",
             description=(
                 "Read one or more files by literal path. "
+                "For source files, a compact function/class index with line "
+                "spans is returned before the requested content. "
                 "Optional line ranges can be used to read a section of a file. "
                 "If no line range is provided, the complete document is read. "
                 "Large results may be limited by max_tokens. "
@@ -117,9 +120,33 @@ class Read(Tool):
             else _DEFAULT_MAX_TOKENS
         )
 
-        return self.context.filesystem.execute(
-            request
-        ).to_budgeted(
+        output = self.context.filesystem.execute(request)
+
+        if isinstance(output, ReadOutput) and hasattr(self.context, "repo_map"):
+            try:
+                definitions = self.context.repo_map.definitions_for_paths(
+                    entry.path for entry in output.entries
+                )
+            except RuntimeError:
+                # Symbol indexing is an enhancement; an unavailable parser must
+                # not prevent the requested file contents from being returned.
+                definitions = {}
+
+            output = output.with_symbols(
+                {
+                    path: tuple(
+                        ReadSymbol(
+                            name=definition.name,
+                            from_line=definition.from_line + 1,
+                            to_line=definition.to_line + 1,
+                        )
+                        for definition in path_definitions
+                    )
+                    for path, path_definitions in definitions.items()
+                }
+            )
+
+        return output.to_budgeted(
             model_id=self.context.model_config().id,
             token_count=max_tokens,
         )

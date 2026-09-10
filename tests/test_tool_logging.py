@@ -11,23 +11,13 @@ from citra.tools.session_memory import (
     FactTool,
     TodoTool,
 )
-from citra.tools.transient import (
-    Browser,
-    Commit,
-    Edit,
-    Find,
-    Git,
-    Glob,
-    Grep,
-    Lsp,
-    PromptUser,
-    Read,
-    SkillTool,
-    Subprocess,
-    Tree,
-    WebSearch,
-    Write,
-)
+from citra.tools.developer import Git, Lsp
+from citra.tools.editing import Edit, Write
+from citra.tools.execution import Subprocess
+from citra.tools.explorer import Find, Glob, Grep, Read, Tree
+from citra.tools.interaction import PromptUser
+from citra.tools.skills.tool import SkillTool
+from citra.tools.web import Browser, WebSearch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,9 +61,9 @@ class TestRead:
 
     def test_call_log_batch(self) -> None:
         log = Read(_ctx()).format_call_log(
-            {"requests": [{"path": "a.py"}, {"path": "b.py"}]}
+            {"paths": ["a.py", "b.py"]}
         )
-        assert log == "- a.py\n- b.py"
+        assert log == "a.py\nb.py"
 
     def test_result_log_content(self) -> None:
         result = "===== a.py =====\nline 1\nline 2\n"
@@ -214,22 +204,22 @@ class TestGlob:
 class TestGrep:
     def test_call_log(self) -> None:
         log = Grep(_ctx()).format_call_log(
-            {"pat": "TODO|FIXME", "path": "src"}
+            {"pattern": "TODO|FIXME", "path": "src"}
         )
-        assert "pat=" in log
+        assert "pattern=" in log
         assert "path=src" in log
 
     def test_call_log_truncation(self) -> None:
         long_pat = "x" * 200
-        log = Grep(_ctx()).format_call_log({"pat": long_pat})
-        assert "..." in log
+        log = Grep(_ctx()).format_call_log({"pattern": long_pat})
+        assert long_pat in log
 
     def test_result_log_matches(self) -> None:
         log = Grep(_ctx()).format_result_log("a.py:1:line\nb.py:2:line")
         assert "2 match" in log
 
     def test_result_log_no_matches(self) -> None:
-        assert "no matches" in Grep(_ctx()).format_result_log("none")
+        assert Grep(_ctx()).format_result_log("") == "no matches"
 
 
 # ---------------------------------------------------------------------------
@@ -377,41 +367,6 @@ class TestGit:
 
 
 # ---------------------------------------------------------------------------
-# Commit
-# ---------------------------------------------------------------------------
-
-class TestCommit:
-    def test_call_log_status(self) -> None:
-        log = Commit(_ctx()).format_call_log({"action": "status"})
-        assert "action=status" in log
-
-    def test_call_log_stage_with_paths(self) -> None:
-        log = Commit(_ctx()).format_call_log(
-            {"action": "stage", "paths": ["a.py", "b.py", "c.py"]}
-        )
-        assert "action=stage" in log
-        assert "paths=" in log
-
-    def test_call_log_many_paths(self) -> None:
-        paths = [f"file{i}.py" for i in range(10)]
-        log = Commit(_ctx()).format_call_log(
-            {"action": "stage", "paths": paths}
-        )
-        assert "+7 more" in log
-
-    def test_call_log_stage_patch(self) -> None:
-        log = Commit(_ctx()).format_call_log(
-            {"action": "stage_patch", "patch": "--- diff ---"}
-        )
-        assert "action=stage_patch" in log
-        assert "patch=<redacted>" in log
-
-    def test_result_log(self) -> None:
-        log = Commit(_ctx()).format_result_log("staged 3 files\n")
-        assert "lines" in log
-
-
-# ---------------------------------------------------------------------------
 # WebSearch
 # ---------------------------------------------------------------------------
 
@@ -427,11 +382,11 @@ class TestWebSearch:
         log = WebSearch(_ctx()).format_call_log({"query": long_query})
         assert "..." in log
 
-    def test_call_log_with_categories(self) -> None:
+    def test_call_log_with_engines(self) -> None:
         log = WebSearch(_ctx()).format_call_log(
-            {"query": "test", "categories": ["general", "news"]}
+            {"query": "test", "engines": ["google", "bing"]}
         )
-        assert "categories=general,news" in log
+        assert "engines=google,bing" in log
 
     def test_result_log_dict(self) -> None:
         result = {
@@ -457,7 +412,7 @@ class TestWebSearch:
             "corrections": [],
         }
         log = WebSearch(_ctx()).format_result_log(result)
-        assert "1 answer" in log
+        assert "0 result" in log
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +470,7 @@ class TestPromptUser:
         assert "..." in log
 
     def test_result_log_user_unavailable(self) -> None:
-        from citra.tools.transient.prompt_user import USER_UNAVAILABLE_MESSAGE
+        from citra.tools.interaction.prompt_user import USER_UNAVAILABLE_MESSAGE
 
         log = PromptUser(_ctx()).format_result_log(USER_UNAVAILABLE_MESSAGE)
         assert "user-unavailable" in log
@@ -538,20 +493,20 @@ class TestSubprocess:
             {"action": "poll", "process_id": 3}
         )
         assert "action=poll" in log
-        assert "pid=3" in log
+        assert "process=3" in log
 
     def test_call_log_write(self) -> None:
         log = Subprocess(_ctx()).format_call_log(
             {"action": "write", "process_id": 1, "input": "data"}
         )
-        assert "input=4 chars" in log
+        assert "process=1" in log
 
     def test_result_log_ok(self) -> None:
-        assert Subprocess(_ctx()).format_result_log("ok") == "ok"
+        assert Subprocess(_ctx()).format_result_log("ok") == "1 lines | 2 chars"
 
     def test_result_log_started(self) -> None:
         log = Subprocess(_ctx()).format_result_log("Started subprocess 1.")
-        assert "Started" in log
+        assert log == "1 lines | 21 chars"
 
 
 # ---------------------------------------------------------------------------

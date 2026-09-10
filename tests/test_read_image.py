@@ -11,7 +11,7 @@ from citra.sandbox.filesystem_ops.read_binary import DEFAULT_MAX_BYTES
 from citra.sandbox.filesystem_ops.read_binary import execute as execute_read_binary
 from citra.sandbox.filesystem_ops.scope import ScopedFilesystem
 from citra.tools.default_registry import all_tools
-from citra.tools.transient import ReadImage
+from citra.tools.explorer import ReadImage
 
 
 # A 1x1 transparent PNG (smallest valid PNG).
@@ -105,7 +105,7 @@ def test_detect_image_format(
     raw_bytes: bytes,
     expected_mime: str | None,
 ) -> None:
-    from citra.tools.transient.read_image import _detect_image_format
+    from citra.tools.explorer.read_image import _detect_image_format
 
     assert _detect_image_format(raw_bytes) == expected_mime
 
@@ -197,8 +197,7 @@ def test_read_image_definition_exposes_image_url_tool() -> None:
 
 def _scope(monkeypatch, tmp_path) -> ScopedFilesystem:
     roots = {
-        "CITRA_WORKSPACE": tmp_path / "workspace",
-        "CITRA_SOURCE": tmp_path / "source",
+        "CITRA_PROJECT_ROOT": tmp_path / "workspace",
         "HOME": tmp_path / "home",
         "CITRA_TMP": tmp_path / "tmp",
         "CITRA_CACHE": tmp_path / "cache",
@@ -291,6 +290,6 @@ def test_read_image_is_in_default_deferred_registry() -> None:
 
 
 def test_read_image_appears_in_chat_mode() -> None:
-    from citra.modes.chat import ChatMode
+    from citra.workflows import ChatWorkflow
 
-    assert ReadImage in ChatMode._TOOLS.deferred_tools
+    assert ReadImage in ChatWorkflow._TOOLS.deferred_tools

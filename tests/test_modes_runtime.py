@@ -13,8 +13,7 @@ from citra.cli.repl import select_startup_workflow
 from citra.config import SandboxPolicy
 from citra.sandbox import SandboxMode, WorkspaceSandbox
 from citra.tools.session_memory import RequirementTool
-from citra.utils.chat_completions_api import ModelCall
-from citra.workflows.sys_prompt.sys_prompt import build_system_prompt
+from citra.utils.chat_completions_api import ModelCall, parse_model_response
 from citra.workflows import (
     ChatWorkflow,
     SandboxConfig,
@@ -92,12 +91,16 @@ def test_registry_treats_ordinary_modes_as_single_mode_workflows() -> None:
         "serial_roles",
         "serial_roles_assured",
         "architect",
+        "surgeon",
     )
     assert isinstance(workflows[0], SingleModeWorkflow)
     assert isinstance(workflows[1], SingleModeWorkflow)
 
 
-def test_repl_selects_one_workflow_before_runtime_creation(monkeypatch) -> None:
+def test_repl_selects_one_workflow_before_runtime_creation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     registry = WorkflowRegistry(
         workflows=(_workflow("first"), _workflow("second")),
         default_workflow="second",
@@ -113,7 +116,10 @@ def test_repl_selects_one_workflow_before_runtime_creation(monkeypatch) -> None:
 
     class _Application:
         config = object()
-        workspace = SimpleNamespace(workspace=Path("."))
+        workspace = SimpleNamespace(
+            workspace=Path("."),
+            logs=tmp_path / "logs",
+        )
         hard_shutdown_requested = False
 
         def close(self, *, force: bool = False) -> None:
@@ -131,6 +137,14 @@ def test_repl_selects_one_workflow_before_runtime_creation(monkeypatch) -> None:
         staticmethod(create_application),
     )
     monkeypatch.setattr(repl_module, "print_header", lambda *_args: None)
+    monkeypatch.setattr(
+        repl_module,
+        "_session_layout",
+        lambda _application: SimpleNamespace(
+            header=object(),
+            footer=SimpleNamespace(render=lambda: ""),
+        ),
+    )
 
     repl_module.main(
         input_service=_StartupInput(),
@@ -193,7 +207,7 @@ def test_system_prompt_and_task_steering_are_owned_by_workflow() -> None:
         workspace=SimpleNamespace(disabled_tool_ids=()),
     )
 
-    assert build_system_prompt(context) == "prompt:custom"
+    assert workflow.get_system_prompt(context) == "prompt:custom"
     assert workflow.get_task_steering(0, context) == "re-check constraints"
     assert workflow.get_task_steering(1, context) is None
     assert workflow.get_task_steering(2, context) == "re-check constraints"
@@ -247,17 +261,16 @@ def test_runner_injects_workflow_steering_before_first_request(monkeypatch) -> N
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
     monkeypatch.setattr("citra.agent.session.tokenize", lambda *_args, **_kwargs: 1)
 
-    def api_call(model_call: ModelCall) -> dict:
+    def api_call(model_call: ModelCall):
         requests.append(model_call)
-        return {"choices": [{"message": {"role": "assistant", "content": None}}]}
+        return parse_model_response(
+            {"choices": [{"message": {"role": "assistant", "content": None}}]}
+        )
 
     AgentRunner(context, session, api_call=api_call).run_turn()
 
     assert requests[0].system_prompt == "prompt:custom"
-    assert requests[0].messages[-1] == {
-        "role": "user",
-        "content": "workflow steering",
-    }
+    assert requests[0].messages[-1].content == "workflow steering"
 
 
 def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> None:
@@ -306,10 +319,12 @@ def test_builtin_request_receives_every_retained_memory_service(monkeypatch) -> 
             """Return no model-facing tools."""
             return {}
 
-    def built_in_api(model_call: ModelCall) -> dict:
+    def built_in_api(model_call: ModelCall):
         """Capture the request prepared for the built-in API boundary."""
         requests.append(model_call)
-        return {"choices": [{"message": {"role": "assistant", "content": None}}]}
+        return parse_model_response(
+            {"choices": [{"message": {"role": "assistant", "content": None}}]}
+        )
 
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
     monkeypatch.setattr(runner_module, "call_api", built_in_api)
@@ -372,10 +387,12 @@ def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -
             """Return no model-facing tools."""
             return {}
 
-    def custom_api(model_call: ModelCall) -> dict:
+    def custom_api(model_call: ModelCall):
         """Capture the typed custom-provider request."""
         requests.append(model_call)
-        return {"choices": [{"message": {"role": "assistant", "content": None}}]}
+        return parse_model_response(
+            {"choices": [{"message": {"role": "assistant", "content": None}}]}
+        )
 
     monkeypatch.setattr(runner_module, "ToolRegistry", _Registry)
     monkeypatch.setattr("citra.agent.session.tokenize", lambda *_args, **_kwargs: 1)
@@ -386,9 +403,9 @@ def test_custom_request_prompt_includes_read_only_retained_memory(monkeypatch) -
     assert requests[0].system_prompt == "prompt:custom"
 
 
-def test_builtin_single_mode_workflows_use_full_sandbox() -> None:
-    assert ChatWorkflow().sandbox_config.mode is SandboxMode.FULL_SANDBOX
-    assert TaskWorkflow().sandbox_config.mode is SandboxMode.FULL_SANDBOX
+def test_builtin_single_mode_workflows_use_partial_sandbox() -> None:
+    assert ChatWorkflow().sandbox_config.mode is SandboxMode.PARTIAL_SANDBOX
+    assert TaskWorkflow().sandbox_config.mode is SandboxMode.PARTIAL_SANDBOX
 
 
 def test_workflow_constructors_validate_exact_inputs() -> None:

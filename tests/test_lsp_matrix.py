@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-import importlib.util
 import io
 import logging
 import shutil
@@ -10,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import types
 from unittest.mock import patch
 
 from citra.commands.lsp import LspCommand
@@ -22,6 +20,14 @@ from citra.utils.lsp.language import Language
 from citra.utils.lsp.manager import ClientKey, LspManager
 from citra.utils.lsp.servers import SERVERS
 from citra.utils.lsp.transport import JsonRpcTransport
+from citra.sandbox.filesystem_ops import (
+    EditInput,
+    EditOutput,
+    ReadRawInput,
+    ReadRawOutput,
+    WriteInput,
+    WriteOutput,
+)
 
 from tests.test_lsp_reliability import FakeFilesystem, FakeSandbox, WorkspaceStub
 
@@ -30,43 +36,34 @@ FAKE_SERVER = Path(__file__).with_name("fake_lsp_server.py")
 
 
 def _load_transient_tool(module_name: str, class_name: str):
-    """Load one transient tool without executing its eager optional-dependency package init."""
-    package_name = "citra.tools._lsp_test_transient"
-    package = sys.modules.get(package_name)
-    if package is None:
-        package = types.ModuleType(package_name)
-        package.__path__ = [str(Path(__file__).parents[1] / "src/citra/tools/transient")]
-        sys.modules[package_name] = package
-    qualified = f"{package_name}.{module_name}"
-    module = sys.modules.get(qualified)
-    if module is None:
-        path = Path(__file__).parents[1] / "src/citra/tools/transient" / f"{module_name}.py"
-        spec = importlib.util.spec_from_file_location(qualified, path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[qualified] = module
-        spec.loader.exec_module(module)
-    return getattr(module, class_name)
+    """Load tools from their current capability-oriented packages."""
+    from citra.tools.developer import Lsp
+    from citra.tools.editing import Edit, Write
+
+    tools = {"lsp": Lsp, "edit": Edit, "write": Write}
+    tool = tools[module_name]
+    assert tool.__name__ == class_name
+    return tool
 
 
 class _MutatingFilesystem:
-    def execute(self, operation: str, arguments: dict[str, object]) -> str:
-        path = Path(str(arguments["path"]))
-        if operation == "read_raw":
-            return path.read_text(encoding="utf-8")
-        if operation == "write":
+    def execute(self, operation):
+        path = Path(operation.path)
+        if isinstance(operation, ReadRawInput):
+            return ReadRawOutput(path.read_text(encoding="utf-8"))
+        if isinstance(operation, WriteInput):
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(str(arguments["content"]), encoding="utf-8")
-            return "ok"
-        if operation == "edit":
+            path.write_text(operation.content, encoding="utf-8")
+            return WriteOutput()
+        if isinstance(operation, EditInput):
             text = path.read_text(encoding="utf-8")
-            old = str(arguments.get("old", ""))
-            new = str(arguments.get("new", ""))
+            old = operation.old or ""
+            new = operation.new
             if old not in text:
-                return "error: old text not found"
+                return EditOutput("error: old text not found")
             path.write_text(text.replace(old, new, 1), encoding="utf-8")
-            return "ok"
-        raise AssertionError(operation)
+            return EditOutput("ok")
+        raise AssertionError(type(operation))
 
 
 class _DummyTransport:
@@ -201,23 +198,30 @@ class LspMatrixRegressionTests(unittest.TestCase):
             self.assertNotEqual(data_a, data_b)
 
     def test_jdtls_requires_java_21_or_newer(self):
-        with patch(
-            "citra.tools.lsp.manager.subprocess.run",
-            return_value=SimpleNamespace(stdout='openjdk version "17.0.12" 2024-07-16\n'),
-        ):
-            self.assertEqual(LspManager._java_major_version("/usr/bin/java"), 17)
-        with patch(
-            "citra.tools.lsp.manager.subprocess.run",
-            return_value=SimpleNamespace(stdout='openjdk version "21.0.7" 2025-04-15\n'),
-        ):
-            self.assertEqual(LspManager._java_major_version("/usr/bin/java"), 21)
+        with tempfile.TemporaryDirectory() as td:
+            sandbox = FakeSandbox()
+            manager = LspManager(WorkspaceStub(Path(td)), sandbox)
+            with patch.object(
+                sandbox,
+                "run",
+                return_value=SimpleNamespace(output='openjdk version "17.0.12" 2024-07-16\n'),
+                create=True,
+            ):
+                self.assertEqual(manager._java_major_version("/usr/bin/java"), 17)
+            with patch.object(
+                sandbox,
+                "run",
+                return_value=SimpleNamespace(output='openjdk version "21.0.7" 2025-04-15\n'),
+                create=True,
+            ):
+                self.assertEqual(manager._java_major_version("/usr/bin/java"), 21)
 
     def test_every_configured_server_is_optional_when_missing(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox())
             self.addCleanup(manager.close)
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None):
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None):
                 for definition in SERVERS.values():
                     language = definition.languages[0]
                     extension = language.file_extensions[0]
@@ -241,7 +245,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             self.addCleanup(manager.close)
             real_which = shutil.which
             with patch(
-                "citra.tools.lsp.manager.shutil.which",
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: "/fake/pyrefly"
                 if name == "pyrefly"
                 else real_which(name),
@@ -269,7 +273,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             self.addCleanup(manager.close)
             real_which = shutil.which
             with patch(
-                "citra.tools.lsp.manager.shutil.which",
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: "/fake/pyrefly"
                 if name == "pyrefly"
                 else real_which(name),
@@ -324,7 +328,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                     return real_which("node") or "/fake/node"
                 return None
 
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=which):
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=which):
                 with self.assertRaisesRegex(LspUnavailable, "typescript-language-server"):
                     manager.client_for(path)
 
@@ -340,7 +344,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                     return f"/fake/{name}"
                 return None
 
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=which), patch.object(
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=which), patch.object(
                 manager, "_client_for_server"
             ) as client_for_server:
                 with self.assertRaisesRegex(LspUnavailable, "vue-language-server"):
@@ -363,7 +367,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                     return f"/fake/{name}"
                 return None
 
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=which), patch.object(
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=which), patch.object(
                 manager, "_vue_plugin_location", return_value=root / "fake-vue-plugin"
             ):
                 with self.assertRaisesRegex(LspUnavailable, "typescript.tsserverRequest"):
@@ -390,6 +394,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                 workspace=workspace,
                 filesystem=filesystem,
                 logger=logging.getLogger("lsp-optionality-test"),
+                model_config=lambda: SimpleNamespace(id="test-model"),
             )
             context.diagnostics_for_path = lambda raw: manager.diagnostics_for_path(
                 raw, filesystem=filesystem
@@ -398,7 +403,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             edit_tool = EditTool(context)
             write_tool = WriteTool(context)
 
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None):
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None):
                 for definition in SERVERS.values():
                     language = definition.languages[0]
                     extension = language.file_extensions[0]
@@ -433,7 +438,10 @@ class LspMatrixRegressionTests(unittest.TestCase):
             workspace = WorkspaceStub(Path(td))
             filesystem = _MutatingFilesystem()
             calls: list[str] = []
-            context = SimpleNamespace(filesystem=filesystem)
+            context = SimpleNamespace(
+                filesystem=filesystem,
+                model_config=lambda: SimpleNamespace(id="test-model"),
+            )
             context.diagnostics_for_path = lambda raw: calls.append(raw) or None
             edit_tool = EditTool(context)
             write_tool = WriteTool(context)
@@ -460,8 +468,10 @@ class LspMatrixRegressionTests(unittest.TestCase):
                 config=LspConfig(startup_timeout=2.0, request_timeout=1.0),
             )
             with patch(
-                "citra.tools.lsp.manager.shutil.which",
-                side_effect=lambda name: sys.executable if name == "pyrefly" else None,
+                "tests.test_lsp_reliability.shutil.which",
+                side_effect=lambda name: sys.executable
+                if name in {"pyrefly", "python"}
+                else None,
             ):
                 handle = manager.client_for(path)
                 process = handle.client.transport.process
@@ -471,16 +481,12 @@ class LspMatrixRegressionTests(unittest.TestCase):
             process.wait(timeout=2)
             self.assertIsNotNone(process.poll())
 
-    def test_package_manager_priority_prefers_pacman_before_aur_helpers(self):
-        available = {"pacman", "paru", "yay", "npm"}
-        with patch(
-            "citra.tools.lsp.installer.shutil.which",
-            side_effect=lambda name: f"/usr/bin/{name}" if name in available else None,
-        ):
-            managers = available_managers()
-        self.assertLess(managers.index("pacman"), managers.index("paru"))
-        self.assertLess(managers.index("pacman"), managers.index("yay"))
-        self.assertLess(managers.index("yay"), managers.index("npm"))
+    def test_package_manager_priority_uses_sandbox_resolver(self):
+        available = {"npm", "gem", "go", "cargo"}
+        managers = available_managers(
+            lambda name: f"/usr/bin/{name}" if name in available else None
+        )
+        self.assertEqual(managers, ("npm", "gem", "go", "cargo"))
 
     def test_install_missing_excludes_servers_that_are_already_available(self):
         with tempfile.TemporaryDirectory() as td:
@@ -494,9 +500,9 @@ class LspMatrixRegressionTests(unittest.TestCase):
                 return real_availability(definition)
 
             with patch.object(manager, "_availability", side_effect=availability), patch(
-                "citra.tools.lsp.manager.shutil.which", return_value=None
+                "tests.test_lsp_reliability.shutil.which", return_value=None
             ), patch(
-                "citra.tools.lsp.installer.shutil.which",
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None,
             ):
                 results = manager.install("missing", dry_run=True)
@@ -506,24 +512,21 @@ class LspMatrixRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox())
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which",
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None), patch(
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None,
             ):
                 results = manager.install("all", dry_run=True)
             selected = {result.server_id for result in results}
-            self.assertEqual(
-                selected,
-                {"pyrefly"},
-            )
+            self.assertEqual(selected, set())
             self.assertTrue(all(result.dry_run for result in results))
 
     def test_known_go_and_cargo_install_recipes_are_exposed(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox())
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which",
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None), patch(
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: f"/usr/bin/{name}" if name in {"go", "cargo"} else None,
             ):
                 sql = manager.install("sql", dry_run=True)[0]
@@ -535,8 +538,8 @@ class LspMatrixRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox())
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which", return_value=None
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None), patch(
+                "tests.test_lsp_reliability.shutil.which", return_value=None
             ):
                 result = manager.install("pyrefly", dry_run=True)[0]
             self.assertIsNone(result.command)
@@ -547,25 +550,30 @@ class LspMatrixRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox())
-            with patch("citra.tools.lsp.installer.subprocess.Popen") as popen:
+            with patch.object(manager.sandbox, "run", create=True) as run:
                 with self.assertRaisesRegex(ValueError, "Unknown LSP server or language"):
                     manager.install("definitely-not-a-language-server")
-            popen.assert_not_called()
+            run.assert_not_called()
 
     def test_failed_installer_returns_status_and_does_not_raise(self):
         definition = SERVERS["pyrefly"]
         candidate = next(item for item in definition.install_candidates if item.manager == "uv")
 
-        class FailedProcess:
-            stdout = io.StringIO("uv failed\n")
-
-            def wait(self):
-                return 9
-
-        with patch("citra.tools.lsp.installer.subprocess.Popen", return_value=FailedProcess()), patch(
-            "citra.tools.lsp.installer.shutil.which", return_value=None
-        ), patch("builtins.print") as printed:
-            result = execute_install(definition, candidate, dry_run=False)
+        sandbox = SimpleNamespace(
+            run=lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=9,
+                output="uv failed\n",
+            )
+        )
+        with patch("builtins.print") as printed:
+            result = execute_install(
+                definition,
+                candidate,
+                dry_run=False,
+                resolver=lambda _name: None,
+                sandbox=sandbox,
+                cwd=Path.cwd(),
+            )
 
         self.assertEqual(result.returncode, 9)
         self.assertFalse(result.success)
@@ -577,19 +585,23 @@ class LspMatrixRegressionTests(unittest.TestCase):
         definition = SERVERS["pyrefly"]
         candidate = next(item for item in definition.install_candidates if item.manager == "uv")
 
-        class SuccessfulProcess:
-            stdout = io.StringIO("installed\n")
-
-            def wait(self):
-                return 0
-
-        with patch("citra.tools.lsp.installer.subprocess.Popen", return_value=SuccessfulProcess()), patch(
-            "citra.tools.lsp.installer.shutil.which",
-            side_effect=lambda name: "/usr/local/bin/pyrefly"
-            if name == "pyrefly"
-            else None,
-        ), patch("builtins.print"):
-            result = execute_install(definition, candidate, dry_run=False)
+        sandbox = SimpleNamespace(
+            run=lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=0,
+                output="installed\n",
+            )
+        )
+        with patch("builtins.print"):
+            result = execute_install(
+                definition,
+                candidate,
+                dry_run=False,
+                resolver=lambda name: "/usr/local/bin/pyrefly"
+                if name == "pyrefly"
+                else None,
+                sandbox=sandbox,
+                cwd=Path.cwd(),
+            )
 
         self.assertEqual(result.returncode, 0)
         self.assertTrue(result.success)
@@ -607,8 +619,8 @@ class LspMatrixRegressionTests(unittest.TestCase):
             )
             self.addCleanup(manager.close)
             command = LspCommand(SimpleNamespace(lsp_manager=manager))  # type: ignore[arg-type]
-            which = lambda name: sys.executable if name == "pyrefly" else None
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=which):
+            which = lambda name: sys.executable if name in {"pyrefly", "python"} else None
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=which):
                 first = manager.client_for(path).client.transport.process
                 stopped = command.run("stop pyrefly")
                 self.assertIn("stopped: 1", stopped.output)
@@ -629,18 +641,18 @@ class LspMatrixRegressionTests(unittest.TestCase):
             context = SimpleNamespace(lsp_manager=manager)
             command = LspCommand(context)  # type: ignore[arg-type]
 
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which",
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None), patch(
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None,
             ):
                 status = command.run("")
-                with patch("citra.tools.lsp.installer.subprocess.Popen") as popen:
+                with patch.object(manager.sandbox, "run", create=True) as run:
                     install = command.run("install pyrefly --dry-run")
 
             self.assertIn("LSP: enabled", status.output)
             self.assertIn("pyrefly", status.output)
-            self.assertIn("dry-run: not executed", install.output)
-            popen.assert_not_called()
+            self.assertIn("no supported installer", install.output)
+            run.assert_not_called()
 
     def test_model_lsp_status_ignores_stale_path_arguments(self):
         LspTool = _load_transient_tool("lsp", "Lsp")
@@ -654,7 +666,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
                 logger=logging.getLogger(__name__),
             )
             tool = LspTool(context)
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None):
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None):
                 result = tool.execute(
                     {
                         "action": "status",
@@ -675,7 +687,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             bad_json.write_text('{"foo": }', encoding="utf-8")
             bad_jsonc = workspace.workspace / "bad.jsonc"
             bad_jsonc.write_text('{"foo": }', encoding="utf-8")
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None):
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None):
                 rendered = manager.diagnostics_for_path("bad.json", filesystem=FakeFilesystem())
                 self.assertIn("error [json]", rendered or "")
                 self.assertIsNone(

@@ -66,27 +66,31 @@ def run_repl(inputs):
         temporary = Path(raw_temporary)
         source = temporary / "source"
         source.mkdir()
-        config = temporary / "config.toml"
-        config.write_text(
+        config = temporary / "config"
+        config.mkdir()
+        (config / "models.toml").write_text(
             f'''\
-[model]
+[models]
+orchestrator = "test"
+
+[models.test]
 host = "https://example.invalid/v1"
 api_key = "test"
 id = "test-model"
-max_tokens = 128
-
-[web-search]
-host_url = "http://example.invalid"
-
-[message-context]
-uncompressed_messages = 20
-
-[workspace]
-temporary_workspace = "{temporary / 'agent'}"
-permanent_workspace = "{source}"
+max_input_tokens = 4096
+max_output_tokens = 128
 ''',
             encoding="utf-8",
         )
+        (config / "tools.toml").write_text(
+            '''\
+
+[web-search]
+host_url = "http://example.invalid"
+''',
+            encoding="utf-8",
+        )
+        (config / "sandbox.toml").write_text("", encoding="utf-8")
 
         with mock.patch.dict(
             os.environ,
@@ -96,7 +100,11 @@ permanent_workspace = "{source}"
             },
         ), mock.patch("citra.main.terminal_input") as fake_ti, \
                 mock.patch("builtins.print", side_effect=fake_print), \
-                mock.patch("citra.main.call_api", side_effect=fake_call_api):
+                mock.patch("citra.main.call_api", side_effect=fake_call_api), \
+                mock.patch(
+                    "citra.application.os.getcwd",
+                    return_value=str(source),
+                ):
             fake_ti.prompt.side_effect = fake_prompt
 
             try:

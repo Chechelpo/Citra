@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Iterable, Mapping
 
 from .base import FilesystemInput, FilesystemOutput, require_payload_dict
 from .scope import ScopedFilesystem
@@ -11,11 +11,25 @@ MAX_READ_PATHS = 20
 
 
 @dataclass(frozen=True, slots=True)
+class ReadSymbol:
+    """One compact source symbol included above read content."""
+
+    name: str
+    from_line: int
+    to_line: int
+
+    def render(self) -> str:
+        """Render the symbol name and inclusive 1-based source span."""
+        return f"{self.name}:L{self.from_line}-L{self.to_line}"
+
+
+@dataclass(frozen=True, slots=True)
 class ReadEntry:
     """One resolved file and its read content."""
 
     path: str
     content: str
+    symbols: tuple[ReadSymbol, ...] = ()
 
     @classmethod
     def from_payload(cls, payload: Any) -> "ReadEntry":
@@ -40,6 +54,14 @@ class ReadEntry:
             "path": self.path,
             "content": self.content,
         }
+
+    def render(self) -> str:
+        """Render the optional compact symbol index before file content."""
+        if not self.symbols:
+            return self.content
+
+        index = ", ".join(symbol.render() for symbol in self.symbols)
+        return f"symbols: {index}\n\n{self.content}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +106,7 @@ class ReadOutput(FilesystemOutput):
     def render(self) -> str:
         """Handle render."""
         outputs = [
-            f"===== {entry.path} =====\n{entry.content}"
+            f"===== {entry.path} =====\n{entry.render()}"
             for entry in self.entries
         ]
 
@@ -92,9 +114,25 @@ class ReadOutput(FilesystemOutput):
             self.single_path
             and len(self.entries) == 1
         ):
-            return self.entries[0].content
+            return self.entries[0].render()
 
         return "\n\n".join(outputs)
+
+    def with_symbols(
+        self,
+        symbols_by_path: Mapping[str, Iterable[ReadSymbol]],
+    ) -> "ReadOutput":
+        """Return a copy carrying controller-provided source symbols."""
+        return replace(
+            self,
+            entries=tuple(
+                replace(
+                    entry,
+                    symbols=tuple(symbols_by_path.get(entry.path, ())),
+                )
+                for entry in self.entries
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -68,6 +68,7 @@ def _runner_context() -> SimpleNamespace:
         tool_set=ToolSet(core_tools=(), deferred_tools=()),
         get_task_steering=lambda *_arguments: None,
         get_system_prompt=lambda *_arguments: "",
+        get_user_message_prefix=lambda *_arguments: None,
         is_serial=False,
     )
     return SimpleNamespace(
@@ -368,6 +369,7 @@ def test_runner_observer_captures_tool_activity_without_rendering() -> None:
         tool_set=ToolSet(core_tools=(), deferred_tools=()),
         get_task_steering=lambda *_: None,
         get_system_prompt=lambda *_: "",
+        get_user_message_prefix=lambda *_: None,
         is_serial=False,
     )
     context = SimpleNamespace(

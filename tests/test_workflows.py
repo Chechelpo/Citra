@@ -113,6 +113,7 @@ def test_workflow_registry_contains_all_selectable_workflows(tmp_path: Path) -> 
         "serial_roles",
         "serial_roles_assured",
         "architect",
+        "surgeon",
     )
     assert registry.select().name == "chat"
 

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from citra.tools.transient.bash import Bash
+from citra.tools.execution.bash import Bash
 from citra.sandbox import SandboxResult
 
 
@@ -47,7 +47,7 @@ class BashNetworkTests(unittest.TestCase):
     def test_denial_prevents_execution(self) -> None:
         tool, context = self._tool()
         with mock.patch.object(Path, "is_dir", return_value=True), mock.patch(
-            "citra.tools.transient.bash.PromptUser._execute",
+            "citra.tools.execution.bash.PromptUser._execute",
             return_value="Deny",
         ) as prompt:
             result = tool._execute(
@@ -66,7 +66,7 @@ class BashNetworkTests(unittest.TestCase):
     def test_approval_enables_network(self) -> None:
         tool, context = self._tool()
         with mock.patch.object(Path, "is_dir", return_value=True), mock.patch(
-            "citra.tools.transient.bash.PromptUser._execute",
+            "citra.tools.execution.bash.PromptUser._execute",
             return_value="Allow once",
         ):
             tool._execute(
@@ -81,7 +81,7 @@ class BashNetworkTests(unittest.TestCase):
     def test_always_allow_skips_prompt(self) -> None:
         tool, context = self._tool(always_allow=True)
         with mock.patch.object(Path, "is_dir", return_value=True), mock.patch(
-            "citra.tools.transient.bash.PromptUser._execute"
+            "citra.tools.execution.bash.PromptUser._execute"
         ) as prompt:
             tool._execute(
                 {

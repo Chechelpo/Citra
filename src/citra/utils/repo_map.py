@@ -97,8 +97,10 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$-]*$")
 class Definition:
     """Represent Definition."""
     path: str
-    line: int
+    from_line: int
+    to_line: int
     name: str
+    kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -198,6 +200,46 @@ class RepoMap:
             model_id=model_id,
             max_tokens=max_tokens,
         )
+
+    def definitions_for_paths(
+        self,
+        paths: Iterable[str],
+    ) -> dict[str, tuple[Definition, ...]]:
+        """Return cached function and class definitions for readable files."""
+        result: dict[str, tuple[Definition, ...]] = {}
+
+        for raw_path in paths:
+            try:
+                physical = self.workspace.resolve_path(raw_path)
+            except (OSError, ValueError):
+                continue
+
+            if not physical.is_file():
+                continue
+
+            display_path = self.workspace.display_path(physical)
+            index = self._index_file(display_path, physical)
+            if index is None:
+                continue
+
+            definitions = tuple(
+                sorted(
+                    (
+                        definition
+                        for definition in index.definitions
+                        if self._is_read_symbol(definition.kind)
+                    ),
+                    key=lambda definition: (
+                        definition.from_line,
+                        definition.to_line,
+                        definition.name,
+                    ),
+                )
+            )
+            if definitions:
+                result[display_path] = definitions
+
+        return result
 
     def _normalize_tmp_subtree(
         self,
@@ -411,12 +453,13 @@ class RepoMap:
         source: bytes,
         relative: str,
     ) -> tuple[list[Definition], Counter[str]]:
-        """Handle extract tags."""
+        """Extract symbol definitions and references from a parsed syntax tree."""
         definitions: list[Definition] = []
         references: Counter[str] = Counter()
         definition_ranges: set[tuple[int, int]] = set()
 
         stack = [root]
+
         while stack:
             node = stack.pop()
             children = list(getattr(node, "named_children", ()) or ())
@@ -424,27 +467,52 @@ class RepoMap:
 
             if self._is_definition_node(getattr(node, "type", "")):
                 name_node = self._definition_name_node(node)
+
                 if name_node is not None:
                     name = self._node_identifier(name_node, source)
+
                     if name is not None:
+                        start_line = int(node.start_point[0])
+                        end_line = int(node.end_point[0])
+                        end_column = int(node.end_point[1])
+
+                        # Tree-sitter end positions are exclusive. If a definition
+                        # ends at column 0 of the following line, that line is not
+                        # actually part of the definition.
+                        if end_column == 0 and end_line > start_line:
+                            end_line -= 1
+
                         definitions.append(
                             Definition(
                                 path=relative,
-                                line=int(name_node.start_point[0]),
+                                from_line=start_line,
+                                to_line=end_line,
                                 name=name,
+                                kind=getattr(node, "type", ""),
                             )
                         )
+
+                        # Only the identifier itself should be excluded from
+                        # reference counting, not the entire definition body.
                         definition_ranges.add(
-                            (name_node.start_byte, name_node.end_byte)
+                            (
+                                name_node.start_byte,
+                                name_node.end_byte,
+                            )
                         )
 
             if (
                 getattr(node, "type", "") in _REFERENCE_NODE_TYPES
                 and not children
             ):
-                node_range = (node.start_byte, node.end_byte)
+                node_range = (
+                    node.start_byte,
+                    node.end_byte,
+                )
+
                 if node_range in definition_ranges:
                     continue
+
                 name = self._node_identifier(node, source)
                 if name is not None:
                     references[name] += 1
@@ -474,6 +542,19 @@ class RepoMap:
                 "struct",
                 "trait",
                 "type",
+            )
+        )
+
+    @staticmethod
+    def _is_read_symbol(node_type: str) -> bool:
+        """Return whether a definition is useful in a read-result index."""
+        return any(
+            marker in node_type
+            for marker in (
+                "class",
+                "constructor",
+                "function",
+                "method",
             )
         )
 
@@ -620,19 +701,19 @@ class RepoMap:
             result.extend(definitions.get(key, ()))
 
         # Ensure definitions in disconnected files can still enter the map.
-        included = {(item.path, item.line, item.name) for item in result}
+        included = {(item.path, item.from_line, item.name) for item in result}
         remaining = [
             definition
             for index in indexes.values()
             for definition in index.definitions
-            if (definition.path, definition.line, definition.name) not in included
+            if (definition.path, definition.from_line, definition.name) not in included
         ]
         remaining.sort(
             key=lambda item: (
                 not self._path_matches_focus(item.path, focus),
                 item.name not in focus,
                 item.path,
-                item.line,
+                item.from_line,
             )
         )
         result.extend(remaining)
@@ -725,7 +806,7 @@ class RepoMap:
         model_id: str,
         max_tokens: int,
     ) -> str:
-        """Handle fit ranked map."""
+        """Fit the highest-ranked definitions within the token budget."""
         low = 1
         high = len(ranked)
         best = ""
@@ -746,29 +827,38 @@ class RepoMap:
         if best:
             return best.rstrip()
 
-        # A single TreeContext chunk can exceed a very small budget. Return a
-        # minimal location instead of letting the generic Tool truncator cut a
-        # structural block in half.
+        # A single structural chunk may exceed a very small budget.
+        # Return only the symbol and its source span in that case.
         first = ranked[0]
-        fallback = f"{first.path}:{first.line + 1}: {first.name}"
-        return fallback
+        start = first.from_line + 1
+        end = first.to_line + 1
+        location = str(start) if start == end else f"{start}-{end}"
+        return f"{first.path}:{location}: {first.name}"
 
     def _render_definitions(
         self,
         definitions: list[Definition],
         physical_paths: dict[str, Path],
     ) -> str:
-        """Handle render definitions."""
+        """Render selected definitions with their source line spans."""
         _filename_to_lang, TreeContext, _get_parser = self._grep_ast()
-        lines_by_file: dict[str, set[int]] = defaultdict(set)
+        definitions_by_file: dict[str, list[Definition]] = defaultdict(list)
         for definition in definitions:
-            lines_by_file[definition.path].add(definition.line)
+            definitions_by_file[definition.path].append(definition)
 
         parts: list[str] = []
-        for relative in sorted(lines_by_file):
+        for relative in sorted(definitions_by_file):
             physical = physical_paths.get(relative)
             if physical is None:
                 continue
+            file_definitions = sorted(
+                definitions_by_file[relative],
+                key=lambda definition: (
+                    definition.from_line,
+                    definition.to_line,
+                    definition.name,
+                ),
+            )
             try:
                 code = physical.read_text(
                     encoding="utf-8",
@@ -779,6 +869,11 @@ class RepoMap:
             if not code.endswith("\n"):
                 code += "\n"
 
+            # TreeContext needs zero-based lines of interest.
+            lines_of_interest = {
+                definition.from_line
+                for definition in file_definitions
+            }
             try:
                 context = TreeContext(
                     relative,
@@ -793,31 +888,67 @@ class RepoMap:
                     show_top_of_file_parent_scope=False,
                 )
                 context.lines_of_interest = set()
-                context.add_lines_of_interest(lines_by_file[relative])
+                context.add_lines_of_interest(lines_of_interest)
                 context.add_context()
                 rendered = context.format().rstrip()
             except Exception:
                 rendered = self._render_source_lines(
                     code,
-                    lines_by_file[relative],
+                    file_definitions,
                 )
-
             rendered = "\n".join(
                 line[:_MAX_RENDERED_LINE_LENGTH]
                 for line in rendered.splitlines()
             )
-            parts.append(f"{relative}:\n{rendered}")
+            # Explicit symbol -> line-span index.
+            symbol_ranges: list[str] = []
+            for definition in file_definitions:
+                start = definition.from_line + 1
+                end = definition.to_line + 1
+                location = str(start) if start == end else f"{start}-{end}"
+                symbol_ranges.append(
+                    f"  {location}: {definition.name}"
+                )
+            range_block = "\n".join(symbol_ranges)
+            if rendered:
+                parts.append(
+                    f"{relative}:\n"
+                    f"{range_block}\n"
+                    f"{rendered}"
+                )
+            else:
+                parts.append(
+                    f"{relative}:\n"
+                    f"{range_block}"
+                )
 
         return "\n\n".join(parts) + ("\n" if parts else "")
 
     @staticmethod
-    def _render_source_lines(code: str, lines: set[int]) -> str:
-        """Handle render source lines."""
+    def _render_source_lines(
+        code: str,
+        definitions: list[Definition],
+    ) -> str:
+        """Fallback renderer for definition source lines."""
         source_lines = code.splitlines()
         result: list[str] = []
-        for line in sorted(lines):
-            if 0 <= line < len(source_lines):
-                result.append(source_lines[line])
+        for definition in sorted(
+            definitions,
+            key=lambda item: (
+                item.from_line,
+                item.to_line,
+                item.name,
+            ),
+        ):
+            line = definition.from_line
+            if not 0 <= line < len(source_lines):
+                continue
+            start = definition.from_line + 1
+            end = definition.to_line + 1
+            location = str(start) if start == end else f"{start}-{end}"
+            result.append(
+                f"{location}: {source_lines[line]}"
+            )
         return "\n".join(result)
 
     @staticmethod

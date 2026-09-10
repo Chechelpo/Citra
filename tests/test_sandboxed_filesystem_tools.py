@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from citra.tools.transient import Edit, Find, Glob, Read, Tree, Write
+from citra.tools.editing import Edit, Write
+from citra.tools.explorer import Find, Glob, Read, Tree
 
 
 class SpyFilesystem:
@@ -51,8 +52,8 @@ def _make_context(filesystem: SpyFilesystem) -> SimpleNamespace:
         (Read, "read", {"path": "a.py"}),
         (Write, "write", {"path": "a.py", "content": "x\n"}),
         (Edit, "edit", {"path": "a.py", "old": "x", "new": "y"}),
-        (Glob, "glob", {"pat": "**/*.py"}),
-        (Tree, "tree", {"path": "."}),
+        (Glob, "glob", {"pattern": "**/*.py"}),
+        (Tree, "tree", {"kind": "directory", "path": "."}),
         (Find, "find", {"paths": ["src"]}),
     ],
 )
@@ -65,4 +66,9 @@ def test_scoped_filesystem_tools_only_delegate_to_sandbox(
     context = _make_context(filesystem)
     result = tool_type(context).execute(arguments)
     assert result == "sandbox-result"
-    assert filesystem.calls == [(operation, arguments)]
+    expected_arguments = arguments
+    if tool_type is Glob:
+        expected_arguments = {"pat": arguments["pattern"]}
+    elif tool_type is Tree:
+        expected_arguments = {}
+    assert filesystem.calls == [(operation, expected_arguments)]

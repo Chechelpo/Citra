@@ -15,7 +15,7 @@ from citra.tools.default_registry import (
     ToolSet,
     all_tools,
 )
-from citra.tools.transient.python import (
+from citra.tools.execution.python import (
     Python,
     _parse_package_list,
     _require_version,
@@ -421,7 +421,7 @@ class PythonToolExecutionTests(unittest.TestCase):
     def test_network_denial_prevents_uv_execution(self) -> None:
         self.context.config.python.always_allow_network = False
         with unittest.mock.patch(
-            "citra.tools.transient.python.PromptUser._execute",
+            "citra.tools.execution.python.PromptUser._execute",
             return_value="Deny",
         ):
             result = self.tool._execute(
@@ -438,7 +438,7 @@ class PythonToolExecutionTests(unittest.TestCase):
         self.context.config.python.always_allow_network = False
         self.context.config.python.permission_timeout = 47
         with unittest.mock.patch(
-            "citra.tools.transient.python.PromptUser._execute",
+            "citra.tools.execution.python.PromptUser._execute",
             return_value="Allow once",
         ) as prompt:
             self.tool._execute(

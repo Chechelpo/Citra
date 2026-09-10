@@ -55,7 +55,13 @@ class PromptUser(Tool):
     def _normalize_questions(self, arguments: dict[str, Any]) -> list[dict[str, Any]]:
         """Handle normalize questions."""
         if 'question' in arguments:
-            return [{'id': '0', 'question': arguments['question'], 'options': arguments.get('options') or [], 'multiple': False}]
+            options = [
+                str(option).strip()
+                for option in arguments.get('options') or []
+            ]
+            if any(not option for option in options):
+                raise ValueError("Options cannot be empty.")
+            return [{'id': '0', 'question': arguments['question'], 'options': options, 'multiple': False}]
         raw_questions = arguments.get('questions')
         if not isinstance(raw_questions, list):
             raise ValueError("'questions' must be an array.")

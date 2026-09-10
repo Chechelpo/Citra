@@ -260,15 +260,6 @@ class Find(Tool):
         ),
     )
 
-    # ------------------------------------------------------------------
-    # Model-family profiles
-    #
-    # The Citra schema is reused for every family. There is no established
-    # Claude / Gemini / Qwen / Kimi / GLM ``find`` callable-tool surface to
-    # mimic; new families can subclass ``_find_definition`` and register an
-    # a new canonical schema here without breaking compatibility.
-    # ------------------------------------------------------------------
-
 
     @classmethod
     @override

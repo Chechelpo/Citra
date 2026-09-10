@@ -4,7 +4,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from citra.context.workspace_context import _private_source_exclusions
+from citra.context.workspace_context.workspace_context import (
+    _private_source_exclusions,
+)
 
 
 class ProcessLogWorkspaceExclusionTests(unittest.TestCase):

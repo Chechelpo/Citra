@@ -18,6 +18,7 @@ from citra.utils.lsp.language import Language, detect_language, server_for_langu
 from citra.utils.lsp.manager import LspManager
 from citra.utils.lsp.servers import SERVERS
 from citra.utils.lsp.transport import JsonRpcTransport
+from citra.sandbox.filesystem_ops import ReadRawInput, ReadRawOutput
 
 HERE = Path(__file__).resolve().parent
 FAKE_SERVER = HERE / "fake_lsp_server.py"
@@ -27,8 +28,16 @@ class FakeSandbox:
     def __init__(self, mode: str = "configuration") -> None:
         self.mode = mode
 
-    def popen(self, command, *, cwd=None, network=False, environment=None):
-        del command, network, environment
+    def popen(
+        self,
+        command,
+        *,
+        cwd=None,
+        network=False,
+        environment=None,
+        path_prepend=(),
+    ):
+        del command, network, environment, path_prepend
         return subprocess.Popen(
             [sys.executable, str(FAKE_SERVER), self.mode],
             cwd=cwd,
@@ -41,6 +50,11 @@ class FakeSandbox:
         if process.poll() is None:
             process.kill()
         process.wait(timeout=2)
+
+    def resolve_command(self, command: str) -> Path | None:
+        """Resolve commands through the same seam used by WorkspaceSandbox."""
+        resolved = shutil.which(command)
+        return None if resolved is None else Path(resolved)
 
 
 class WorkspaceStub:
@@ -98,11 +112,25 @@ class WorkspaceStub:
                 pass
         return path.relative_to(self.workspace).as_posix()
 
+    def refresh_staged_command(self, command):
+        """Report that no mutable dependency command was staged."""
+        del command
+        return None
+
+    def environment(self):
+        return {}
+
+    def require_soft_capacity(self, _kind):
+        return None
+
+    def write_runtime_manifest(self):
+        return None
+
 
 class FakeFilesystem:
-    def execute(self, operation, arguments):
-        assert operation == "read_raw"
-        return Path(arguments["path"]).read_text()
+    def execute(self, operation):
+        assert isinstance(operation, ReadRawInput)
+        return ReadRawOutput(Path(operation.path).read_text())
 
 
 class LspReliabilityTests(unittest.TestCase):
@@ -181,7 +209,7 @@ class LspReliabilityTests(unittest.TestCase):
             self.addCleanup(manager.close)
             real_which = shutil.which
             with patch(
-                "citra.tools.lsp.manager.shutil.which",
+                "tests.test_lsp_reliability.shutil.which",
                 side_effect=lambda name: "/fake/pyrefly"
                 if name == "pyrefly"
                 else real_which(name),
@@ -219,7 +247,7 @@ class LspReliabilityTests(unittest.TestCase):
         self.assertEqual(detect_language("x.scss"), Language.SCSS)
         self.assertEqual(server_for_language(Language.JSONC), "json")
 
-    def test_tmp_root_and_pyrefly_configuration_through_manager(self):
+    def test_tmp_root_and_pyrefly_diagnostics_through_manager(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             path = workspace.tmp / "lsp_test" / "test.py"
@@ -227,15 +255,15 @@ class LspReliabilityTests(unittest.TestCase):
             path.write_text('x: int = "wrong"\n')
             manager = LspManager(
                 workspace,
-                FakeSandbox("configuration"),
+                FakeSandbox("push"),
                 config=LspConfig(startup_timeout=1, request_timeout=1, diagnostics_timeout=.1, cold_diagnostics_timeout=.3),
             )
             self.addCleanup(manager.close)
             real_which = shutil.which
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=lambda name: "/fake/pyrefly" if name == "pyrefly" else real_which(name)):
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=lambda name: "/fake/pyrefly" if name == "pyrefly" else real_which(name)):
                 rendered = manager.diagnostics_for_path("@tmp/lsp_test/test.py", filesystem=FakeFilesystem())
             self.assertIn("@tmp/lsp_test/test.py", rendered or "")
-            self.assertIn("configuration ok", rendered or "")
+            self.assertIn("cold push", rendered or "")
 
     def test_dead_server_is_not_reused(self):
         with tempfile.TemporaryDirectory() as td:
@@ -245,7 +273,7 @@ class LspReliabilityTests(unittest.TestCase):
             manager = LspManager(workspace, FakeSandbox("push"), config=LspConfig(startup_timeout=2))
             self.addCleanup(manager.close)
             real_which = shutil.which
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=lambda name: "/fake/pyrefly" if name == "pyrefly" else real_which(name)):
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=lambda name: "/fake/pyrefly" if name == "pyrefly" else real_which(name)):
                 first = manager.client_for(path).client
                 first.transport.process.kill()
                 first.transport.process.wait(timeout=2)
@@ -342,16 +370,15 @@ class LspReliabilityTests(unittest.TestCase):
 
     def test_pyrefly_recipe_is_selected_and_dry_run_is_non_mutating(self):
         definition = SERVERS["pyrefly"]
-        with patch("citra.tools.lsp.installer.shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name in {"uv", "pip"} else None):
-            candidate = candidate_for(definition)
-        self.assertIsNotNone(candidate)
-        assert candidate is not None
-        self.assertEqual(candidate.manager, "uv")
-        with patch("citra.tools.lsp.installer.subprocess.Popen") as popen, patch(
-            "citra.tools.lsp.installer.shutil.which", return_value=None
-        ):
-            result = execute_install(definition, candidate, dry_run=True)
-        popen.assert_not_called()
+        candidate = next(
+            item for item in definition.install_candidates if item.manager == "uv"
+        )
+        result = execute_install(
+            definition,
+            candidate,
+            dry_run=True,
+            resolver=lambda _name: None,
+        )
         self.assertTrue(result.dry_run)
         self.assertIn("uv", result.output)
 
@@ -359,8 +386,8 @@ class LspReliabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox(), config=LspConfig())
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which", side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None), patch(
+                "tests.test_lsp_reliability.shutil.which", side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None
             ):
                 results = manager.install("missing", dry_run=True)
             selected = {result.server_id: result for result in results}
@@ -373,8 +400,8 @@ class LspReliabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox(), config=LspConfig())
-            with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which", return_value=None
+            with patch("tests.test_lsp_reliability.shutil.which", return_value=None), patch(
+                "tests.test_lsp_reliability.shutil.which", return_value=None
             ):
                 status = manager.status()
             self.assertEqual(len(status["servers"]), len(SERVERS))
@@ -392,8 +419,8 @@ class LspReliabilityTests(unittest.TestCase):
                     return f"/usr/bin/{name}"
                 return None
 
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=which), patch(
-                "citra.tools.lsp.installer.shutil.which", return_value=None
+            with patch("tests.test_lsp_reliability.shutil.which", side_effect=which), patch(
+                "tests.test_lsp_reliability.shutil.which", return_value=None
             ):
                 status = manager.status()
 

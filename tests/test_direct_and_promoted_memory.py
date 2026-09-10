@@ -1,80 +1,8 @@
-from __future__ import annotations
-
-import shutil
-import sys
-import tempfile
-from pathlib import Path
 import unittest
+from types import SimpleNamespace
 
-
-ROOT = Path(__file__).resolve().parent
-
-
-def install_stub_package(root: Path) -> None:
-    citra = root / "citra"
-    memory = citra / "tools" / "session_memory"
-    memory.mkdir(parents=True)
-    (citra / "__init__.py").write_text("")
-    (citra / "tools" / "__init__.py").write_text("")
-
-    for name in (
-        "memory_tool.py",
-        "working_state_tool.py",
-        "checkpoint_tool.py",
-        "constraint_tool.py",
-        "decision_tool.py",
-        "fact_tool.py",
-        "todo_tool.py",
-        "__init__.py",
-    ):
-        shutil.copy2(ROOT / name, memory / name)
-
-    (citra / "agent.py").write_text(
-        "class AgentSession:\n"
-        "    def __init__(self):\n"
-        "        self.turn_number = 1\n"
-    )
-    (citra / "context.py").write_text("class ExecutionContext: pass\n")
-    (citra / "tools" / "session_tool.py").write_text(
-        "class SessionTool:\n"
-        "    def __init__(self, *, context, session, definition):\n"
-        "        self.context = context\n"
-        "        self.session = session\n"
-        "        self.definition = definition\n"
-    )
-
-    utils = citra / "utils"
-    utils.mkdir()
-    (utils / "__init__.py").write_text("")
-    (utils / "json_schema.py").write_text(
-        "class _Box:\n"
-        "    def __init__(self, *args, **kwargs):\n"
-        "        self.args = args\n"
-        "        self.kwargs = kwargs\n"
-        "        for k, v in kwargs.items(): setattr(self, k, v)\n"
-        "class ChatCompletionTool(_Box): pass\n"
-        "class FunctionDefinition(_Box): pass\n"
-        "class JsonProperty(_Box): pass\n"
-        "class JsonSchema:\n"
-        "    @staticmethod\n"
-        "    def object(*args, **kwargs): return _Box(*args, **kwargs)\n"
-        "    @staticmethod\n"
-        "    def string(*args, **kwargs): return _Box(*args, **kwargs)\n"
-        "    @staticmethod\n"
-        "    def integer(*args, **kwargs): return _Box(*args, **kwargs)\n"
-        "    @staticmethod\n"
-        "    def array(*args, **kwargs): return _Box(*args, **kwargs)\n"
-    )
-
-
-_TMP = tempfile.TemporaryDirectory()
-_STUB_ROOT = Path(_TMP.name)
-install_stub_package(_STUB_ROOT)
-sys.path.insert(0, str(_STUB_ROOT))
-
-from citra.agent import AgentSession  # noqa: E402
-from citra.context import ExecutionContext  # noqa: E402
-from citra.tools.session_memory import (  # noqa: E402
+from citra.agent import AgentSession
+from citra.tools.session_memory import (
     CheckpointTool,
     ConstraintTool,
     DecisionTool,
@@ -87,7 +15,11 @@ from citra.tools.session_memory import (  # noqa: E402
 class MemoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.session = AgentSession()
-        self.context = ExecutionContext()
+        self.context = SimpleNamespace(
+            config=SimpleNamespace(
+                model=lambda: SimpleNamespace(id="test-model")
+            )
+        )
         self.working = WorkingStateTool(self.context, self.session)
         self.facts = FactTool(self.context, self.session)
         self.decisions = DecisionTool(self.context, self.session)
@@ -265,7 +197,7 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("Updated", result)
         extract = self.checkpoint.get_extracts()[0]
         self.assertEqual(extract.content, "Files edited")
-        self.assertEqual(extract.turn, 1)
+        self.assertEqual(extract.turn, self.session.turn_number)
         self.assertEqual(extract.revision, 1)
         self.checkpoint._execute({"action": "clear"})
         self.assertEqual(self.checkpoint.get_extracts(), [])

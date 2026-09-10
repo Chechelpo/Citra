@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from citra.tools.transient.browser import Browser
-from citra.tools.transient.subprocess import Subprocess
+from citra.tools.execution.subprocess import Subprocess
+from citra.tools.web.browser import Browser
 
 
 class BrowserToolTests(unittest.TestCase):
@@ -30,6 +30,7 @@ class BrowserToolTests(unittest.TestCase):
                 browser=SimpleNamespace(
                     always_allow_network=False,
                     permission_timeout=30,
+                    enabled_unsafe_actions=(),
                 )
             ),
         )
@@ -40,22 +41,21 @@ class BrowserToolTests(unittest.TestCase):
 
     def test_open_denial_is_fail_closed(self) -> None:
         with mock.patch(
-            "citra.tools.transient.browser.PromptUser._execute",
+            "citra.tools.web.browser.PromptUser._execute",
             return_value="Deny",
-        ):
-            result = self.tool._execute(
+        ), self.assertRaisesRegex(PermissionError, "permission-denied"):
+            self.tool._execute(
                 {
                     "action": "open",
                     "url": "http://127.0.0.1:5173",
                     "reason": "Test the local application.",
                 }
             )
-        self.assertIn("permission-denied", result)
         self.manager.request.assert_not_called()
 
     def test_open_approval_reaches_worker(self) -> None:
         with mock.patch(
-            "citra.tools.transient.browser.PromptUser._execute",
+            "citra.tools.web.browser.PromptUser._execute",
             return_value="Allow once",
         ) as prompt:
             self.tool._execute(
@@ -76,7 +76,7 @@ class SubprocessToolTests(unittest.TestCase):
         self.manager = mock.Mock()
         self.manager.start.return_value = 7
         workspace = SimpleNamespace(
-            workspace=Path("/agent/workspace"),
+            workspace=Path.cwd(),
             resolve_path=lambda value: Path(value),
             display_path=lambda value: str(value),
         )
@@ -94,7 +94,7 @@ class SubprocessToolTests(unittest.TestCase):
 
     def test_network_start_shows_command_and_reason(self) -> None:
         with mock.patch.object(Path, "is_dir", return_value=True), mock.patch(
-            "citra.tools.transient.subprocess.PromptUser._execute",
+            "citra.tools.execution.subprocess.PromptUser._execute",
             return_value="Allow once",
         ) as prompt:
             result = self.tool._execute(

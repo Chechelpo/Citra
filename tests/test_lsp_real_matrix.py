@@ -19,10 +19,22 @@ from tests.test_lsp_reliability import WorkspaceStub
 class HostSandbox:
     """Small host subprocess adapter used only by opt-in real-server tests."""
 
-    def popen(self, command, *, cwd=None, network=False, environment=None):
+    def popen(
+        self,
+        command,
+        *,
+        cwd=None,
+        network=False,
+        environment=None,
+        path_prepend=(),
+    ):
         del network
         env = os.environ.copy()
         env.update(environment or {})
+        if path_prepend:
+            env["PATH"] = os.pathsep.join(
+                [*(str(path) for path in path_prepend), env.get("PATH", "")]
+            )
         return subprocess.Popen(
             command,
             cwd=cwd,
@@ -31,6 +43,10 @@ class HostSandbox:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def resolve_command(self, command: str) -> Path | None:
+        resolved = shutil.which(command)
+        return None if resolved is None else Path(resolved)
 
     def terminate_process(self, process) -> None:
         if process.poll() is None:

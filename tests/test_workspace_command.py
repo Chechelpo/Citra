@@ -48,4 +48,4 @@ def test_workspace_shell_opens_in_checkout(tmp_path: Path) -> None:
 
 
 def test_workspace_command_rejects_unknown_action(tmp_path: Path) -> None:
-    assert "Usage:" in _command(tmp_path).run("unknown").output
+    assert _command(tmp_path).run("unknown").usage
