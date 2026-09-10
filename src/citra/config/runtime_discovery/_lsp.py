@@ -21,7 +21,6 @@ _logger = Logger(__name__)
 
 
 LANGUAGE_SERVER_COMMANDS: tuple[str, ...] = (
-    "pyright-langserver",
     "typescript-language-server",
     "vue-language-server",
     "jdtls",
@@ -41,7 +40,6 @@ LANGUAGE_SERVER_COMMANDS: tuple[str, ...] = (
 
 _NODE_LANGUAGE_SERVERS = frozenset(
     {
-        "pyright-langserver",
         "typescript-language-server",
         "vue-language-server",
         "vscode-json-language-server",

@@ -90,16 +90,16 @@ class RuntimeIsolationTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             prefix = Path(directory) / "node-runtime"
             module_store = prefix / "lib" / "node_modules"
-            server = module_store / "pyright" / "index.js"
+            server = module_store / "typescript-language-server" / "index.js"
             server.parent.mkdir(parents=True)
             server.write_text("// fixture\n", encoding="utf-8")
-            launcher = prefix / "bin" / "pyright-langserver"
+            launcher = prefix / "bin" / "typescript-language-server"
             launcher.parent.mkdir(parents=True)
             launcher.symlink_to(server)
 
             def resolve(command: str) -> str | None:
                 """Resolve only the fixture language-server command."""
-                return str(launcher) if command == "pyright-langserver" else None
+                return str(launcher) if command == "typescript-language-server" else None
 
             with mock.patch(
                 "citra.config.runtime_discovery._base.shutil.which",
@@ -107,7 +107,7 @@ class RuntimeIsolationTests(unittest.TestCase):
             ):
                 result = LanguageServerRuntimeDiscovery.discover()
 
-            self.assertIn("pyright-langserver", result.available_commands)
+            self.assertIn("typescript-language-server", result.available_commands)
             self.assertIn(module_store, result.readonly_binds)
 
     def _definition(self, prefix: Path) -> ToolDefinition:

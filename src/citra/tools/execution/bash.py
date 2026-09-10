@@ -54,7 +54,8 @@ class Bash(Tool):
     DEFAULT_TIMEOUT_SECONDS = 30
     MAX_BATCH_SIZE = 20
     CITRA_DEFINITION = _bash_definition(name='bash', command_name='cmd', cwd_name='cwd', timeout_name='timeout', timeout_milliseconds=False, include_description=False, description='Execute one or more Bash commands inside the local sandbox. For a single command use cmd. For multiple independent commands use requests. Prefer specialized tools when available.')
-
+    _USE_DESCRIPTION = "Prefer rg over grep"
+    
     @classmethod
     @override
     def definition_for_context(

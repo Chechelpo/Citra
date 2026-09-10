@@ -86,15 +86,6 @@ can you read the rest of the source files.
 
 """,
     append="""
-# Tools
-
-Use the available tools when they materially help complete the task.
-
-Prefer targeted inspection over reading the entire repository.
-
-Always prefer the use of specialized tools rather than plain bash use.
-Do not use Bash for Git mutation.
-
 # Verification
 
 A task is not complete merely because the code appears correct.
@@ -117,7 +108,7 @@ Before finishing, make sure:
 - no obvious unfinished work remains;
 - changes are internally consistent;
 
-Report what was changed and any important verification results.
+Report what was changed and any important verification results. Get to coding ASAP.
 """.strip())
 
     @override

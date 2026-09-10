@@ -85,12 +85,12 @@ while True:
                     "jsonrpc": "2.0",
                     "id": 900,
                     "method": "workspace/configuration",
-                    "params": {"items": [{"section": "python"}, {"section": "pyright"}]},
+                    "params": {"items": [{"section": "python"}, {"section": "pyrefly"}]},
                 }
             )
         elif MODE in {"dynamic", "dynamic-pull-delayed", "dynamic-replace"}:
             if MODE == "dynamic-pull-delayed":
-                # Reproduce modern Pyright's timing: initialize says nothing
+                # Reproduce a server whose initialize response says nothing
                 # about diagnosticProvider, but pull diagnostics are registered
                 # asynchronously after ``initialized``.
                 time.sleep(0.10)
@@ -147,7 +147,7 @@ while True:
         continue
 
     if MODE == "dynamic-replace" and request_id == 902 and method is None:
-        # Match Pyright DynamicFeature.register(): replacement registration is
+        # Match a dynamic-feature replacement: registration is
         # established first, then the old Disposable unregisters its id.
         send(
             {

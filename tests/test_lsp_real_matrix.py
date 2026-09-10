@@ -86,14 +86,14 @@ class RealLspMatrixTests(unittest.TestCase):
             second = manager.diagnostics(path, good)
             self.assertEqual(second, [], f"{executable} retained diagnostics after the file became valid")
 
-    def test_real_pyright_diagnostics_under_tmp_if_installed(self):
-        self._require("pyright-langserver")
+    def test_real_pyrefly_diagnostics_under_tmp_if_installed(self):
+        self._require("pyrefly")
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = self._manager(workspace)
             path = workspace.tmp / "lsp_test" / "sample.py"
             path.parent.mkdir(parents=True)
-            bad = 'x: int = "wrong"\n'
+            bad = "x = does_not_exist\n"
             path.write_text(bad, encoding="utf-8")
             self.assertTrue(manager.diagnostics(path, bad))
             good = "x: int = 1\n"

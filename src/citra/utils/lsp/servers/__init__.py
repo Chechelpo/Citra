@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..language import Language
 from .base import InstallCandidate, ServerDefinition
-from .pyright import PYRIGHT
+from .pyrefly import PYREFLY
 from .typescript import TYPESCRIPT_LANGUAGE_SERVER
 
 
@@ -214,7 +214,7 @@ TAPLO = ServerDefinition(
 SERVERS: dict[str, ServerDefinition] = {
     definition.id: definition
     for definition in (
-        PYRIGHT,
+        PYREFLY,
         TYPESCRIPT_LANGUAGE_SERVER,
         VUE,
         JDTLS,
@@ -246,10 +246,10 @@ SERVER_ALIASES: dict[str, str] = {
 }
 
 __all__ = [
-    "InstallCandidate",
-    "PYRIGHT",
+    "PYREFLY",
     "SERVERS",
     "SERVER_ALIASES",
-    "ServerDefinition",
     "TYPESCRIPT_LANGUAGE_SERVER",
+    "InstallCandidate",
+    "ServerDefinition",
 ]

@@ -24,7 +24,7 @@ Default language servers:
 | ---------- | ---------------------------- | ------------------------------------- |
 | TypeScript | TypeScript Language Server   | `typescript-language-server --stdio`  |
 | JavaScript | TypeScript Language Server   | `typescript-language-server --stdio`  |
-| Python     | Pyright                      | `pyright-langserver --stdio`          |
+| Python     | Pyrefly                      | `pyrefly lsp`                         |
 | Java       | Eclipse JDT Language Server  | `jdtls`                               |
 | HTML       | VS Code HTML Language Server | `vscode-html-language-server --stdio` |
 | CSS        | VS Code CSS Language Server  | `vscode-css-language-server --stdio`  |
@@ -62,7 +62,7 @@ lsp/
     ├── __init__.py
     ├── base.py
     ├── typescript.py
-    ├── pyright.py
+    ├── pyrefly.py
     ├── jdtls.py
     ├── html.py
     ├── css.py
@@ -95,7 +95,7 @@ Host application
 │
 └── LspManager
     │
-    ├── LspClient(root=A, server=pyright)
+    ├── LspClient(root=A, server=pyrefly)
     │   └── persistent server process
     │
     ├── LspClient(root=B, server=typescript)
@@ -564,7 +564,7 @@ package.json
 Search upward for:
 
 ```text
-pyrightconfig.json
+pyrefly.toml
 pyproject.toml
 setup.py
 setup.cfg
@@ -1413,7 +1413,7 @@ Do not install or modify project dependencies automatically.
 Use:
 
 ```text
-pyright-langserver --stdio
+pyrefly lsp
 ```
 
 Respect existing project configuration and virtual environments.
@@ -1503,13 +1503,13 @@ Use normal structured Python logging.
 Useful events include:
 
 ```text
-[LSP pyright] starting root=...
-[LSP pyright] initialized pid=...
-[LSP pyright] -> textDocument/hover #14
-[LSP pyright] <- #14 7ms
-[LSP pyright] diagnostics uri=... count=3
+[LSP pyrefly] starting root=...
+[LSP pyrefly] initialized pid=...
+[LSP pyrefly] -> textDocument/hover #14
+[LSP pyrefly] <- #14 7ms
+[LSP pyrefly] diagnostics uri=... count=3
 [LSP recursive] files=184 diagnostics=20
-[LSP pyright] exited code=1
+[LSP pyrefly] exited code=1
 ```
 
 Do not log full source documents.

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from citra.logging import Logger
-from citra.workflows.serial_roles import ImplementerWorkflow
+from citra.workflows.surgeon_task import ImplementerWorkflow
 
 from .builtins import ArchitectWorkflow, ChatWorkflow, TaskWorkflow
 from .serial_roles import AssuredSerialRolesWorkflow, SerialRolesWorkflow

@@ -70,7 +70,6 @@ class PythonRuntimeDiscovery(_ExtendedCommandDiscovery):
         "pytest",
         "ruff",
         "pyrefly",
-        "pyright",
         "mypy",
         "black",
         "isort",

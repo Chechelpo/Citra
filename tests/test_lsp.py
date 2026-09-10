@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
-from citra.utils.lsp.client import LspClient
 from citra.utils.lsp.capabilities import LspCapabilities
+from citra.utils.lsp.client import LspClient
 from citra.utils.lsp.config import LspConfig, ServerConfig
 from citra.utils.lsp.language import Language, detect_language, server_for_language
 from citra.utils.lsp.positions import SourcePosition
@@ -13,6 +13,7 @@ from citra.utils.lsp.transport import JsonRpcTransport
 
 
 def test_javascript_and_typescript_use_typescript_language_server() -> None:
+    assert server_for_language(Language.PYTHON) == "pyrefly"
     assert detect_language("app.js") is Language.JAVASCRIPT
     assert detect_language("component.jsx") is Language.JAVASCRIPT
     assert detect_language("app.ts") is Language.TYPESCRIPT

@@ -43,26 +43,26 @@ class LspSandboxDetectionTests(unittest.TestCase):
     """Verify status uses both immutable and mutable sandbox command layers."""
 
     def test_status_detects_server_installed_in_dependency_environment(self) -> None:
-        """Report a staged Pyright server as installed and available."""
+        """Report a staged Pyrefly server as installed and available."""
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            pyright = root / "env" / "npm" / "bin" / "pyright-langserver"
+            pyrefly = root / "env" / "bin" / "pyrefly"
             workspace = _WorkspaceStub(
                 root,
-                {"pyright-langserver": pyright},
+                {"pyrefly": pyrefly},
             )
-            sandbox = _SandboxStub({"node": Path("/runtime/bin/node")})
+            sandbox = _SandboxStub({"python": Path("/runtime/bin/python")})
             manager = LspManager(workspace, sandbox)  # type: ignore[arg-type]
 
             status = manager.status()
 
-            pyright_status = next(
-                item for item in status["servers"] if item["id"] == "pyright"
+            pyrefly_status = next(
+                item for item in status["servers"] if item["id"] == "pyrefly"
             )
-            self.assertTrue(pyright_status["installed"])
-            self.assertTrue(pyright_status["available"])
-            self.assertEqual(pyright_status["executable"], str(pyright))
-            self.assertIn("pyright-langserver", workspace.refreshes)
+            self.assertTrue(pyrefly_status["installed"])
+            self.assertTrue(pyrefly_status["available"])
+            self.assertEqual(pyrefly_status["executable"], str(pyrefly))
+            self.assertIn("pyrefly", workspace.refreshes)
 
 
 if __name__ == "__main__":

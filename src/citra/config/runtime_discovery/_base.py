@@ -133,7 +133,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
             ),
             CommandCapability(
                 "types",
-                ("pyright", "mypy"),
+                ("pyrefly", "mypy"),
             ),
             CommandCapability(
                 "test environments",

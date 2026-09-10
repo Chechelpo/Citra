@@ -284,14 +284,13 @@ class LspClient:
                             continue
                         # Dynamic registrations are identities, not booleans. A
                         # server may register a replacement capability before
-                        # unregistering the previous id. Pyright does this when
-                        # refreshing its pull-diagnostic feature after settings
-                        # changes. Tracking only the method would therefore let
-                        # the old unregister incorrectly disable the new one.
+                        # unregistering the previous id. Tracking only the
+                        # method would let the old unregister incorrectly
+                        # disable the new one.
                         self._dynamic_registrations[registration_id] = dict(item)
                     self._refresh_dynamic_capabilities_locked()
-                    # A server such as modern Pyright can decide to use pull
-                    # diagnostics from the client initialize capabilities, but
+                    # A server can decide to use pull diagnostics from the
+                    # client initialize capabilities, but
                     # register textDocument/diagnostic only after initialized.
                     # Wake an in-flight diagnostics() call so it can switch
                     # from waiting for push notifications to issuing the pull.
@@ -471,11 +470,8 @@ class LspClient:
             return []
 
         # Pull diagnostic support may be registered dynamically after the
-        # initialize response. Modern Pyright does exactly this: it suppresses
-        # push diagnostics as soon as the client advertises pull support, then
-        # registers textDocument/diagnostic after ``initialized``. Therefore a
-        # diagnostics request that starts in push mode must be able to switch
-        # to pull mode while it is waiting.
+        # initialize response. A diagnostics request that starts in push mode
+        # must therefore be able to switch to pull mode while it is waiting.
         deadline = time.monotonic() + effective_timeout
         while True:
             with self._diagnostic_condition:

@@ -67,7 +67,7 @@
 - **Foreground steering.** While an agent turn runs in a background thread, the terminal stays interactive: queued steering messages cancel remaining tool calls and redirect the model mid-turn (`src/citra/cli/repl.py:65`, `src/citra/agent/runner.py:140`).
 - **Structured conversation memory.** Typed memory services (TODOs, facts, decisions, constraints, checkpoints, working state) are owned by the session rather than by individual tool calls (`src/citra/agent/conversation_memory.py:1`, `src/citra/tools/session_memory/memory_tool.py:31`).
 - **Deferred tool catalog.** Specialized tools (browser, curl, web search, subprocess, documents, diagrams) stay out of the prompt until explicitly enabled for the turn (`src/citra/tools/tool_registry.py:37`, `src/citra/tools/default_registry.py:25`).
-- **LSP integration.** Pyright and TypeScript language servers are started lazily per project root and reused for semantic code intelligence (`src/citra/tools/lsp/manager.py:58`).
+- **LSP integration.** Pyrefly and TypeScript language servers are started lazily per project root and reused for semantic code intelligence (`src/citra/tools/lsp/manager.py:58`).
 
 ## Package layout
 
@@ -281,7 +281,7 @@ Useful capabilities:
 - **LspManager** — "keep one healthy server per server identity/project root for the process" (`src/citra/tools/lsp/manager.py:58`). Handles discovery, startup, reuse, shutdown, install candidates, and diagnostics timeouts configured through `LspConfig` (`enabled`, startup/request/diagnostics timeouts, JSON fallback) built from config at application construction (`src/citra/application.py:44`).
 - **JsonRpcTransport** — owns framing, request correlation, reader threads, and server callbacks; keeps a `stderr_tail` for error reporting (`src/citra/tools/lsp/transport.py`).
 - **LspClient** — high-level lifecycle and semantic operations (hover, definition, references, diagnostics) for one server, tracking document versions/generations and both push and pull diagnostics (`src/citra/tools/lsp/client.py:1`).
-- **Language support** — `Language` enum with `detect_language(path)` (`lsp/language.py`); server definitions for pyright and TypeScript live in `lsp/servers/pyright.py` and `lsp/servers/typescript.py` behind `SERVERS` / `SERVER_ALIASES`.
+- **Language support** — `Language` enum with `detect_language(path)` (`lsp/language.py`); server definitions for Pyrefly and TypeScript live in `lsp/servers/pyrefly.py` and `lsp/servers/typescript.py` behind `SERVERS` / `SERVER_ALIASES`.
 - **Installer** — resolves `InstallCandidate`s and executes installs when a needed server binary is missing (`lsp/installer.py`).
 
 Errors are typed: `LspError` → `LspProtocolError`, `LspStartupError`, `LspDiagnosticsTimeout`, `LspUnavailable` (`lsp/errors.py`). The manager tolerates being absent (`ExecutionContext.lsp_manager` is optional and closed reflectively, `src/citra/context/execution_context.py:160`).

@@ -242,8 +242,8 @@ class LspMatrixRegressionTests(unittest.TestCase):
             real_which = shutil.which
             with patch(
                 "citra.tools.lsp.manager.shutil.which",
-                side_effect=lambda name: "/fake/pyright-langserver"
-                if name == "pyright-langserver"
+                side_effect=lambda name: "/fake/pyrefly"
+                if name == "pyrefly"
                 else real_which(name),
             ):
                 first = manager.client_for(path)
@@ -270,8 +270,8 @@ class LspMatrixRegressionTests(unittest.TestCase):
             real_which = shutil.which
             with patch(
                 "citra.tools.lsp.manager.shutil.which",
-                side_effect=lambda name: "/fake/pyright-langserver"
-                if name == "pyright-langserver"
+                side_effect=lambda name: "/fake/pyrefly"
+                if name == "pyrefly"
                 else real_which(name),
             ):
                 self.assertTrue(manager.diagnostics(path, 'x: int = "wrong"\n'))
@@ -461,7 +461,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             )
             with patch(
                 "citra.tools.lsp.manager.shutil.which",
-                side_effect=lambda name: sys.executable if name in {"pyright-langserver", "node"} else None,
+                side_effect=lambda name: sys.executable if name == "pyrefly" else None,
             ):
                 handle = manager.client_for(path)
                 process = handle.client.transport.process
@@ -489,18 +489,18 @@ class LspMatrixRegressionTests(unittest.TestCase):
             real_availability = manager._availability
 
             def availability(definition):
-                if definition.id == "pyright":
-                    return True, "/usr/bin/pyright-langserver", {}
+                if definition.id == "pyrefly":
+                    return True, "/usr/bin/pyrefly", {}
                 return real_availability(definition)
 
             with patch.object(manager, "_availability", side_effect=availability), patch(
                 "citra.tools.lsp.manager.shutil.which", return_value=None
             ), patch(
                 "citra.tools.lsp.installer.shutil.which",
-                side_effect=lambda name: "/usr/bin/npm" if name == "npm" else None,
+                side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None,
             ):
                 results = manager.install("missing", dry_run=True)
-            self.assertNotIn("pyright", {result.server_id for result in results})
+            self.assertNotIn("pyrefly", {result.server_id for result in results})
 
     def test_install_all_selects_only_recipes_available_on_host(self):
         with tempfile.TemporaryDirectory() as td:
@@ -508,13 +508,13 @@ class LspMatrixRegressionTests(unittest.TestCase):
             manager = LspManager(workspace, FakeSandbox())
             with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
                 "citra.tools.lsp.installer.shutil.which",
-                side_effect=lambda name: "/usr/bin/npm" if name == "npm" else None,
+                side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None,
             ):
                 results = manager.install("all", dry_run=True)
             selected = {result.server_id for result in results}
             self.assertEqual(
                 selected,
-                {"pyright", "typescript", "vue", "json", "css", "html", "yaml", "bash"},
+                {"pyrefly"},
             )
             self.assertTrue(all(result.dry_run for result in results))
 
@@ -538,7 +538,7 @@ class LspMatrixRegressionTests(unittest.TestCase):
             with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
                 "citra.tools.lsp.installer.shutil.which", return_value=None
             ):
-                result = manager.install("pyright", dry_run=True)[0]
+                result = manager.install("pyrefly", dry_run=True)[0]
             self.assertIsNone(result.command)
             self.assertIsNone(result.returncode)
             self.assertIn("no supported installer", result.output)
@@ -553,11 +553,11 @@ class LspMatrixRegressionTests(unittest.TestCase):
             popen.assert_not_called()
 
     def test_failed_installer_returns_status_and_does_not_raise(self):
-        definition = SERVERS["pyright"]
-        candidate = next(item for item in definition.install_candidates if item.manager == "npm")
+        definition = SERVERS["pyrefly"]
+        candidate = next(item for item in definition.install_candidates if item.manager == "uv")
 
         class FailedProcess:
-            stdout = io.StringIO("npm failed\n")
+            stdout = io.StringIO("uv failed\n")
 
             def wait(self):
                 return 9
@@ -569,13 +569,13 @@ class LspMatrixRegressionTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 9)
         self.assertFalse(result.success)
-        self.assertIn("npm failed", result.output)
+        self.assertIn("uv failed", result.output)
         self.assertIsNone(result.executable_found)
         printed.assert_called_once_with("$ " + " ".join(candidate.command), flush=True)
 
     def test_successful_installer_rechecks_expected_executable(self):
-        definition = SERVERS["pyright"]
-        candidate = next(item for item in definition.install_candidates if item.manager == "npm")
+        definition = SERVERS["pyrefly"]
+        candidate = next(item for item in definition.install_candidates if item.manager == "uv")
 
         class SuccessfulProcess:
             stdout = io.StringIO("installed\n")
@@ -585,15 +585,15 @@ class LspMatrixRegressionTests(unittest.TestCase):
 
         with patch("citra.tools.lsp.installer.subprocess.Popen", return_value=SuccessfulProcess()), patch(
             "citra.tools.lsp.installer.shutil.which",
-            side_effect=lambda name: "/usr/local/bin/pyright-langserver"
-            if name == "pyright-langserver"
+            side_effect=lambda name: "/usr/local/bin/pyrefly"
+            if name == "pyrefly"
             else None,
         ), patch("builtins.print"):
             result = execute_install(definition, candidate, dry_run=False)
 
         self.assertEqual(result.returncode, 0)
         self.assertTrue(result.success)
-        self.assertEqual(result.executable_found, "/usr/local/bin/pyright-langserver")
+        self.assertEqual(result.executable_found, "/usr/local/bin/pyrefly")
 
     def test_lsp_command_stop_and_restart_manage_running_instances(self):
         with tempfile.TemporaryDirectory() as td:
@@ -607,15 +607,15 @@ class LspMatrixRegressionTests(unittest.TestCase):
             )
             self.addCleanup(manager.close)
             command = LspCommand(SimpleNamespace(lsp_manager=manager))  # type: ignore[arg-type]
-            which = lambda name: sys.executable if name in {"pyright-langserver", "node"} else None
+            which = lambda name: sys.executable if name == "pyrefly" else None
             with patch("citra.tools.lsp.manager.shutil.which", side_effect=which):
                 first = manager.client_for(path).client.transport.process
-                stopped = command.run("stop pyright")
+                stopped = command.run("stop pyrefly")
                 self.assertIn("stopped: 1", stopped.output)
                 self.assertIsNotNone(first.poll())
 
                 second = manager.client_for(path).client.transport.process
-                restarted = command.run("restart pyright")
+                restarted = command.run("restart pyrefly")
                 self.assertIn("restarted: 1", restarted.output)
                 running = manager.client_for(path).client.transport.process
                 self.assertIsNot(second, running)
@@ -631,14 +631,14 @@ class LspMatrixRegressionTests(unittest.TestCase):
 
             with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
                 "citra.tools.lsp.installer.shutil.which",
-                side_effect=lambda name: "/usr/bin/npm" if name == "npm" else None,
+                side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None,
             ):
                 status = command.run("")
                 with patch("citra.tools.lsp.installer.subprocess.Popen") as popen:
-                    install = command.run("install pyright --dry-run")
+                    install = command.run("install pyrefly --dry-run")
 
             self.assertIn("LSP: enabled", status.output)
-            self.assertIn("pyright", status.output)
+            self.assertIn("pyrefly", status.output)
             self.assertIn("dry-run: not executed", install.output)
             popen.assert_not_called()
 

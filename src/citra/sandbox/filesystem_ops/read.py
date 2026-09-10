@@ -25,6 +25,7 @@ class ReadEntry:
 
         path = payload.get("path")
         content = payload.get("content")
+
         if not isinstance(path, str) or not isinstance(content, str):
             raise ValueError("Read output entry has invalid text fields.")
 
@@ -105,9 +106,12 @@ class ReadInput(FilesystemInput[ReadOutput]):
 
     paths: tuple[str, ...]
     single_path: bool = False
+    from_line: int | None = None
+    to_line: int | None = None
+    max_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        """Validate literal paths, batch cardinality, and shape consistency."""
+        """Validate literal paths, ranges, limits, and shape consistency."""
         if not self.paths:
             raise ValueError("'paths' must not be empty.")
 
@@ -121,10 +125,32 @@ class ReadInput(FilesystemInput[ReadOutput]):
                 "A single-path read must contain exactly one path."
             )
 
+        if self.from_line is not None and self.from_line < 1:
+            raise ValueError("'from_line' must be >= 1.")
+
+        if self.to_line is not None and self.to_line < 1:
+            raise ValueError("'to_line' must be >= 1.")
+
+        if (
+            self.from_line is not None
+            and self.to_line is not None
+            and self.from_line > self.to_line
+        ):
+            raise ValueError(
+                "'from_line' cannot be greater than 'to_line'."
+            )
+
+        if self.max_tokens is not None and self.max_tokens <= 0:
+            raise ValueError("'max_tokens' must be greater than zero.")
+
         for index, path in enumerate(self.paths):
             label = "path" if self.single_path else f"paths[{index}]"
+
             if not isinstance(path, str) or not path:
-                raise ValueError(f"'{label}' must be a non-empty string.")
+                raise ValueError(
+                    f"'{label}' must be a non-empty string."
+                )
+
             if any(character in path for character in ("*", "?", "[")):
                 raise ValueError(
                     f"'{label}' must be a literal file path, not a glob pattern."
@@ -134,45 +160,121 @@ class ReadInput(FilesystemInput[ReadOutput]):
     def parse(cls, arguments: dict[str, Any]) -> "ReadInput":
         """Parse exactly one literal path or a batch of literal paths."""
         if not isinstance(arguments, dict):
-            raise ValueError("Filesystem arguments must be a JSON object.")
+            raise ValueError(
+                "Filesystem arguments must be a JSON object."
+            )
 
-        unknown = set(arguments) - {"path", "paths"}
+        unknown = set(arguments) - {
+            "path",
+            "paths",
+            "from_line",
+            "to_line",
+            "max_tokens",
+        }
+
         if unknown:
             raise ValueError(
-                "Unsupported read arguments: " + ", ".join(sorted(unknown))
+                "Unsupported read arguments: "
+                + ", ".join(sorted(unknown))
             )
 
         has_path = "path" in arguments
         has_paths = "paths" in arguments
+
         if has_path == has_paths:
-            raise ValueError("Provide exactly one of 'path' or 'paths'.")
+            raise ValueError(
+                "Provide exactly one of 'path' or 'paths'."
+            )
+
+        common = {
+            "from_line": arguments.get("from_line"),
+            "to_line": arguments.get("to_line"),
+            "max_tokens": arguments.get("max_tokens"),
+        }
 
         if has_path:
-            return cls(paths=(arguments["path"],), single_path=True)
+            return cls(
+                paths=(arguments["path"],),
+                single_path=True,
+                **common,
+            )
 
         raw_paths = arguments["paths"]
+
         if not isinstance(raw_paths, list):
             raise ValueError("'paths' must be an array.")
-        return cls(paths=tuple(raw_paths), single_path=False)
+
+        return cls(
+            paths=tuple(raw_paths),
+            single_path=False,
+            **common,
+        )
 
     def to_arguments(self) -> dict[str, Any]:
         """Serialize the normalized read request for the worker protocol."""
         if self.single_path:
-            return {"path": self.paths[0]}
-        return {"paths": list(self.paths)}
+            arguments: dict[str, Any] = {
+                "path": self.paths[0],
+            }
+        else:
+            arguments = {
+                "paths": list(self.paths),
+            }
+
+        if self.from_line is not None:
+            arguments["from_line"] = self.from_line
+
+        if self.to_line is not None:
+            arguments["to_line"] = self.to_line
+
+        if self.max_tokens is not None:
+            arguments["max_tokens"] = self.max_tokens
+
+        return arguments
 
 
 def execute(order: ReadInput, fs: ScopedFilesystem) -> ReadOutput:
     """Read scoped literal paths without following directories."""
     entries: list[ReadEntry] = []
+
     for raw_path in order.paths:
         path = fs.require_allowed_path(fs.resolve_path(raw_path))
+
         if not path.is_file():
-            raise FileNotFoundError(f"File not found: {fs.display_path(path)}")
+            raise FileNotFoundError(
+                f"File not found: {fs.display_path(path)}"
+            )
+
+        content = path.read_text(
+            encoding="utf-8",
+            errors="strict",
+        )
+
+        if order.from_line is not None or order.to_line is not None:
+            lines = content.splitlines()
+
+            start = (
+                order.from_line - 1
+                if order.from_line is not None
+                else 0
+            )
+
+            end = (
+                order.to_line
+                if order.to_line is not None
+                else len(lines)
+            )
+
+            content = "\n".join(lines[start:end])
+
         entries.append(
             ReadEntry(
                 path=fs.display_path(path),
-                content=path.read_text(encoding="utf-8", errors="strict"),
+                content=content,
             )
         )
-    return ReadOutput(entries=tuple(entries), single_path=order.single_path)
+
+    return ReadOutput(
+        entries=tuple(entries),
+        single_path=order.single_path,
+    )

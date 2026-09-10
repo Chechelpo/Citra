@@ -4,7 +4,7 @@ These tests exercise the language-agnostic interpreter resolver API in
 isolation. They use only the standard library, the real
 ``citra.utils.lsp.interpreters`` import path, and synthetic project roots
 created with :mod:`tempfile`, so they are safe to run on hosts that do
-not have bwrap, pyright, or any other language server installed.
+not have bwrap, pyrefly, or any other language server installed.
 """
 
 from __future__ import annotations

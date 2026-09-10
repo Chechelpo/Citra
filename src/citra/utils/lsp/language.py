@@ -90,7 +90,9 @@ _LANGUAGE_IDS: dict[Language, str] = {
 }
 
 _LANGUAGE_SERVERS: dict[Language, str] = {
-    Language.PYTHON: "pyright",
+    # Pyrefly is bundled with Citra and is available from the project's Python
+    # environment.
+    Language.PYTHON: "pyrefly",
     # Preserve the historical public routing value for JS/TS.  The manager
     # normalizes this executable-name alias back to the declarative server id.
     Language.JAVASCRIPT: "typescript-language-server",

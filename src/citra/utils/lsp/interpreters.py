@@ -1,6 +1,6 @@
 """Runtime interpreter resolvers for language servers.
 
-Language servers such as Pyright, gopls, ruby-lsp, or the TypeScript language
+Language servers such as Pyrefly, gopls, ruby-lsp, or the TypeScript language
 server need to know which interpreter / toolchain to use to resolve installed
 third-party dependencies. Citra provisions a lifecycle ``env/python`` virtual
 environment and the model-facing Python tool installs project dependencies

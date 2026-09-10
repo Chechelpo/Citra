@@ -459,9 +459,9 @@ def test_failed_runtime_health_check_is_not_advertised(tmp_path: Path) -> None:
 
 
 def test_lsp_install_uses_runtime_sandbox_and_network_policy(tmp_path: Path) -> None:
-    definition = SERVERS["pyright"]
+    definition = SERVERS["pyrefly"]
     candidate = next(
-        item for item in definition.install_candidates if item.manager == "npm"
+        item for item in definition.install_candidates if item.manager == "uv"
     )
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
 

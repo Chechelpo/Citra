@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 import json
 import shutil
 import subprocess
@@ -8,17 +7,17 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from citra.utils.lsp.client import LspClient, configuration_for_section
 from citra.utils.lsp.config import LspConfig, ServerConfig
 from citra.utils.lsp.diagnostics import json_fallback_diagnostics
-from citra.utils.lsp.language import Language, detect_language, server_for_language
 from citra.utils.lsp.installer import candidate_for, execute_install
+from citra.utils.lsp.language import Language, detect_language, server_for_language
 from citra.utils.lsp.manager import LspManager
 from citra.utils.lsp.servers import SERVERS
 from citra.utils.lsp.transport import JsonRpcTransport
-
 
 HERE = Path(__file__).resolve().parent
 FAKE_SERVER = HERE / "fake_lsp_server.py"
@@ -138,9 +137,9 @@ class LspReliabilityTests(unittest.TestCase):
         return client
 
     def test_configuration_is_section_aware(self):
-        settings = {"python": {"analysis": {"diagnosticMode": "openFilesOnly"}}, "pyright": {}}
+        settings = {"python": {"analysis": {"diagnosticMode": "openFilesOnly"}}, "pyrefly": {}}
         self.assertEqual(configuration_for_section(settings, "python.analysis"), settings["python"]["analysis"])
-        self.assertEqual(configuration_for_section(settings, "pyright"), {})
+        self.assertEqual(configuration_for_section(settings, "pyrefly"), {})
         self.assertIsNone(configuration_for_section(settings, "missing"))
 
         with tempfile.TemporaryDirectory() as td:
@@ -183,8 +182,8 @@ class LspReliabilityTests(unittest.TestCase):
             real_which = shutil.which
             with patch(
                 "citra.tools.lsp.manager.shutil.which",
-                side_effect=lambda name: "/fake/pyright-langserver"
-                if name == "pyright-langserver"
+                side_effect=lambda name: "/fake/pyrefly"
+                if name == "pyrefly"
                 else real_which(name),
             ):
                 # First/open diagnostics arrive, but this fake intentionally
@@ -220,7 +219,7 @@ class LspReliabilityTests(unittest.TestCase):
         self.assertEqual(detect_language("x.scss"), Language.SCSS)
         self.assertEqual(server_for_language(Language.JSONC), "json")
 
-    def test_tmp_root_and_pyright_configuration_through_manager(self):
+    def test_tmp_root_and_pyrefly_configuration_through_manager(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             path = workspace.tmp / "lsp_test" / "test.py"
@@ -233,7 +232,7 @@ class LspReliabilityTests(unittest.TestCase):
             )
             self.addCleanup(manager.close)
             real_which = shutil.which
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=lambda name: "/fake/pyright-langserver" if name == "pyright-langserver" else real_which(name)):
+            with patch("citra.tools.lsp.manager.shutil.which", side_effect=lambda name: "/fake/pyrefly" if name == "pyrefly" else real_which(name)):
                 rendered = manager.diagnostics_for_path("@tmp/lsp_test/test.py", filesystem=FakeFilesystem())
             self.assertIn("@tmp/lsp_test/test.py", rendered or "")
             self.assertIn("configuration ok", rendered or "")
@@ -246,7 +245,7 @@ class LspReliabilityTests(unittest.TestCase):
             manager = LspManager(workspace, FakeSandbox("push"), config=LspConfig(startup_timeout=2))
             self.addCleanup(manager.close)
             real_which = shutil.which
-            with patch("citra.tools.lsp.manager.shutil.which", side_effect=lambda name: "/fake/pyright-langserver" if name == "pyright-langserver" else real_which(name)):
+            with patch("citra.tools.lsp.manager.shutil.which", side_effect=lambda name: "/fake/pyrefly" if name == "pyrefly" else real_which(name)):
                 first = manager.client_for(path).client
                 first.transport.process.kill()
                 first.transport.process.wait(timeout=2)
@@ -297,7 +296,7 @@ class LspReliabilityTests(unittest.TestCase):
             }
             client.handle_request("client/registerCapability", {"registrations": [old]})
             client.handle_request("client/registerCapability", {"registrations": [new]})
-            # Pyright's DynamicFeature replacement sequence disposes the old
+            # A dynamic-feature replacement sequence disposes the old
             # registration only after the replacement has been registered.
             client.handle_request(
                 "client/unregisterCapability",
@@ -319,7 +318,7 @@ class LspReliabilityTests(unittest.TestCase):
             )
             self.assertFalse(client.capabilities.diagnostics_pull)
 
-    def test_pyright_style_dynamic_replacement_over_protocol_stays_pull(self):
+    def test_dynamic_replacement_over_protocol_stays_pull(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             client = self._client("dynamic-replace", root)
@@ -341,32 +340,32 @@ class LspReliabilityTests(unittest.TestCase):
             client.sync_document(path, 'x: int = "wrong"\n', Language.PYTHON)
             self.assertEqual(client.diagnostics(uri), [])
 
-    def test_arch_recipe_precedes_ecosystem_fallback_and_dry_run_is_non_mutating(self):
-        definition = SERVERS["pyright"]
-        with patch("citra.tools.lsp.installer.shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name in {"pacman", "npm"} else None):
+    def test_pyrefly_recipe_is_selected_and_dry_run_is_non_mutating(self):
+        definition = SERVERS["pyrefly"]
+        with patch("citra.tools.lsp.installer.shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name in {"uv", "pip"} else None):
             candidate = candidate_for(definition)
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        self.assertEqual(candidate.manager, "pacman")
+        self.assertEqual(candidate.manager, "uv")
         with patch("citra.tools.lsp.installer.subprocess.Popen") as popen, patch(
             "citra.tools.lsp.installer.shutil.which", return_value=None
         ):
             result = execute_install(definition, candidate, dry_run=True)
         popen.assert_not_called()
         self.assertTrue(result.dry_run)
-        self.assertIn("pacman", result.output)
+        self.assertIn("uv", result.output)
 
     def test_install_missing_skips_servers_without_safe_recipe(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = WorkspaceStub(Path(td))
             manager = LspManager(workspace, FakeSandbox(), config=LspConfig())
             with patch("citra.tools.lsp.manager.shutil.which", return_value=None), patch(
-                "citra.tools.lsp.installer.shutil.which", side_effect=lambda name: "/usr/bin/npm" if name == "npm" else None
+                "citra.tools.lsp.installer.shutil.which", side_effect=lambda name: "/usr/bin/uv" if name == "uv" else None
             ):
                 results = manager.install("missing", dry_run=True)
             selected = {result.server_id: result for result in results}
-            self.assertIn("pyright", selected)
-            self.assertTrue(selected["pyright"].dry_run)
+            self.assertIn("pyrefly", selected)
+            self.assertTrue(selected["pyrefly"].dry_run)
             self.assertIsNone(selected["jdtls"].command)
             self.assertIn("no supported installer", selected["jdtls"].output)
 
@@ -435,10 +434,10 @@ class RealServerIntegrationTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client
 
-    def test_real_pyright_diagnostics_if_installed(self):
+    def test_real_pyrefly_diagnostics_if_installed(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            definition = SERVERS["pyright"]
+            definition = SERVERS["pyrefly"]
             client = self._real_client(
                 definition.executable,
                 definition.arguments,
@@ -446,7 +445,7 @@ class RealServerIntegrationTests(unittest.TestCase):
                 ServerConfig(command=(definition.executable, *definition.arguments), settings=definition.settings),
             )
             bad = root / "bad.py"
-            uri = client.sync_document(bad, 'x: int = "wrong"\n', Language.PYTHON)
+            uri = client.sync_document(bad, "x = does_not_exist\n", Language.PYTHON)
             self.assertTrue(client.diagnostics(uri))
             good = root / "good.py"
             good_uri = client.sync_document(good, "x: int = 1\n", Language.PYTHON)

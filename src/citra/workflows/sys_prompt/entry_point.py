@@ -28,6 +28,7 @@ def build_system_prompt(
     add_skills : bool = True,
     add_coding_convetions:bool = False,
     add_environment:bool = True,
+    add_tool_guides: bool = True
 ) -> str:
     """
     Build a system prompt.
@@ -44,7 +45,7 @@ def build_system_prompt(
     ```
     
     """
-    worflow: SingleModeWorkflow = context.workflow
+    workflow: SingleModeWorkflow = context.workflow
     result:str = preepend
     
     if give_name:
@@ -57,7 +58,10 @@ def build_system_prompt(
         result = _concat(result, _basic_coding_conventions())
     
     if (add_skills):
-        result = _concat(result, _format_skills(worflow)) 
+        result = _concat(result, _format_skills(workflow)) 
+    
+    if (add_tool_guides):
+        result = _concat(result, tool_info(context, workflow))
 
     return result + append
 
